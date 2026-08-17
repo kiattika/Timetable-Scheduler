@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Timetable Scheduler</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+  <script type="importmap">
+{
+  "imports": {
+    "react": "https://esm.sh/react@^19.1.0",
+    "react-dom/": "https://esm.sh/react-dom@^19.1.0/",
+    "react/": "https://esm.sh/react@^19.1.0/",
+    "lucide-react": "https://esm.sh/lucide-react@^0.511.0",
+    "xlsx": "https://esm.sh/xlsx@^0.18.5",
+    "@/api": "./api.ts",
+    "@google/genai": "https://esm.sh/@google/genai"
+  }
+}
+</script>
+<style>
+  /* Basic print styles */
+  @media print {
+    @page {
+      size: A4 portrait;
+      margin: 0.75cm;
+    }
+    body {
+      font-family: Arial, sans-serif;
+      font-size: 5pt; /* Reduced from 10pt */
+      margin: 0;
+      padding: 0;
+      background-color: white !important; /* Ensure white background */
+      -webkit-print-color-adjust: exact;
+      color-adjust: exact;
+    }
+    /* Hide all elements by default */
+    body * {
+      visibility: hidden;
+    }
+    /* Make the printable area and its children visible */
+    .printable-area, .printable-area * {
+      visibility: visible;
+    }
+    .printable-area {
+      position: relative; /* Changed from absolute for multi-page content flow */
+      left: 0;
+      top: 0;
+      width: 100%;
+      /* padding: 1cm; /* Padding will be handled by @page margin or by batch containers */
+      box-sizing: border-box;
+    }
+    /* Elements to explicitly hide */
+    nav, 
+    .non-printable, 
+    button:not(.printable-button-class), /* Add .printable-button-class to buttons you WANT to print (if any) */
+    #root > div > div:first-child, /* Hides the main navigation sidebar in App.tsx */
+    /* Hides the tab navigation within ScheduleScreen */
+    .p-4.md\:p-8.overflow-auto > div > div:first-child:not(.printable-area-batch), 
+    /* Hides the top bar in schedule views (Grade, Teacher, Room) containing selectors and print button itself */
+    .p-4.md\:p-6.space-y-6 > .non-printable,
+    .p-4.md\:p-6.space-y-6 > div > .non-printable,
+    .p-4.md\:p-6.space-y-6 > div:not(.printable-area) > .non-printable, /* More specific for view controls */
+    .flex.justify-end.mt-6 /* Hides close button in AI modal if it were part of print */
+     {
+      display: none !important;
+    }
+
+    table {
+      border-collapse: collapse !important;
+      width: 100% !important;
+      font-size: 4.5pt !important; /* Base for table, td will get further reduced if not specifically sized */
+    }
+    .printable-area table {
+      table-layout: fixed !important;
+      height: 100% !important;
+      max-height: 100% !important;
+    }
+    th { /* For table headers in data tables */
+      border: 1px solid #ccc !important;
+      padding: 3px !important;
+      text-align: left;
+      word-wrap: break-word;
+      overflow: hidden;
+      background-color: #f2f2f2 !important;
+      font-weight: bold;
+      font-size: 8.1pt !important; /* Increased by 80% from 4.5pt */
+      -webkit-print-color-adjust: exact; /* Chrome, Safari */
+      color-adjust: exact; /* Firefox */
+    }
+    td { /* For table data cells */
+      border: 1px solid #ccc !important;
+      padding: 3px !important;
+      text-align: left;
+      word-wrap: break-word;
+      overflow: hidden;
+      font-size: 2.25pt !important; /* Reduced base font size for td by 50% from table's 4.5pt */
+    }
+    /* Ensure colored elements like subject tags maintain their color */
+    div[style*="border-left-color"], span[style*="background-color"] {
+      -webkit-print-color-adjust: exact;
+      color-adjust: exact;
+    }
+    /* Adjust specific column widths if needed, e.g. the first column (Day/Period label) */
+    .printable-area table th:first-child,
+    .printable-area table td:first-child {
+      width: 70px !important; /* Adjust as needed */
+      min-width: 70px !important;
+    }
+    .printable-area .min-w-\[100px\] { min-width: auto !important; }
+    .printable-area .sm\:min-w-\[110px\] { min-width: auto !important; }
+
+
+    /* Hide scrollbars in print */
+    .overflow-x-auto, .overflow-y-auto {
+      overflow: visible !important;
+    }
+
+    /* Ensure text is black for better readability */
+    *, ::before, ::after {
+        text-shadow: none !important;
+        box-shadow: none !important;
+        color: black !important; /* Force black text unless overridden by specific element styles */
+    }
+     a[href]:after {
+        content: none !important; /* Don't show URLs for links */
+    }
+
+    /* Specific font size for content WITHIN schedule cells - these override the td base font-size */
+    /* These values are for the primary content (often Thai) and remain as previously set */
+    .printable-area td .text-xs { /* Subject name, originally 12px */
+        font-size: 4.5pt !important; 
+        line-height: 1.2 !important;
+        font-weight: bold !important;
+    }
+    .printable-area td .text-xxs { /* Detail lines (Teacher, Classroom, Grade), originally 10px */
+        font-size: 3.75pt !important; 
+        line-height: 1.2 !important;
+    }
+    .printable-area td .text-\\[9px\\] { /* Block info, Inherited Info, Co-taught, originally 9px. */
+        font-size: 3.375pt !important; 
+        line-height: 1.1 !important;
+    }
+    /* Adjust icon sizes within the detail lines (text-xxs containers) */
+    .printable-area td .text-xxs svg { /* Icons are typically 10px on screen */
+        width: 5px !important;
+        height: 5px !important;
+        margin-right: 1px !important;
+        vertical-align: middle !important;
+    }
+
+
+    /* Common styles for all print headers */
+    .schedule-print-header-base {
+        display: none; /* Hidden by default, shown by .printable-area * */
+        margin-bottom: 0.5cm;
+        padding-bottom: 0.3cm;
+        border-bottom: 1px solid #666;
+        font-size: 8.1pt !important; /* Increased by 80% from 4.5pt */
+    }
+    .schedule-print-header-base h3 {
+        font-size: 10.8pt !important; /* Increased by 80% from 6pt */
+        font-weight: bold;
+        text-align: center;
+        margin-bottom: 0.2cm;
+    }
+    .schedule-print-header-base .info-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr); /* Two columns */
+        gap: 0.05cm 0.4cm; /* Row gap, Column gap */
+    }
+    .schedule-print-header-base .info-item {
+        display: flex;
+    }
+    .schedule-print-header-base .info-item strong {
+        min-width: 90px; /* Adjust as needed for label alignment */
+        display: inline-block;
+        font-weight: bold;
+    }
+     .schedule-print-header-base .info-item span {
+        word-break: break-word;
+    }
+
+
+    /* Teacher schedule print header (already exists, ensure it uses base) */
+    .teacher-schedule-print-header {
+        /* Extends .schedule-print-header-base indirectly via JS or directly in JSX */
+    }
+    .teacher-schedule-print-footer {
+        display: none; /* Hidden by default, shown by .printable-area * */
+        margin-top: 1cm;
+        padding-top: 0.5cm;
+        border-top: 1px solid #666;
+        display: flex;
+        justify-content: space-around; /* Distributes space between signature areas */
+        font-size: 9pt !important; /* Increased by 80% from 5pt */
+    }
+    .teacher-schedule-print-footer .signature-area {
+        width: 45%; /* Each signature area takes up roughly half the space */
+        text-align: center;
+    }
+    .teacher-schedule-print-footer .signature-line {
+        margin-top: 1.5cm; /* Space for signature */
+        border-bottom: 1px solid #000;
+        width: 80%;
+        margin-left: auto;
+        margin-right: auto;
+        margin-bottom: 0.2cm;
+    }
+     .teacher-schedule-print-footer .signature-area p {
+        margin: 2px 0;
+        line-height: 1.2;
+    }
+
+    /* Grade Level schedule print header */
+    .grade-schedule-print-header {
+        /* Extends .schedule-print-header-base */
+    }
+    
+    /* Room Usage schedule print header */
+    .room-schedule-print-header {
+        /* Extends .schedule-print-header-base */
+    }
+
+
+    /* Apply visibility for print-specific elements inside printable-area */
+    .printable-area .schedule-print-header-base, /* Show all headers using base class */
+    .printable-area .teacher-schedule-print-header, /* Explicitly if not using base class directly */
+    .printable-area .grade-schedule-print-header,
+    .printable-area .room-schedule-print-header,
+    .printable-area .teacher-schedule-print-footer {
+        display: block; /* Or flex/grid as originally set */
+    }
+    .printable-area .teacher-schedule-print-footer { /* Re-apply flex if .printable-area * set it to block */
+        display: flex;
+    }
+
+    /* Batch printing styles */
+    .printable-area-batch {
+      display: grid;
+      width: 100%;
+      gap: 0.5cm;
+      box-sizing: border-box;
+    }
+
+    .printed-item-container {
+      border: 1px solid #eee;
+      padding: 0.25cm;
+      box-sizing: border-box;
+      page-break-inside: avoid !important;
+      background-color: white; 
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* Scaling child tables inside the grid container so they don't break out */
+    .actual-schedule-table-container {
+      flex: 1;
+      display: flex;
+      align-items: stretch;
+      justify-content: stretch;
+      overflow: hidden !important;
+      max-height: 100%;
+    }
+    .actual-schedule-table-container table {
+      height: 100% !important;
+      max-height: 100% !important;
+      overflow: hidden !important;
+    }
+    .actual-schedule-table-container td {
+      overflow: hidden !important;
+    }
+    
+    /* Layout: 1 per page */
+    .layout-1_per_page {
+      grid-template-columns: 1fr;
+    }
+    .layout-1_per_page .printed-item-container {
+      page-break-after: always;
+      height: auto;
+    }
+
+    /* Layout: 1x2 (1 column, 2 rows) */
+    .layout-1x2_per_page {
+      grid-template-columns: 1fr;
+    }
+    .layout-1x2_per_page .printed-item-container {
+      height: calc(48vh - 1cm); 
+      overflow: hidden;
+    }
+
+    /* Layout: 2x2 (2 columns, 2 rows) */
+    .layout-2x2_per_page {
+      grid-template-columns: 1fr 1fr;
+    }
+    .layout-2x2_per_page .printed-item-container {
+      height: calc(48vh - 1cm); 
+      overflow: hidden;
+    }
+    
+    /* Layout: 2x3 (2 columns, 3 rows) */
+    .layout-2x3_per_page {
+      grid-template-columns: 1fr 1fr;
+    }
+    .layout-2x3_per_page .printed-item-container {
+      height: calc(31vh - 1cm); 
+      overflow: hidden;
+    }
+    
+    /* Layout: 2x4 (2 columns, 4 rows) */
+    .layout-2x4_per_page {
+      grid-template-columns: 1fr 1fr;
+    }
+    .layout-2x4_per_page .printed-item-container {
+      height: calc(23vh - 1cm); 
+      overflow: hidden;
+    }
+
+    /* Adjust font sizing based on grid density to avoid overlap */
+    .layout-2x2_per_page .printed-item-container table th:first-child,
+    .layout-2x2_per_page .printed-item-container table td:first-child,
+    .layout-2x3_per_page .printed-item-container table th:first-child,
+    .layout-2x3_per_page .printed-item-container table td:first-child,
+    .layout-2x4_per_page .printed-item-container table th:first-child,
+    .layout-2x4_per_page .printed-item-container table td:first-child {
+        width: 40px !important;
+        min-width: 40px !important;
+    }
+    
+    /* Scale down headers inside grid */
+    .layout-2x2_per_page .schedule-print-header-base h3,
+    .layout-2x3_per_page .schedule-print-header-base h3,
+    .layout-2x4_per_page .schedule-print-header-base h3 {
+        font-size: 6pt !important; 
+    }
+    .layout-2x2_per_page .schedule-print-header-base,
+    .layout-2x3_per_page .schedule-print-header-base,
+    .layout-2x4_per_page .schedule-print-header-base {
+        font-size: 5pt !important; 
+        margin-bottom: 0.2cm;
+        padding-bottom: 0.1cm;
+    }
+    
+    /* Hide footer in dense matrices to save space */
+    .layout-2x2_per_page .teacher-schedule-print-footer,
+    .layout-2x3_per_page .teacher-schedule-print-footer,
+    .layout-2x4_per_page .teacher-schedule-print-footer {
+        display: none !important;
+    }
+
+  }
+    .printable-area table { table-layout: fixed !important; width: 100% !important; }
+    .printable-area td, .printable-area th { overflow: hidden !important; text-overflow: ellipsis !important; height: 30px !important; padding: 2px !important; }
+    .printable-area td > div { overflow: hidden !important; text-overflow: ellipsis !important; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; white-space: normal !important; }
+    .layout-1x2_per_page .printed-item-container, .layout-2x2_per_page .printed-item-container, .layout-2x3_per_page .printed-item-container, .layout-2x4_per_page .printed-item-container { overflow: hidden !important; page-break-inside: avoid !important; }
+</style>
+<link rel="stylesheet" href="/index.css">
+</head>
+  <body class="bg-slate-100">
+    <div id="root"></div>
+    <script type="module" src="./index.tsx"></script>
+  <script type="module" src="/index.tsx"></script>
+</body>
+</html>

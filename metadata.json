@@ -1,0 +1,9 @@
+{
+  "name": "Timetable Scheduler",
+  "description": "A React application for creating and managing school timetables, including teachers, subjects, grade levels, classrooms, and schedule entries. Built with TypeScript and Tailwind CSS for a modern UI/UX.",
+  "requestFramePermissions": [],
+  "prompt": "",
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
