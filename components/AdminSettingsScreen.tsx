@@ -22,6 +22,11 @@ export const AdminSettingsScreen: React.FC<AdminSettingsScreenProps> = ({ appDat
     if (!newEmail.trim()) return;
     const emailToAdd = newEmail.trim().toLowerCase();
     
+    if (!emailToAdd.endsWith('@utd.ac.th')) {
+        alert("อนุญาตเฉพาะอีเมลโดเมน @utd.ac.th ของโรงเรียนอุตรดิตถ์เท่านั้น");
+        return;
+    }
+
     if (authorizedAdmins.includes(emailToAdd)) {
         alert("This email is already in the authorized admins list.");
         return;

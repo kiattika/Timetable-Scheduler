@@ -2,7 +2,7 @@ import { formatRoomDisplay } from "../utils/stringUtils";
 
 import React, { useState, useMemo, DragEvent, useCallback, useEffect, MouseEvent as ReactMouseEvent } from 'react';
 import { History, Lock } from 'lucide-react';
-import { AppData, DayOfWeek, GradeLevel, ScheduleEntry, Subject, Teacher, PhysicalRoom, PeriodSetting, TeacherSubjectAssignment, ScheduleViewType, AssignmentModalContext, CurrentAssignmentState, SubjectTeachingMode, ContextMenuState, ContextMenuItemAction, ContextMenuTargetInfo, CopiedScheduleEntryData, ScreenAccessProps, SlotAvailabilityInspectorModalProps, GCalExportOptions, PrintOptions, PrintWithOptionsModalProps } from '../types';
+import { AppData, DayOfWeek, GradeLevel, ScheduleEntry, Subject, Teacher, PhysicalRoom, PeriodSetting, TeacherSubjectAssignment, ScheduleViewType, AssignmentModalContext, CurrentAssignmentState, SubjectTeachingMode, ContextMenuState, ContextMenuItemAction, ContextMenuTargetInfo, CopiedScheduleEntryData, ScreenAccessProps, SlotAvailabilityInspectorModalProps, PrintOptions, PrintWithOptionsModalProps } from '../types';
 import { DAYS_OF_WEEK_ORDERED, Icons } from '../constants';
 import Modal from './Modal';
 import ConfirmationModal from './ConfirmationModal'; 
@@ -11,7 +11,6 @@ import RoomUsageView from './RoomUsageView';
 import ContextMenu from './ContextMenu'; 
 import GradeLevelPlannerView from './GradeLevelPlannerView'; 
 import SlotAvailabilityInspectorModal from './SlotAvailabilityInspectorModal'; 
-import GoogleCalendarExportModal from './GoogleCalendarExportModal';
 import { AuditModal } from './AuditModal';
 import { getParentGradeLevelId, getChildGradeLevelIds, isParentGrade, isChildOf, isSharable } from './scheduleUtils';
 import { useTouchDrag } from '../hooks/useTouchDrag';
@@ -55,7 +54,6 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
   const [isSlotInspectorModalOpen, setIsSlotInspectorModalOpen] = useState(false);
   const [slotInspectorModalContext, setSlotInspectorModalContext] = useState<Omit<SlotAvailabilityInspectorModalProps, 'isOpen' | 'onClose' | 'appData' | 'periodSettings'> | null>(null);
 
-  const [isGCalExportModalOpen, setIsGCalExportModalOpen] = useState(false);
   const [isScheduleVisible, setIsScheduleVisible] = useState<boolean>(true);
   const [isAuditModalOpen, setIsAuditModalOpen] = useState<boolean>(false);
   const [isReviewModalOpen, setIsReviewModalOpen] = useState<boolean>(false);
@@ -585,14 +583,20 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
                 }
             }
 
-            // PhysicalRoom Conflict Check (Bypassed for TEACHER_ONLY subjects)
-            const bypassRoomCheck = (placingSubjectType === 'TEACHER_ONLY') || (entrySubjectType === 'TEACHER_ONLY');
+            // PhysicalRoom Conflict Check (Bypassed for TEACHER_ONLY, STUDENT_ONLY, or Sharable subjects)
+            const isPlacingSharable = isSharable(placingSubject);
+            const isEntrySharable = isSharable(entrySubject);
+            const bypassRoomCheck = (placingSubjectType === 'TEACHER_ONLY') || 
+                                    (entrySubjectType === 'TEACHER_ONLY') ||
+                                    (placingSubjectType === 'STUDENT_ONLY') ||
+                                    (entrySubjectType === 'STUDENT_ONLY') ||
+                                    isPlacingSharable || 
+                                    isEntrySharable;
+
             if (!bypassRoomCheck && physicalRoomIdToCheck && entry.physicalRoomId === physicalRoomIdToCheck) {
-                if (!isSharable(placingSubject) || !isSharable(entrySubject)) {
-                    const physicalRoomDetails = (physicalRooms || []).find(c => c.id === physicalRoomIdToCheck);
-                    const entryGradeName = gradeLevels.find(gl => gl.id === entry.gradeLevelId)?.name || "another grade";
-                    return `ห้องเรียน ${formatRoomDisplay(physicalRoomDetails) || physicalRoomIdToCheck} ถูกใช้โดยวิชา ${entrySubject?.name || 'วิชาอื่น'} สำหรับ ${entryGradeName} และไม่อนุญาตให้ใช้ร่วมกัน`;
-                }
+                const physicalRoomDetails = (physicalRooms || []).find(c => c.id === physicalRoomIdToCheck);
+                const entryGradeName = gradeLevels.find(gl => gl.id === entry.gradeLevelId)?.name || "another grade";
+                return `ห้องเรียน ${formatRoomDisplay(physicalRoomDetails) || physicalRoomIdToCheck} ถูกใช้โดยวิชา ${entrySubject?.name || 'วิชาอื่น'} สำหรับ ${entryGradeName} และไม่อนุญาตให้ใช้ร่วมกัน`;
             }
             
             // Grade Level Slot Conflict Check (Bypassed for TEACHER_ONLY subjects)
@@ -1534,68 +1538,6 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
     setSelectedAvailabilitySlot(null);
   };
 
-  const handlePrepareGoogleCalendarExport = (options: GCalExportOptions) => {
-    console.log("Preparing Google Calendar Export with options:", options);
-    const { teacherIds: selectedTeacherIds, startDate, endDate } = options;
-    
-    const eventsToExport: any[] = [];
-    const startDateTime = new Date(`${startDate}T00:00:00`);
-    const endDateTime = new Date(`${endDate}T23:59:59`);
-
-    const relevantEntries = scheduleEntries.filter(entry => {
-        const teacherMatch = selectedTeacherIds.length === 0 || entry.teacherIds.some(tid => selectedTeacherIds.includes(tid));
-        if (!teacherMatch) return false;
-
-        const periodDetail = periodSettings[entry.period];
-        if (!periodDetail) return false;
-
-        // This is a simplification; for recurring events, a proper library for date math is needed.
-        // Assuming schedule repeats weekly and we want events within the date range.
-        // For this demo, we'll just check if the day of the week falls within the range conceptually.
-        // A real implementation would calculate specific dates for each event instance.
-        
-        // For this placeholder, we'll just create a single instance for each matching schedule entry
-        // and assume the date range implies a "typical week" within that range.
-        // More sophisticated logic would be needed to generate actual recurring event instances.
-        const dayIndex = DAYS_OF_WEEK_ORDERED.indexOf(entry.day);
-        if(dayIndex === -1) return false; // Should not happen
-
-        // Create a sample date within the range for demonstration
-        // This is highly simplified for the placeholder.
-        let sampleDate = new Date(startDateTime);
-        while(sampleDate.getDay() !== (dayIndex + 1) % 7) { // JS Day: Sun=0, Mon=1.. Sat=6
-            sampleDate.setDate(sampleDate.getDate() + 1);
-            if (sampleDate > endDateTime) return false; // Date out of range
-        }
-        
-        if (sampleDate >= startDateTime && sampleDate <= endDateTime) {
-            const eventStart = `${sampleDate.toISOString().slice(0,10)}T${periodDetail.startTime}:00`;
-            const eventEnd = `${sampleDate.toISOString().slice(0,10)}T${periodDetail.endTime}:00`;
-            const subject = subjects.find(s => s.id === entry.subjectId);
-            const physicalRoom = (physicalRooms || []).find(c => c.id === entry.physicalRoomId);
-            const grade = gradeLevels.find(gl => gl.id === entry.gradeLevelId);
-
-            eventsToExport.push({
-                summary: `${subject?.name || 'Event'} - ${grade?.name || ''}`,
-                description: `Subject: ${subject?.name}\nGrade: ${grade?.name}\nPhysicalRoom: ${physicalRoom?.name}\nTeachers: ${entry.teacherIds.map(tid => teachers.find(t => t.id === tid)?.name).join(', ')}`,
-                start: { dateTime: eventStart, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone },
-                end: { dateTime: eventEnd, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone },
-                // In a real scenario, more fields like recurrence, attendees (teacher emails) would be added
-            });
-            return true;
-        }
-        return false;
-    });
-
-    console.log("Formatted Events for Google Calendar (Placeholder):", eventsToExport);
-    if (eventsToExport.length > 0) {
-        alert(`Prepared ${eventsToExport.length} event(s) for export. Check console for details.\nIn a real application, this data would be sent to a backend to interact with Google Calendar API.`);
-    } else {
-        alert("No schedule entries found for the selected criteria.");
-    }
-    setIsGCalExportModalOpen(false);
-  };
-
   const renderAvailabilityTableForSlot = useCallback((
     type: 'teacher' | 'physicalRoom',
     itemsToDisplay: (Teacher | PhysicalRoom)[],
@@ -1716,14 +1658,6 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
             {tab.label}
           </button>
         ))}
-        <button
-            onClick={() => setIsGCalExportModalOpen(true)}
-            className="ml-auto flex items-center px-3 py-2 text-sm bg-green-500 hover:bg-green-600 text-white font-semibold rounded-md shadow-sm transition-colors duration-150"
-            title="Export to Google Calendar (Placeholder)"
-          >
-            <Icons.Calendar size={16} className="mr-1.5" />
-            ส่งออกปฏิทิน (Export Calendar)
-        </button>
       </div>
     );
   };
@@ -2487,14 +2421,6 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
             day={slotInspectorModalContext.day}
             period={slotInspectorModalContext.period}
             currentGradeLevelId={slotInspectorModalContext.currentGradeLevelId}
-        />
-      )}
-      {isGCalExportModalOpen && (
-        <GoogleCalendarExportModal
-            isOpen={isGCalExportModalOpen}
-            onClose={() => setIsGCalExportModalOpen(false)}
-            appData={appData}
-            onExport={handlePrepareGoogleCalendarExport}
         />
       )}
 

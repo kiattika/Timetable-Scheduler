@@ -12,7 +12,6 @@ const PrintWithOptionsModal: React.FC<PrintWithOptionsModalProps> = ({
   currentItemId,
   allItems,
   appData,
-  googleAccessToken,
 }) => {
   const [scope, setScope] = useState<PrintItemScope>('current');
   const [layout, setLayout] = useState<PrintLayoutOption>('1_per_page');
@@ -185,84 +184,6 @@ const PrintWithOptionsModal: React.FC<PrintWithOptionsModalProps> = ({
           >
             Cancel
           </button>
-          {itemType === 'gradeLevel' && (
-            <button
-              type="button"
-              onClick={async () => {
-                if (window.confirm('Send Timetable Email to All selected Grade Level Groups via Gmail API?')) {
-                  try {
-                    let itemsToSend = [];
-                    if (scope === 'all') {
-                        itemsToSend = allItems;
-                    } else if (scope === 'selected') {
-                        itemsToSend = allItems.filter(i => selectedItems.includes(i.id));
-                    } else if (currentItemId) {
-                        const current = allItems.find(i => i.id === currentItemId);
-                        if (current) itemsToSend = [current];
-                    }
-
-                    let success = 0;
-                    let fails = 0;
-                    
-                    const liveToken = googleAccessToken || localStorage.getItem('googleAccessToken');
-                    if (!liveToken) {
-                        alert("ไม่พบสิทธิ์การใช้งาน Google Workspace สำหรับบัญชีนี้ กรุณาลงชื่อเข้าใช้งานใหม่อีกครั้ง");
-                        return;
-                    }
-
-                    // Simple batch iteration to hit our proxy endpoint for each grade level
-                    for (const gl of itemsToSend) {
-                       const groupEmail = (gl as any).groupEmail;
-                       if (!groupEmail) {
-                          fails++;
-                          continue; // No email group registered
-                       }
-                       
-                       const htmlContent = `
-                         <h2>Timetable Update for ${gl.name}</h2>
-                         <p>Please find the latest schedule adjustments attached or accessible via the portal.</p>
-                       `;
-                       
-                       const res = await fetch('/api/workspace/gmail/send-timetable', { 
-                          method: 'POST',
-                          headers: {
-                             'Content-Type': 'application/json',
-                             'Authorization': `Bearer ${liveToken}`, 'X-User-Email': appData.currentUser?.email || '', 'X-Authorized-Admins': JSON.stringify(appData.authorizedAdmins || [])
-                          },
-                          body: JSON.stringify({
-                             groupEmail: groupEmail,
-                             subject: `Updated Timetable: ${gl.name}`,
-                             htmlContent: htmlContent
-                          })
-                       });
-                       
-                       if (res.ok) {
-                         success++;
-                       } else {
-                         fails++;
-                         try {
-                           const text = await res.text();
-                           const data = JSON.parse(text);
-                           console.error(`Failed to send to ${groupEmail}:`, data.error);
-                         } catch (e) {
-                           console.error(`Failed to send to ${groupEmail}:`, res.statusText);
-                         }
-                       }
-                    }
-                    
-                    alert(`Emails processed: ${success} succeeded, ${fails} failed.`);
-                  } catch (e) {
-                    alert('Error connecting to backend.');
-                  }
-                }
-              }}
-              disabled={scope === 'selected' && selectedItems.length === 0}
-              className="px-4 py-2 text-sm font-medium text-white bg-green-600 hover:bg-green-700 rounded-md shadow-sm transition-colors disabled:bg-slate-400 disabled:cursor-not-allowed flex items-center"
-            >
-              <Icons.UploadCloud size={16} className="mr-2" />
-              Send Email
-            </button>
-          )}
           <button
             type="button"
             onClick={handleSubmit}

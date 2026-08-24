@@ -32,7 +32,6 @@ const EntityManagementScreen = <T extends Identifiable,>({
   appData, 
   setAppData, // Added for subject auto-linking
   permissions,
-  googleAccessToken,
 }: EntityManagementScreenProps<T>) => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [currentItem, setCurrentItem] = useState<Partial<T> | null>(null);
@@ -44,22 +43,8 @@ const EntityManagementScreen = <T extends Identifiable,>({
   const [itemToDeleteId, setItemToDeleteId] = useState<string | null>(null);
 
   const [isConfirmSubmitModalOpen, setIsConfirmSubmitModalOpen] = useState(false);
-   const [isConfirmCancelModalOpen, setIsConfirmCancelModalOpen] = useState(false);
+  const [isConfirmCancelModalOpen, setIsConfirmCancelModalOpen] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
-
-  const [isBulkPasteModalOpen, setIsBulkPasteModalOpen] = useState(false);
-  const [bulkPasteClassroom, setBulkPasteClassroom] = useState<GradeLevel | null>(null);
-  const [isSyncingStudents, setIsSyncingStudents] = useState(false);
-  const [syncStatusText, setSyncStatusText] = useState('กำลังซิงค์ข้อมูล...');
-
-  // For PhysicalRoom Bulk Paste
-  const [pasteText, setPasteText] = useState('');
-  const [parsedStudents, setParsedStudents] = useState<{id: string, email: string, fullName: string}[]>([]);
-  const [isResolvingStudents, setIsResolvingStudents] = useState(false);
-  const [resolveError, setResolveError] = useState<string | null>(null);
-  const [selectedTeacherEmails, setSelectedTeacherEmails] = useState<string[]>([]);
-  const [isSyncingTeachers, setIsSyncingTeachers] = useState(false);
-  const [isInitialSyncDone, setIsInitialSyncDone] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   useEffect(() => {
@@ -81,249 +66,6 @@ const EntityManagementScreen = <T extends Identifiable,>({
         s.isHomeroomAdvisorySubject
     );
   }, [appData?.subjects]);
-
-  useEffect(() => {
-    if (!pasteText) {
-      setParsedStudents([]);
-      setResolveError(null);
-      return;
-    }
-
-    const ids = pasteText.split('\n')
-       .map(line => line.trim())
-       .filter(line => line.length > 0);
-       
-    if (ids.length === 0) {
-      setParsedStudents([]);
-      setResolveError(null);
-      return;
-    }
-
-    const timer = setTimeout(async () => {
-      setIsResolvingStudents(true);
-      setResolveError(null);
-      try {
-        const liveToken = googleAccessToken || localStorage.getItem('googleAccessToken');
-        if (!liveToken) {
-           setResolveError("ไม่พบสิทธิ์การใช้งาน Google Group สำหรับบัญชีนี้ กรุณาลงชื่อเข้าใช้งานใหม่อีกครั้ง");
-           // Removed setParsedStudents([]) so it doesn't wipe state on token loss
-           return;
-        }
-
-        const response = await fetch('/api/workspace/directory/resolve-users', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${liveToken}`,
-                'X-User-Email': appData.currentUser?.email || '',
-                'X-Authorized-Admins': JSON.stringify(appData.authorizedAdmins || [])
-            },
-            body: JSON.stringify({ userIds: ids })
-        });
-        
-        let data;
-        try {
-          const text = await response.text();
-          try {
-            data = JSON.parse(text);
-          } catch (e) {
-            data = { error: text || response.statusText || 'Invalid JSON response from server' };
-          }
-        } catch (e) {
-          data = { error: response.statusText || 'Failed to read response body' };
-        }
-        
-        if (response.ok) {
-            if (data.users) {
-                setParsedStudents(data.users);
-            } else {
-                setParsedStudents([]);
-            }
-        } else {
-            if (response.status === 403) {
-                setResolveError("ไม่พบสิทธิ์การใช้งาน Google Group สำหรับบัญชีนี้ กรุณาลงชื่อเข้าใช้งานใหม่อีกครั้ง");
-            } else {
-                setResolveError(`Google API Error: ${data.error || response.statusText}`);
-                window.alert(`Google API Error: ${data.error || response.statusText}`);
-            }
-        }
-      } catch (error: any) {
-        console.error('Error resolving students:', error);
-        setResolveError(`Google API Error: ${error.message}`);
-        window.alert(`Google API Error: ${error.message}`);
-      } finally {
-        setIsResolvingStudents(false);
-      }
-    }, 500); // 500ms debounce
-
-    return () => clearTimeout(timer);
-  }, [pasteText, googleAccessToken]);
-
-  const handleBatchInsertGoogleGroup = async (students: {id: string, email: string, fullName: string}[]) => {
-    if (!bulkPasteClassroom || !bulkPasteClassroom.groupEmail) {
-      alert('กรุณากรอกและบันทึกอีเมลกลุ่มรายห้อง (Student Group Email) ก่อนทำการเพิ่มสมาชิกเข้า Google Group');
-      return;
-    }
-    const confirmed = window.confirm(`คุณต้องการเพิ่มนักเรียนทั้งหมด ${students.length} คน เข้ากลุ่ม ${bulkPasteClassroom.groupEmail} ใช่หรือไม่?\n\nคำเตือน: การดำเนินการนี้จะลบตารางเรียนเดิมในปฏิทินของนักเรียนและแทนที่ด้วยตารางเรียนเวอร์ชันล่าสุด ยืนยันหรือไม่?`);
-    if (!confirmed) return;
-
-    // Generate real events
-    const generatedEvents: any[] = [];
-    const classEntries = appData?.scheduleEntries?.filter(e => e.gradeLevelId === bulkPasteClassroom.id) || [];
-    if (appData?.periodSettings) {
-        const today = new Date();
-        const dayOfWeek = today.getDay();
-        const daysUntilNextMonday = dayOfWeek === 0 ? 1 : 8 - dayOfWeek;
-        const baseDate = new Date(today);
-        baseDate.setDate(today.getDate() + daysUntilNextMonday);
-        baseDate.setHours(0,0,0,0);
-        
-        const dayMap: Record<string, number> = {
-            'Monday': 0, 'Tuesday': 1, 'Wednesday': 2, 'Thursday': 3, 'Friday': 4, 'Saturday': 5, 'Sunday': 6
-        };
-
-        classEntries.forEach(entry => {
-            const period = appData.periodSettings[entry.period];
-            if (!period) return;
-            const offset = dayMap[entry.day] || 0;
-            const evDate = new Date(baseDate);
-            evDate.setDate(evDate.getDate() + offset);
-            
-            const [startH, startM] = period.startTime.split(':');
-            const [endH, endM] = period.endTime.split(':');
-            const start = new Date(evDate); start.setHours(parseInt(startH), parseInt(startM));
-            const end = new Date(evDate); end.setHours(parseInt(endH), parseInt(endM));
-            
-            const subject = appData.subjects.find(s => s.id === entry.subjectId);
-            const teacherNames = entry.teacherIds.map(tid => appData.teachers.find(t => t.id === tid)?.name).filter(Boolean).join(', ');
-            const teacherEmails = entry.teacherIds.map(tid => appData.teachers.find(t => t.id === tid)?.email).filter(Boolean);
-            const roomObj = appData.physicalRooms.find(r => r.id === entry.physicalRoomId);
-            
-            const roomLocation = roomObj ? (roomObj.code ? `[${roomObj.code}] ${roomObj.name}` : roomObj.name) : '';
-            const subjectTitle = subject ? (subject.subjectCode ? `[${subject.subjectCode}] ${subject.name}` : subject.name) : 'Class';
-            
-            
-            const primaryTeacherEmail = teacherEmails && teacherEmails.length > 0 ? teacherEmails[0] : null;
-            if (primaryTeacherEmail) {
-                generatedEvents.push({
-                    targetTeacherEmail: primaryTeacherEmail,
-
-                summary: subjectTitle,
-                description: `Teacher(s): ${teacherNames}`,
-                location: roomLocation,
-                start: start.toISOString(),
-                end: end.toISOString(),
-                teacherEmails: teacherEmails
-            });
-            }
-        });
-    }
-
-    setIsSyncingStudents(true);
-    try {
-      const emails = students.map(s => s.email);
-      const liveToken = googleAccessToken || localStorage.getItem('googleAccessToken');
-      if (!liveToken) {
-          throw new Error("ไม่พบสิทธิ์การใช้งาน Google Group สำหรับบัญชีนี้ กรุณาลงชื่อเข้าใช้งานใหม่อีกครั้ง");
-      }
-
-      setSyncStatusText("กำลังตรวจสอบและอัปเดตกลุ่มอีเมล...");
-      // Task A: Google Groups
-      const groupResponse = await fetch('/api/workspace/directory/batch-insert', {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${liveToken}`,
-          'X-User-Email': appData.currentUser?.email || '',
-                            'X-Authorized-Admins': JSON.stringify(appData.authorizedAdmins || [])
-        },
-        body: JSON.stringify({
-          groupEmail: bulkPasteClassroom.groupEmail,
-          memberEmails: emails,
-          classroomName: bulkPasteClassroom.name
-        })
-      });
-
-      let groupData;
-      try {
-         const text = await groupResponse.text();
-         try {
-           groupData = JSON.parse(text);
-         } catch (e) {
-           groupData = { error: text || groupResponse.statusText };
-         }
-      } catch (e) {
-         groupData = { error: groupResponse.statusText };
-      }
-
-      if (!groupResponse.ok) {
-         if (groupResponse.status === 403) {
-             throw new Error("ไม่พบสิทธิ์การใช้งาน Google Group สำหรับบัญชีนี้ กรุณาลงชื่อเข้าใช้งานใหม่อีกครั้ง");
-         }
-         throw new Error(`[${groupResponse.status}] ${groupData.error || 'Failed to sync members to group'}`);
-      }
-
-      setSyncStatusText("กำลังอัปเดตปฏิทินนักเรียน...");
-      // Task B: Google Calendar for Students
-      const calendarResponse = await fetch('/api/workspace/calendar/sync-students', {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${liveToken}`,
-          'X-User-Email': appData.currentUser?.email || '',
-                            'X-Authorized-Admins': JSON.stringify(appData.authorizedAdmins || [])
-        },
-        body: JSON.stringify({
-          students: students,
-          classroomName: bulkPasteClassroom.name,
-          groupEmail: bulkPasteClassroom.groupEmail,
-          events: generatedEvents,
-          semesterEndDate: appData?.organizationSettings?.semesterEndDate
-        })
-      });
-
-      let calData;
-      try {
-          const text = await calendarResponse.text();
-          try {
-            calData = JSON.parse(text);
-          } catch (e) {
-            calData = { error: text || calendarResponse.statusText };
-          }
-      } catch (e) {
-          calData = { error: calendarResponse.statusText };
-      }
-
-      if (!calendarResponse.ok) {
-         if (calendarResponse.status === 403) {
-             throw new Error("ไม่พบสิทธิ์การใช้งาน Google Calendar สำหรับบัญชีนี้ กรุณาลงชื่อเข้าใช้งานใหม่อีกครั้ง");
-         }
-         throw new Error(`[${calendarResponse.status}] ${calData.error || 'Failed to sync student calendars'}`);
-      }
-
-      if (!isInitialSyncDone) {
-          alert('นำเข้าข้อมูลนักเรียนเรียบร้อยแล้ว');
-          setIsInitialSyncDone(true);
-      } else {
-          alert('อัพเดทตารางเรียนลงปฏิทินเรียบร้อยแล้ว');
-      }
-      // Removed setPasteText('') and modal close so list is retained
-    } catch (e: any) {
-      if (e.message.includes('เซสชันหมดอายุ') || e.message.includes('401')) {
-          localStorage.removeItem('googleAccessToken');
-      }
-      alert(`เกิดข้อผิดพลาด: ${e.message}`);
-    } finally {
-      setIsSyncingStudents(false);
-    }
-  };
-
-  const openBulkPasteModal = (classroom: GradeLevel) => {
-    setBulkPasteClassroom(classroom);
-    const savedPasteText = localStorage.getItem(`studentPasteText_${classroom.id}`);
-    setPasteText(savedPasteText || '');
-    setIsBulkPasteModalOpen(true);
-  };
 
 
   const IconComponent = getIcon(entityType);
@@ -786,10 +528,18 @@ const EntityManagementScreen = <T extends Identifiable,>({
       }
       else {
         const isCheckbox = type === 'checkbox';
-        setCurrentItem(prev => ({
-          ...prev,
-          [name]: isCheckbox ? (e.target as HTMLInputElement).checked : value,
-        } as Partial<T>));
+        const updatedVal = isCheckbox ? (e.target as HTMLInputElement).checked : value;
+        setCurrentItem(prev => {
+          if (!prev) return null;
+          const next = {
+            ...prev,
+            [name]: updatedVal,
+          };
+          if (entityType === 'subjects' && (name === 'type' || name === 'subjectType') && value === 'STUDENT_ONLY') {
+            (next as any).allowPhysicalRoomSharing = true;
+          }
+          return next as Partial<T>;
+        });
       }
     }
   };
@@ -963,141 +713,6 @@ const EntityManagementScreen = <T extends Identifiable,>({
           <h2 className="text-2xl font-semibold text-slate-800">Manage {entityNamePlural}</h2>
         </div>
         <div className="flex space-x-2">
-          {entityType === 'teachers' && (() => {
-              const currentUserEmail = appData.currentUser?.email || '';
-              const isSuperAdmin = (appData?.authorizedAdmins || []).includes(currentUserEmail);
-              const isAuthAdmin = (appData.authorizedAdmins || []).includes(currentUserEmail);
-              const isAdmin = isSuperAdmin || isAuthAdmin;
-              return (
-            <button
-              type="button"
-              title={isAdmin ? "" : "สิทธิ์ในการซิงค์ปฏิทินถูกจำกัดไว้สำหรับผู้ดูแลระบบ (Admin) เท่านั้น"}
-              onClick={async (e) => {
-                e.preventDefault();
-                if (!isAdmin) return;
-                if (selectedTeacherEmails.length === 0) {
-                    alert('กรุณาเลือกครูอย่างน้อย 1 ท่านเพื่อซิงค์ข้อมูล');
-                    return;
-                }
-                if (window.confirm(`การดำเนินการนี้จะลบตารางเรียนเดิมในปฏิทินของครูที่เลือก (${selectedTeacherEmails.length} ท่าน) และแทนที่ด้วยตารางเรียนเวอร์ชันล่าสุด ยืนยันหรือไม่?`)) {
-                  setIsSyncingTeachers(true);
-                  try {
-                    const selectedTeachers = items.filter(t => selectedTeacherEmails.includes((t as any).email));
-                    const generatedEvents: any[] = [];
-                    const teacherEntries = appData?.scheduleEntries?.filter(e => e.teacherIds.some(tid => selectedTeachers.find(t => t.id === tid))) || [];
-                    if (appData?.periodSettings) {
-                        const today = new Date();
-                        const dayOfWeek = today.getDay();
-                        const daysUntilNextMonday = dayOfWeek === 0 ? 1 : 8 - dayOfWeek;
-                        const baseDate = new Date(today);
-                        baseDate.setDate(today.getDate() + daysUntilNextMonday);
-                        baseDate.setHours(0,0,0,0);
-                        
-                        const dayMap: Record<string, number> = {
-                            'Monday': 0, 'Tuesday': 1, 'Wednesday': 2, 'Thursday': 3, 'Friday': 4, 'Saturday': 5, 'Sunday': 6
-                        };
-
-                        teacherEntries.forEach(entry => {
-                            const period = appData.periodSettings[entry.period];
-                            if (!period) return;
-                            const offset = dayMap[entry.day] || 0;
-                            const evDate = new Date(baseDate);
-                            evDate.setDate(evDate.getDate() + offset);
-                            
-                            const [startH, startM] = period.startTime.split(':');
-                            const [endH, endM] = period.endTime.split(':');
-                            const start = new Date(evDate); start.setHours(parseInt(startH), parseInt(startM));
-                            const end = new Date(evDate); end.setHours(parseInt(endH), parseInt(endM));
-                            
-                            const subject = appData.subjects.find(s => s.id === entry.subjectId);
-                            const classNames = appData.gradeLevels.find(gl => gl.id === entry.gradeLevelId)?.name || '';
-                            const roomObj = appData.physicalRooms.find(r => r.id === entry.physicalRoomId);
-                            
-                            const roomLocation = roomObj ? (roomObj.code ? `[${roomObj.code}] ${roomObj.name}` : roomObj.name) : '';
-                            const subjectTitle = subject ? (subject.subjectCode ? `[${subject.subjectCode}] ${subject.name}` : subject.name) : 'Class';
-                            
-                            
-                            const matchedTeachers = selectedTeachers.filter(t => entry.teacherIds.includes(t.id));
-                            matchedTeachers.forEach(matchedTeacher => {
-                                generatedEvents.push({
-                                    targetTeacherEmail: (matchedTeacher as any).email,
-
-                                summary: subjectTitle,
-                                description: `Class(es): ${classNames}`,
-                                location: roomLocation,
-                                start: start.toISOString(),
-                                end: end.toISOString()
-                            });
-                            });
-                        });
-                    }
-
-                    const liveToken = googleAccessToken || localStorage.getItem('googleAccessToken');
-                    if (!liveToken) {
-                        throw new Error("ไม่พบสิทธิ์การใช้งาน Google Calendar สำหรับบัญชีนี้ กรุณาลงชื่อเข้าใช้งานใหม่อีกครั้ง");
-                    }
-
-                    const res = await fetch('/api/workspace/calendar/sync-teachers', { 
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'Authorization': `Bearer ${liveToken}`,
-                            'X-User-Email': appData.currentUser?.email || '',
-                            'X-Authorized-Admins': JSON.stringify(appData.authorizedAdmins || [])
-                        },
-                        body: JSON.stringify({
-                            teachers: selectedTeachers,
-                            events: generatedEvents,
-                            semesterEndDate: appData?.organizationSettings?.semesterEndDate
-                        })
-                    });
-                    
-                    let data;
-                    try {
-                        const text = await res.text();
-                        try {
-                          data = JSON.parse(text);
-                        } catch (e) {
-                          data = { error: text || res.statusText };
-                        }
-                    } catch (e) {
-                        data = { error: res.statusText };
-                    }
-                    
-                    if (res.ok) {
-                        alert(data.message || 'ซิงค์ข้อมูลสำเร็จ');
-                    } else {
-                        if (res.status === 403) {
-                            throw new Error("ไม่พบสิทธิ์การใช้งาน Google Calendar สำหรับบัญชีนี้ กรุณาลงชื่อเข้าใช้งานใหม่อีกครั้ง");
-                        }
-                        throw new Error(`[${res.status}] ${data.error || res.statusText}`);
-                    }
-                  } catch (e: any) {
-                    alert('เกิดข้อผิดพลาด: ' + e.message);
-                  } finally {
-                    setIsSyncingTeachers(false);
-                  }
-                }
-              }}
-              className="relative z-[9999] pointer-events-auto flex items-center bg-green-600 hover:bg-green-700 text-white font-semibold py-2 px-4 rounded-md shadow-md transition-colors duration-150 disabled:bg-slate-400 disabled:cursor-not-allowed"
-              disabled={isSyncingTeachers}
-            >
-              {isSyncingTeachers ? (
-                 <>
-                   <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                       <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                   </svg>
-                   กำลังซิงค์...
-                 </>
-              ) : (
-                 <>
-                    <Icons.Calendar size={20} className="mr-2" /> ซิงค์/อัปเดตปฏิทิน ({selectedTeacherEmails.length})
-                 </>
-              )}
-            </button>
-            );
-          })()}
           <button
             onClick={openModalForNew}
             className="flex items-center bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-md shadow-md transition-colors duration-150"
@@ -1145,24 +760,6 @@ const EntityManagementScreen = <T extends Identifiable,>({
           <table className="min-w-full divide-y divide-slate-200">
             <thead className="bg-slate-50">
               <tr>
-                {entityType === 'teachers' && (
-                    <th scope="col" className="px-4 py-3 w-10 text-left">
-                        <label className="flex items-center space-x-2 text-slate-700 cursor-pointer">
-                            <input 
-                                type="checkbox" 
-                                className="rounded text-blue-600 focus:ring-blue-500"
-                                checked={filteredItems.filter(item => (item as any).email).length > 0 && selectedTeacherEmails.length === filteredItems.filter(item => (item as any).email).length}
-                                onChange={(e) => {
-                                    if (e.target.checked) {
-                                        setSelectedTeacherEmails(filteredItems.map(item => (item as any).email).filter(Boolean));
-                                    } else {
-                                        setSelectedTeacherEmails([]);
-                                    }
-                                }}
-                            />
-                        </label>
-                    </th>
-                )}
                 {formFields.map(field => (
                     <th key={field.name as string} scope="col" className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
                         {field.label}
@@ -1176,24 +773,6 @@ const EntityManagementScreen = <T extends Identifiable,>({
             <tbody className="bg-white divide-y divide-slate-200">
               {filteredItems.map(item => (
                 <tr key={item.id} className="hover:bg-slate-50 transition-colors">
-                  {entityType === 'teachers' && (
-                      <td className="px-4 py-3">
-                          <input 
-                              type="checkbox"
-                              className="rounded text-blue-600 focus:ring-blue-500"
-                              checked={selectedTeacherEmails.includes((item as any).email)}
-                              onChange={(e) => {
-                                  if (e.target.checked) {
-                                      if ((item as any).email) {
-                                          setSelectedTeacherEmails(prev => [...prev, (item as any).email]);
-                                      }
-                                  } else {
-                                      setSelectedTeacherEmails(prev => prev.filter(email => email !== (item as any).email));
-                                  }
-                              }}
-                          />
-                      </td>
-                  )}
                   {formFields.map(field => (
                     <td key={field.name as string} className="px-4 py-3 whitespace-nowrap text-sm text-slate-700">
                         {entityType === 'gradeLevels' && field.name === 'groupEmail' ? (
@@ -1240,19 +819,6 @@ const EntityManagementScreen = <T extends Identifiable,>({
                         disabled={!permissions.canPerformManagerActions}
                       >
                         <Icons.Delete size={18} />
-                      </button>
-                    )}
-                    {entityType === 'gradeLevels' && (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          openBulkPasteModal(item as any);
-                        }}
-                        className="text-green-600 hover:text-green-800 transition-colors ml-2 bg-green-50 px-2 py-1 rounded border border-green-200 inline-flex items-center gap-1"
-                        title="Sync Members to Group"
-                      >
-                        <Icons.UploadCloud size={14} />
-                        <span className="text-xs">Sync Members</span>
                       </button>
                     )}
                   </td>
@@ -1429,161 +995,6 @@ const EntityManagementScreen = <T extends Identifiable,>({
               </button>
             </div>
           </form>
-        </Modal>
-      )}
-
-      {isBulkPasteModalOpen && bulkPasteClassroom && (
-        <Modal 
-            isOpen={isBulkPasteModalOpen} 
-            onClose={() => setIsBulkPasteModalOpen(false)} 
-            title={`จัดการอีเมลกลุ่มนักเรียน: ${bulkPasteClassroom.name}`}
-            size="lg"
-        >
-          <div className="p-2 space-y-4">
-              <div className="bg-blue-50 text-blue-800 p-3 rounded-md border border-blue-100 text-sm mb-4">
-                  <strong>Student Group Email:</strong> {bulkPasteClassroom.groupEmail || <span className="text-red-500">Not set. กรุณาตั้งค่าก่อนในหน้าแก้ไขห้องเรียน</span>}
-              </div>
-
-              <div className="border-t border-slate-200 pt-4 pb-2">
-                <div className="flex justify-between items-center mb-2">
-                  <label className="block text-sm font-medium text-slate-700">
-                    คัดลอกรหัสนักเรียนจาก Excel มาวางที่นี่ (1 รหัสต่อ 1 บรรทัด)
-                  </label>
-                  {pasteText && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                          setPasteText('');
-                          if (bulkPasteClassroom) {
-                              localStorage.removeItem(`studentPasteText_${bulkPasteClassroom.id}`);
-                          }
-                      }}
-                      className="text-xs text-red-600 hover:text-red-800 focus:outline-none flex items-center"
-                    >
-                      <Icons.Delete size={14} className="mr-1" />
-                      ล้างข้อมูล (Clear)
-                    </button>
-                  )}
-                </div>
-                <textarea
-                  className="w-full h-48 p-3 border border-slate-300 rounded-md focus:ring-blue-500 focus:border-blue-500 text-sm shadow-sm font-mono bg-slate-50"
-                  placeholder="it12345&#10;it12346&#10;..."
-                  value={pasteText}
-                  onChange={e => {
-                      const val = e.target.value;
-                      setPasteText(val);
-                      if (bulkPasteClassroom) {
-                          localStorage.setItem(`studentPasteText_${bulkPasteClassroom.id}`, val);
-                      }
-                  }}
-                ></textarea>
-                
-                {isResolvingStudents && (
-                  <div className="mt-4 flex items-center text-sm text-blue-600">
-                    <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                    </svg>
-                    กำลังดึงข้อมูลนักเรียนจาก Workspace Directory...
-                  </div>
-                )}
-                
-                {resolveError && (
-                  <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-md">
-                    <p className="text-sm text-red-600 font-medium break-words">
-                      {resolveError}
-                    </p>
-                  </div>
-                )}
-                
-                {!isResolvingStudents && !resolveError && (parsedStudents || []).length > 0 && (
-                  <div className="mt-4">
-                    <div className="text-sm font-semibold text-blue-700 mb-2 flex items-center justify-between">
-                      <span className="flex items-center">
-                          <Icons.CheckCircle size={16} className="mr-2"/>
-                          ตรวจพบรายชื่อนักเรียนทั้งหมด {(parsedStudents || []).length} คน
-                      </span>
-                    </div>
-                    <div className="flex flex-wrap gap-2 max-h-32 overflow-y-auto p-3 bg-white border border-slate-200 rounded-md shadow-inner">
-                      {(parsedStudents || []).map((student, i) => (
-                        <span key={i} className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
-                           {student?.fullName || 'Unknown'} ({student?.email || ''})
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                
-                {!bulkPasteClassroom?.groupEmail && (
-                  <p className="text-xs text-amber-600 mt-2 flex items-center">
-                     <Icons.Warning size={14} className="mr-1"/> 
-                     กรุณาตั้งค่า Student Group Email ให้กับห้องเรียนนี้ก่อน
-                  </p>
-                )}
-              </div>
-
-              <div className="sticky bottom-0 -mx-4 md:-mx-6 -mb-4 md:-mb-6 px-4 md:px-6 py-4 bg-white border-t border-slate-100 flex justify-between items-center gap-3 z-50">
-                {(() => {
-                  const currentUserEmail = appData.currentUser?.email || '';
-                  const isSuperAdmin = (appData?.authorizedAdmins || []).includes(currentUserEmail);
-                  const isAuthAdmin = (appData.authorizedAdmins || []).includes(currentUserEmail);
-                  const isAdmin = isSuperAdmin || isAuthAdmin;
-                  return (
-                <button
-                  type="button"
-                  title={isAdmin ? "" : "สิทธิ์ในการซิงค์ปฏิทินถูกจำกัดไว้สำหรับผู้ดูแลระบบ (Admin) เท่านั้น"}
-                  onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      
-                      if (!isAdmin) return;
-                      if (!bulkPasteClassroom?.groupEmail) {
-                          return;
-                      }
-                      if (isSyncingStudents) {
-                          return;
-                      }
-                      if (isResolvingStudents) {
-                          return;
-                      }
-                      if (resolveError) {
-                          return;
-                      }
-                      if (!parsedStudents || parsedStudents.length === 0) {
-                          return;
-                      }
-
-                      handleBatchInsertGoogleGroup(parsedStudents);
-                  }}
-                  className="relative z-[9999] pointer-events-auto bg-green-600 hover:bg-green-700 text-white px-5 py-2 rounded-md text-sm font-medium shadow flex items-center transition-colors disabled:bg-slate-400 disabled:cursor-not-allowed"
-                  disabled={isSyncingStudents || !isAdmin}
-                >
-                  {isSyncingStudents ? (
-                    <>
-                      <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                      </svg>
-                      {syncStatusText}
-                    </>
-                  ) : (
-                    <>
-                      <Icons.UploadCloud size={18} className="mr-2"/> 
-                      ซิงค์/อัปเดตปฏิทิน
-                    </>
-                  )}
-                </button>
-                );
-                })()}
-                <button
-                  type="button"
-                  onClick={() => setIsBulkPasteModalOpen(false)}
-                  className="px-4 py-2 text-sm font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-md border border-slate-300 transition-colors"
-                >
-                  Close
-                </button>
-              </div>
-          </div>
         </Modal>
       )}
 

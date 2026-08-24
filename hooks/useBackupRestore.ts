@@ -3,7 +3,7 @@ import { AppData } from '../types';
 
 export const useBackupRestore = (appData: AppData | null, setAppData: (data: AppData) => void, setRestoreFile: (file: File | null) => void, setShowRestoreConfirm: (show: boolean) => void) => {
   const handleBackupData = () => {
-    if (appData?.currentUser?.role !== 'admin' && appData?.currentUser?.role !== 'platform_admin') {
+    if (appData?.currentUser?.role !== 'admin') {
       alert("Only administrators can perform backups.");
       return;
     }
@@ -42,7 +42,7 @@ export const useBackupRestore = (appData: AppData | null, setAppData: (data: App
   };
 
   const handleRestoreData = async (event: ChangeEvent<HTMLInputElement>) => {
-    if (appData?.currentUser?.role !== 'admin' && appData?.currentUser?.role !== 'platform_admin') {
+    if (appData?.currentUser?.role !== 'admin') {
       alert("Only administrators can restore data.");
       return;
     }

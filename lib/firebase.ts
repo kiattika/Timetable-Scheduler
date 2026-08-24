@@ -25,13 +25,10 @@ export const db = isValidDbId
 
 export const auth = getAuth(app);
 const provider = new GoogleAuthProvider();
-provider.addScope('https://www.googleapis.com/auth/calendar');
-provider.addScope('https://www.googleapis.com/auth/admin.directory.group');
-provider.addScope('https://www.googleapis.com/auth/admin.directory.group.member');
-provider.addScope('https://www.googleapis.com/auth/admin.directory.user.readonly');
-provider.addScope('https://www.googleapis.com/auth/gmail.send');
-provider.setCustomParameters({ prompt: 'consent' });
-
+provider.setCustomParameters({ 
+  hd: 'utd.ac.th',
+  prompt: 'select_account' 
+});
 
 let isSigningIn = false;
 let cachedAccessToken: string | null = null;
@@ -45,6 +42,13 @@ export const initAuth = (
 ) => {
   return onAuthStateChanged(auth, async (user: User | null) => {
     if (user) {
+      const email = (user.email || '').toLowerCase().trim();
+      if (!email.endsWith('@utd.ac.th')) {
+        await auth.signOut();
+        if (typeof window !== 'undefined') localStorage.removeItem('googleAccessToken');
+        if (onAuthFailure) onAuthFailure();
+        return;
+      }
       if (cachedAccessToken) {
         if (onAuthSuccess) onAuthSuccess(user, cachedAccessToken);
       } else if (!isSigningIn) {
@@ -60,16 +64,21 @@ export const initAuth = (
   });
 };
 
-export const googleSignIn = async (): Promise<{ user: User; accessToken: string } | null> => {
+export const googleSignIn = async (): Promise<{ user: User; accessToken: string | null } | null> => {
   try {
     isSigningIn = true;
     const result = await signInWithPopup(auth, provider);
-    const credential = GoogleAuthProvider.credentialFromResult(result);
-    if (!credential?.accessToken) {
-      throw new Error('Failed to get access token from Firebase Auth');
+    const email = (result.user.email || '').toLowerCase().trim();
+    if (!email.endsWith('@utd.ac.th')) {
+      await auth.signOut();
+      throw new Error('เข้าสู่ระบบได้เฉพาะบัญชี @utd.ac.th ของโรงเรียนอุตรดิตถ์เท่านั้น');
     }
 
-    cachedAccessToken = credential.accessToken;
+    const credential = GoogleAuthProvider.credentialFromResult(result);
+    cachedAccessToken = credential?.accessToken || null;
+    if (cachedAccessToken && typeof window !== 'undefined') {
+      localStorage.setItem('googleAccessToken', cachedAccessToken);
+    }
     return { user: result.user, accessToken: cachedAccessToken };
   } catch (error: any) {
     console.error('Sign in error:', error);

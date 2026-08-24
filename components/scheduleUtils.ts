@@ -1,6 +1,15 @@
 import { GradeLevel } from '../types';
 
-export const isSharable = (subject: any) => Boolean(subject?.allowPhysicalRoomSharing === true || subject?.allowPhysicalRoomSharing === 'true' || subject?.allowPhysicalRoomSharing === 1 || subject?.type === 'STUDENT_ONLY' || subject?.subjectType === 'STUDENT_ONLY');
+export const isSharable = (subject: any) => Boolean(
+  subject?.allowPhysicalRoomSharing === true || 
+  subject?.allowPhysicalRoomSharing === 'true' || 
+  subject?.allowPhysicalRoomSharing === 1 || 
+  subject?.allowPhysicalRoomSharing === '1' || 
+  subject?.type === 'STUDENT_ONLY' || 
+  subject?.subjectType === 'STUDENT_ONLY' ||
+  (typeof subject?.name === 'string' && (subject.name.includes('พักกลางวัน') || subject.name.includes('กิจกรรมชุมนุม') || subject.name.includes('โฮมรูม'))) ||
+  (typeof subject?.subjectCode === 'string' && (subject.subjectCode.toUpperCase() === 'HR' || subject.subjectCode.toUpperCase() === 'LUNCH'))
+);
 
 export const getParentGradeLevelId = (childGradeLevelId: string, allGradeLevels: GradeLevel[]): string | null => {
     const childGrade = allGradeLevels.find(gl => gl.id === childGradeLevelId);

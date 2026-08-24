@@ -120,7 +120,7 @@ export interface OrganizationSettings {
   schoolAdminEmail?: string; // อีเมลแอดมินโรงเรียน
 }
 
-export type UserRole = 'admin' | 'manager' | 'assistant' | 'guest' | 'platform_admin';
+export type UserRole = 'admin' | 'manager' | 'assistant' | 'guest';
 
 export interface User extends Identifiable {
   name: string;
@@ -251,7 +251,6 @@ export interface ScreenAccessProps {
         canModifyScheduleEntries: boolean; // For adding, editing, deleting schedule entries in SchedulePlanner
         canModifyTeacherSubjectLinks: boolean; // For adding, editing, deleting teacher-subject links
     };
-    googleAccessToken?: string | null;
 }
 
 // Props for SlotAvailabilityInspectorModal
@@ -263,13 +262,6 @@ export interface SlotAvailabilityInspectorModalProps {
   period: number;
   periodSettings: PeriodSetting[]; // To display period label and time
   currentGradeLevelId?: string; // Optional, to show context if available
-}
-
-// For Google Calendar Export Modal
-export interface GCalExportOptions {
-  teacherIds: string[];
-  startDate: string; // YYYY-MM-DD
-  endDate: string;   // YYYY-MM-DD
 }
 
 // For Print Options Modal
@@ -294,7 +286,6 @@ export interface PrintWithOptionsModalProps {
   currentItemId: string | null; // ID of the currently viewed item (teacher, grade, room)
   allItems: Identifiable[]; // All available items (teachers, grades, rooms) for multi-select
   appData: AppData; // To resolve names for selection list
-  googleAccessToken?: string | null;
 }
 
 // Props for individual schedule table rendering components (for batch printing)

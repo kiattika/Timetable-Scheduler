@@ -26,11 +26,10 @@ import { fetchAppData, saveAppData, getInitialAppDataForApi } from './api';
 import { isParentGrade as checkIsParentGradeUtil, getParentGradeLevelId, getChildGradeLevelIds, isChildOf } from './components/scheduleUtils';
 import { useAppAuth } from './hooks/useAppAuth';
 import { useBackupRestore } from './hooks/useBackupRestore';
-import { PlatformAdminScreen } from './components/PlatformAdminScreen';
 import { db } from './lib/firebase';
 import { doc, getDoc, getDocFromServer } from 'firebase/firestore';
 
-type View = 'schedule' | 'manageData' | 'importData' | 'platformAdmin'; 
+type View = 'schedule' | 'manageData' | 'importData'; 
 type ManageDataSubView = EntityType | TeacherAssignmentType | PeriodSettingsType | 'organizationSettings' | UserManagementType | AcademicStructureType | TeacherLoadReportType | 'adminSettings' | 'departments' | 'resourceTypes' | 'systemHealth';
 
 const MAX_EXCEL_CELL_LENGTH = 32000; 
@@ -367,22 +366,6 @@ const App: React.FC = () => {
     
     if (!appData.currentUser) {
         return <LoginScreen onLoginSuccess={handleLoginSuccess} />;
-    }
-
-    if (currentView === 'platformAdmin') {
-      const isPlatformAdmin = appData.currentUser.role === 'platform_admin';
-      if (!isPlatformAdmin) {
-        return <div className="text-red-500 p-4 font-bold text-center">Access Denied. Redirecting to home...</div>;
-      }
-      return (
-        <PlatformAdminScreen
-          appData={appData}
-          impersonatedOrgId={impersonatedOrgId}
-          setImpersonatedOrgId={setImpersonatedOrgId}
-          onExitImpersonation={() => setImpersonatedOrgId(null)}
-          onReloadMainData={() => {}}
-        />
-      );
     }
 
     if (currentView === 'schedule') {
@@ -756,118 +739,100 @@ const App: React.FC = () => {
               </div>
           )}
           <ul className="space-y-1.5">
-            {(!appData?.currentUser || appData.currentUser.role !== 'platform_admin' || impersonatedOrgId) && (
-              <>
-                <li>
-                  <NavButton
-                    viewName="schedule"
-                    label="Schedule Planner"
-                    icon={Icons.Schedule}
-                    isActive={currentView === 'schedule'}
-                    onClick={() => setCurrentView('schedule')}
-                  />
-                </li>
-                <li>
-                  <NavButton
-                      viewName="manageData"
-                      label="Manage Data"
-                      icon={Icons.DataManagement}
-                      isActive={currentView === 'manageData'}
-                      onClick={() => {
-                        setCurrentView('manageData');
-                        const allowedAssistantViews: ManageDataSubView[] = ['teachers', 'subjects', 'teacherSubjectAssignments'];
-                        const allowedManagerViews: ManageDataSubView[] = ['teachers', 'subjects', 'teacherSubjectAssignments'];
-                        let defaultSubView: ManageDataSubView = 'organizationSettings'; 
-                        if (appData.currentUser?.role === 'assistant') {
-                            defaultSubView = allowedAssistantViews.includes(currentManageDataSubView as ManageDataSubView) ? currentManageDataSubView : 'subjects';
-                        } else if (appData.currentUser?.role === 'manager') {
-                            defaultSubView = allowedManagerViews.includes(currentManageDataSubView as ManageDataSubView) ? currentManageDataSubView : 'subjects';
-                        } else if (appData.currentUser?.role === 'admin' || appData.currentUser?.role === 'platform_admin') {
-                            defaultSubView = manageDataSubViewItems.includes(currentManageDataSubView as ManageDataSubView) ? currentManageDataSubView : 'organizationSettings';
-                        }
-                        setCurrentManageDataSubView(defaultSubView);
-                      }}
-                  />
-                  {currentView === 'manageData' && (
-                    <ul className="mt-1 space-y-1 pl-1 md:pl-2 border-l-2 border-transparent md:group-hover:border-slate-200 ml-1 md:ml-2 md:opacity-0 md:group-hover:opacity-100 transition-all duration-300" role="menu">
-                      {manageDataSubViewItems.map(key => {
-                        const entityKey = key as ManageDataSubView;
-                        const config = entityConfigurations[entityKey]; 
-                        if (!config) return null; 
+            <li>
+              <NavButton
+                viewName="schedule"
+                label="Schedule Planner"
+                icon={Icons.Schedule}
+                isActive={currentView === 'schedule'}
+                onClick={() => setCurrentView('schedule')}
+              />
+            </li>
+            <li>
+              <NavButton
+                  viewName="manageData"
+                  label="Manage Data"
+                  icon={Icons.DataManagement}
+                  isActive={currentView === 'manageData'}
+                  onClick={() => {
+                    setCurrentView('manageData');
+                    const allowedAssistantViews: ManageDataSubView[] = ['teachers', 'subjects', 'teacherSubjectAssignments'];
+                    const allowedManagerViews: ManageDataSubView[] = ['teachers', 'subjects', 'teacherSubjectAssignments'];
+                    let defaultSubView: ManageDataSubView = 'organizationSettings'; 
+                    if (appData.currentUser?.role === 'assistant') {
+                        defaultSubView = allowedAssistantViews.includes(currentManageDataSubView as ManageDataSubView) ? currentManageDataSubView : 'subjects';
+                    } else if (appData.currentUser?.role === 'manager') {
+                        defaultSubView = allowedManagerViews.includes(currentManageDataSubView as ManageDataSubView) ? currentManageDataSubView : 'subjects';
+                    } else if (appData.currentUser?.role === 'admin') {
+                        defaultSubView = manageDataSubViewItems.includes(currentManageDataSubView as ManageDataSubView) ? currentManageDataSubView : 'organizationSettings';
+                    }
+                    setCurrentManageDataSubView(defaultSubView);
+                  }}
+              />
+              {currentView === 'manageData' && (
+                <ul className="mt-1 space-y-1 pl-1 md:pl-2 border-l-2 border-transparent md:group-hover:border-slate-200 ml-1 md:ml-2 md:opacity-0 md:group-hover:opacity-100 transition-all duration-300" role="menu">
+                  {manageDataSubViewItems.map(key => {
+                    const entityKey = key as ManageDataSubView;
+                    const config = entityConfigurations[entityKey]; 
+                    if (!config) return null; 
 
-                        if (appData.currentUser?.role === 'assistant') {
-                            const allowedAssistantSidebarViews: ManageDataSubView[] = ['teachers', 'subjects', 'teacherSubjectAssignments'];
-                            if (!allowedAssistantSidebarViews.includes(entityKey)) {
-                                return null; 
-                            }
-                        } else if (appData.currentUser?.role === 'manager') {
-                            const allowedManagerSidebarViews: ManageDataSubView[] = ['teachers', 'subjects', 'teacherSubjectAssignments'];
-                            if (!allowedManagerSidebarViews.includes(entityKey)) {
-                                return null; 
-                            }
-                        } else if (appData.currentUser?.role !== 'admin' && appData.currentUser?.role !== 'platform_admin') { 
-                             const guestAllowedViews: ManageDataSubView[] = []; 
-                             if(!guestAllowedViews.includes(entityKey)) return null;
+                    if (appData.currentUser?.role === 'assistant') {
+                        const allowedAssistantSidebarViews: ManageDataSubView[] = ['teachers', 'subjects', 'teacherSubjectAssignments'];
+                        if (!allowedAssistantSidebarViews.includes(entityKey)) {
+                            return null; 
                         }
+                    } else if (appData.currentUser?.role === 'manager') {
+                        const allowedManagerSidebarViews: ManageDataSubView[] = ['teachers', 'subjects', 'teacherSubjectAssignments'];
+                        if (!allowedManagerSidebarViews.includes(entityKey)) {
+                            return null; 
+                        }
+                    } else if (appData.currentUser?.role !== 'admin') { 
+                         const guestAllowedViews: ManageDataSubView[] = []; 
+                         if(!guestAllowedViews.includes(entityKey)) return null;
+                    }
 
-                        // Only admin can manage users
-                        if (entityKey === 'users' && appData.currentUser?.role !== 'admin' && appData.currentUser?.role !== 'platform_admin') {
+                    // Only admin can manage users
+                    if (entityKey === 'users' && appData.currentUser?.role !== 'admin') {
+                        return null;
+                    }
+
+                    if (entityKey === 'adminSettings') {
+                        const isSuperAdmin = (appData.authorizedAdmins || []).includes(appData.currentUser?.email || '');
+                        const isAuthAdmin = (appData.authorizedAdmins || []).includes(appData.currentUser?.email || '');
+                        if (!isSuperAdmin && !isAuthAdmin) {
                             return null;
                         }
+                    }
 
-                        if (entityKey === 'adminSettings') {
-                            const isSuperAdmin = (appData.authorizedAdmins || []).includes(appData.currentUser?.email || '');
-                            const isAuthAdmin = (appData.authorizedAdmins || []).includes(appData.currentUser?.email || '');
-                            if (!isSuperAdmin && !isAuthAdmin) {
-                                return null;
-                            }
-                        }
-
-                        return (
-                          <li key={entityKey} role="none">
-                            <NavButton
-                              viewName={entityKey}
-                              label={config.plural}
-                              icon={config.getIcon()}
-                              isActive={currentView === 'manageData' && currentManageDataSubView === entityKey}
-                              onClick={() => {
-                                setCurrentView('manageData');
-                                setCurrentManageDataSubView(entityKey);
-                              }}
-                              isSubItem
-                            />
-                          </li>
-                        );
-                      })}
-                    </ul>
-                  )}
-                </li>
-                <li>
-                  <NavButton
-                    viewName="importData" 
-                    label="Import Data (Excel)" 
-                    icon={Icons.Import}
-                    isActive={isImportModalOpen} 
-                    onClick={() => setIsImportModalOpen(true)}
-                  />
-                </li>
-              </>
-            )}
-            {appData?.currentUser?.role === 'platform_admin' && (
-              <>
-                <div className="my-2 border-t border-slate-200"></div>
-                <li>
-                  <NavButton
-                    viewName="platformAdmin"
-                    label="⚙️ ระบบส่วนกลาง (Platform Admin)"
-                    icon={Icons.Settings}
-                    isActive={currentView === 'platformAdmin'}
-                    onClick={() => setCurrentView('platformAdmin')}
-                  />
-                </li>
-              </>
-            )}
-            {(appData?.currentUser?.role === 'admin' || (appData?.currentUser?.role === 'platform_admin' && impersonatedOrgId)) && (
+                    return (
+                      <li key={entityKey} role="none">
+                        <NavButton
+                          viewName={entityKey}
+                          label={config.plural}
+                          icon={config.getIcon()}
+                          isActive={currentView === 'manageData' && currentManageDataSubView === entityKey}
+                          onClick={() => {
+                            setCurrentView('manageData');
+                            setCurrentManageDataSubView(entityKey);
+                          }}
+                          isSubItem
+                        />
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </li>
+            <li>
+              <NavButton
+                viewName="importData" 
+                label="Import Data (Excel)" 
+                icon={Icons.Import}
+                isActive={isImportModalOpen} 
+                onClick={() => setIsImportModalOpen(true)}
+              />
+            </li>
+            {appData?.currentUser?.role === 'admin' && (
               <>
                 <div className="my-2 border-t border-slate-200"></div>
                 <li>

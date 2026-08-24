@@ -84,6 +84,10 @@ const UserManagementScreen: React.FC<UserManagementScreenProps> = ({
         setError('รูปแบบอีเมล์ไม่ถูกต้อง');
         return;
     }
+    if (!editingUser.email.toLowerCase().trim().endsWith('@utd.ac.th')) {
+        setError('อนุญาตเฉพาะอีเมลโดเมน @utd.ac.th ของโรงเรียนอุตรดิตถ์เท่านั้น');
+        return;
+    }
     if (!editingUser.role) {
       setError('กรุณาระบุบทบาท (Role)');
       return;
