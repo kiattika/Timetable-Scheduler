@@ -389,7 +389,7 @@ const GradeLevelPlannerView: React.FC<GradeLevelPlannerViewPropsExtended> = (pro
   const [assistantTargetPeriod, setAssistantTargetPeriod] = useState<number | ''>('');
   const [isRightAssistantOpen, setIsRightAssistantOpen] = useState(false);
 
-  const allowedAssistantRoles = ['admin', 'manager', 'platform_admin', 'assistant', 'academic_staff'];
+  const allowedAssistantRoles = ['admin', 'manager', 'assistant', 'academic_staff'];
 
   const selectedGradeLevel = useMemo(() => {
     return gradeLevels.find(gl => gl.id === selectedGradeLevelId);

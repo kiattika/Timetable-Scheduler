@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import * as XLSX from 'xlsx';
 import { Teacher, Subject, TeacherSubjectAssignment, GradeLevel, AppData, FormField, Identifiable, ScreenAccessProps } from '../types';
 import Modal from './Modal';
 import ConfirmationModal from './ConfirmationModal'; // Import ConfirmationModal
@@ -399,6 +400,38 @@ const TeacherSubjectAssignmentScreen: React.FC<TeacherSubjectAssignmentScreenPro
     );
   };
 
+  const handleExportAssignmentsExcel = () => {
+    const wb = XLSX.utils.book_new();
+    const headers = [
+      "ครูผู้สอน", 
+      "รหัสครู", 
+      "รายวิชา", 
+      "รหัสวิชา", 
+      "ระดับชั้น/ห้องเรียน", 
+      "กลุ่มสาระการเรียนรู้", 
+      "จำนวนคาบ/สัปดาห์"
+    ];
+    const rows = filteredAssignments.map(a => {
+      const teacher = appData.teachers.find(t => t.id === a.teacherId);
+      const subject = appData.subjects.find(s => s.id === a.subjectId);
+      const grade = appData.gradeLevels.find(g => g.id === a.gradeLevelId);
+      return [
+        teacher?.name || a.teacherId,
+        teacher?.teacherCode || '',
+        subject?.name || a.subjectId,
+        subject?.subjectCode || '',
+        grade?.name || a.gradeLevelId,
+        subject?.department || teacher?.department || '',
+        subject?.periodsPerWeek ?? 1
+      ];
+    });
+
+    const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+    ws['!cols'] = [{ wch: 24 }, { wch: 12 }, { wch: 26 }, { wch: 14 }, { wch: 18 }, { wch: 24 }, { wch: 16 }];
+    XLSX.utils.book_append_sheet(wb, ws, "การมอบหมายสอน");
+    XLSX.writeFile(wb, `การมอบหมายสอน_export.xlsx`);
+  };
+
   return (
     <div className="p-4 md:p-6 bg-white shadow-lg rounded-lg">
       {/* Top Header Row */}
@@ -407,12 +440,22 @@ const TeacherSubjectAssignmentScreen: React.FC<TeacherSubjectAssignmentScreenPro
           {IconComponent && <IconComponent size={32} className="mr-3 text-blue-600" />}
           <h2 className="text-2xl font-semibold text-slate-800">Manage Teacher-Subject Links</h2>
         </div>
-        <button
-          onClick={openModal}
-          className="flex items-center bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-md shadow-md transition-colors duration-150"
-        >
-          <Icons.Add size={20} className="mr-2" /> Add New Link
-        </button>
+        <div className="flex items-center space-x-2">
+          <button
+            type="button"
+            onClick={handleExportAssignmentsExcel}
+            className="flex items-center bg-emerald-600 hover:bg-emerald-700 text-white font-medium py-2 px-3.5 rounded-md shadow-sm transition-colors duration-150 text-sm"
+            title="ส่งออกรายการมอบหมายการสอนเป็นไฟล์ Excel (.xlsx)"
+          >
+            <Icons.Download size={16} className="mr-1.5" /> Export Excel ({filteredAssignments.length})
+          </button>
+          <button
+            onClick={openModal}
+            className="flex items-center bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-md shadow-md transition-colors duration-150 text-sm"
+          >
+            <Icons.Add size={18} className="mr-1.5" /> Add New Link
+          </button>
+        </div>
       </div>
 
       {/* Advanced Filtering Toolbar */}

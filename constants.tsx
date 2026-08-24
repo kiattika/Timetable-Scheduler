@@ -2,7 +2,7 @@
 import React from 'react';
 import { DayOfWeek } from './types';
 // Fix: Add Eye and EyeOff to the import
-import { Users, BookOpen, Home, Briefcase, CalendarDays, PlusCircle, Edit3, Trash2, X, ChevronDown, ChevronUp, GripVertical, FileText, Settings, Search, Repeat, Move, Link2, UserCog, Building, UploadCloud, Copy, ClipboardPaste, Landmark, UsersRound, AlertTriangle, LogOut, Sparkles, Layers, Printer, Download, DatabaseBackup, DatabaseZap, Eye, EyeOff, CheckCircle, Activity } from 'lucide-react';
+import { Users, BookOpen, Home, Briefcase, CalendarDays, PlusCircle, Edit3, Trash2, X, ChevronDown, ChevronUp, GripVertical, FileText, Settings, Search, Repeat, Move, Link2, UserCog, Building, UploadCloud, Copy, ClipboardPaste, Landmark, UsersRound, AlertTriangle, LogOut, Sparkles, Layers, Printer, Download, DatabaseBackup, DatabaseZap, Eye, EyeOff, CheckCircle, Activity, FileSpreadsheet, Share2 } from 'lucide-react';
 
 export const DAYS_OF_WEEK_ORDERED: DayOfWeek[] = [
   DayOfWeek.Monday,
@@ -78,6 +78,9 @@ export const Icons = {
   Backup: DatabaseBackup, // Added for Backup Data
   Restore: DatabaseZap,   // Added for Restore Data
   Download: Download, // Added for Download functionality
+  Export: Download, // Added for Export Data
+  FileSpreadsheet: FileSpreadsheet, // Added for Excel / Spreadsheet export
+  Share: Share2,
   // Fix: Add Eye and EyeOff icons
   Eye: Eye,
   EyeOff: EyeOff,

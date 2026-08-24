@@ -2090,7 +2090,7 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
         )}
       </div>
 
-      {(appData.currentUser?.role === 'admin' || appData.currentUser?.role === 'platform_admin') && (
+      {appData.currentUser?.role === 'admin' && (
       <div className="w-full xl:w-72 shrink-0 space-y-4 non-printable sticky top-6">
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
           <h3 className="text-sm font-semibold text-gray-900 flex items-center mb-4">

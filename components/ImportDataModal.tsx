@@ -23,6 +23,7 @@ interface ImportDataModalProps {
   appData: AppData;
   setAppData: React.Dispatch<React.SetStateAction<AppData | null>> | ((data: AppData) => void);
   entityConfigurations: Record<ImportableEntityType, { singular: string; plural: string; fields: FormField[]; getIcon: () => React.ElementType }>;
+  onOpenExport?: () => void;
 }
 
 interface ImportResult {
@@ -47,7 +48,8 @@ export const ImportDataModal: React.FC<ImportDataModalProps> = ({
   onClose, 
   appData, 
   setAppData, 
-  entityConfigurations 
+  entityConfigurations,
+  onOpenExport
 }) => {
   const [selectedEntityType, setSelectedEntityType] = useState<ImportableEntityType>('teachers');
   const [file, setFile] = useState<File | null>(null);
@@ -626,14 +628,29 @@ export const ImportDataModal: React.FC<ImportDataModalProps> = ({
               ))}
             </select>
           </div>
-          <button
-            type="button"
-            onClick={downloadSampleFile}
-            className="mt-2 sm:mt-6 px-4 py-2.5 text-sm font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-lg border border-blue-200 transition-colors flex items-center w-full sm:w-auto justify-center shrink-0 shadow-sm"
-            title={`ดาวน์โหลดไฟล์ตัวอย่างสำหรับ ${entityConfigurations[selectedEntityType]?.plural || selectedEntityType}`}
-          >
-            <Icons.Import size={16} className="mr-2"/> ดาวน์โหลดไฟล์ตัวอย่าง ({entityConfigurations[selectedEntityType]?.singular || selectedEntityType})
-          </button>
+          <div className="flex flex-wrap gap-2 mt-2 sm:mt-6">
+            <button
+              type="button"
+              onClick={downloadSampleFile}
+              className="px-3.5 py-2.5 text-xs font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-lg border border-blue-200 transition-colors flex items-center justify-center shrink-0 shadow-sm"
+              title={`ดาวน์โหลดไฟล์ตัวอย่างสำหรับ ${entityConfigurations[selectedEntityType]?.plural || selectedEntityType}`}
+            >
+              <Icons.Import size={15} className="mr-1.5"/> ดาวน์โหลดไฟล์ตัวอย่าง
+            </button>
+            {onOpenExport && (
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  onOpenExport();
+                }}
+                className="px-3.5 py-2.5 text-xs font-medium text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-lg border border-emerald-200 transition-colors flex items-center justify-center shrink-0 shadow-sm"
+                title="ส่งออกข้อมูลจริงปัจจุบันในระบบไปแก้ไขใน Excel"
+              >
+                <Icons.Download size={15} className="mr-1.5 text-emerald-600"/> ส่งออกข้อมูลในระบบไปแก้ไข (Export)
+              </button>
+            )}
+          </div>
         </div>
 
         <div className="p-4 border border-blue-200 bg-blue-50/70 rounded-xl shrink min-w-0 break-words w-full">

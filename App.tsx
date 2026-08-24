@@ -7,6 +7,7 @@ import EntityManagementScreen from './components/EntityManagementScreen';
 import ScheduleScreen from './components/ScheduleScreen.tsx';
 import TeacherSubjectAssignmentScreen from './components/TeacherSubjectAssignmentScreen';
 import ImportDataModal from './components/ImportDataModal'; 
+import ExportDataModal, { ExportTargetType } from './components/ExportDataModal';
 import PeriodSettingsManagementScreen from './components/PeriodSettingsManagementScreen'; 
 import OrganizationSettingsScreen from './components/OrganizationSettingsScreen';
 import UserManagementScreen from './components/UserManagementScreen'; 
@@ -22,7 +23,7 @@ import { TeacherScheduleTable } from './components/TeacherScheduleView';
 import { RoomUsageScheduleTable } from './components/RoomUsageView';
 
 import { Icons, APP_TITLE, PREDEFINED_SUBJECT_COLORS, DEFAULT_PERIOD_SETTINGS } from './constants';
-import { fetchAppData, saveAppData, getInitialAppDataForApi, DEFAULT_DEPARTMENTS, DEFAULT_RESOURCE_TYPES, pruneActivityLogs } from './api'; 
+import { fetchAppData, saveAppData, getSampleAppData, DEFAULT_DEPARTMENTS, DEFAULT_RESOURCE_TYPES, ORG_ID, pruneActivityLogs } from './api'; 
 import { isParentGrade as checkIsParentGradeUtil, getParentGradeLevelId, getChildGradeLevelIds, isChildOf } from './components/scheduleUtils';
 import { useAppAuth } from './hooks/useAppAuth';
 import { useBackupRestore } from './hooks/useBackupRestore';
@@ -42,6 +43,15 @@ const App: React.FC = () => {
   const [isDataLoaded, setIsDataLoaded] = useState(false);
   
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [isExportModalOpen, setIsExportModalOpen] = useState(false);
+  const [exportModalTarget, setExportModalTarget] = useState<ExportTargetType>('all');
+  const [exportModalDept, setExportModalDept] = useState<string>('ALL');
+
+  const handleOpenExportModal = (target: ExportTargetType = 'all', dept: string = 'ALL') => {
+    setExportModalTarget(target);
+    setExportModalDept(dept);
+    setIsExportModalOpen(true);
+  };
   const [isPrintOptionsModalOpen, setIsPrintOptionsModalOpen] = useState(false);
   const [printOptionsModalProps, setPrintOptionsModalProps] = useState<Omit<PrintWithOptionsModalProps, 'isOpen' | 'onClose' | 'onConfirmPrint' | 'appData'> | null>(null);
   const [printJob, setPrintJob] = useState<PrintOptions | null>(null);
@@ -61,8 +71,6 @@ const App: React.FC = () => {
   const [isRestoring, setIsRestoring] = useState(false);
 
   const {
-    impersonatedOrgId, setImpersonatedOrgId,
-    resolvedUserOrgId, setResolvedUserOrgId,
     isAuthChecking, googleAccessToken, firebaseUser,
     handleLoginSuccess, handleLogout
   } = useAppAuth(
@@ -81,14 +89,14 @@ const App: React.FC = () => {
   const lastSavedDataStr = useRef<string | null>(null);
 
   useEffect(() => {
-    if (isDataLoaded && appData && !impersonatedOrgId) {
+    if (isDataLoaded && appData) {
       const currentDataStr = JSON.stringify(appData);
       if (currentDataStr === lastSavedDataStr.current) {
          return; // Skip if no actual data changes
       }
 
       const timeoutId = setTimeout(() => {
-        saveAppData(appData, resolvedUserOrgId).then(() => {
+        saveAppData(appData, ORG_ID).then(() => {
             lastSavedDataStr.current = currentDataStr;
         }).catch(error => {
           console.error("Failed to save app data:", error);
@@ -96,49 +104,15 @@ const App: React.FC = () => {
       }, 2000);
       return () => clearTimeout(timeoutId);
     }
-  }, [appData, isDataLoaded, firebaseUser?.email, impersonatedOrgId, resolvedUserOrgId]);
+  }, [appData, isDataLoaded, firebaseUser?.email]);
 
-  const isImpersonating = impersonatedOrgId !== null;
   const isLocked = appData?.organizationSettings?.isLocked === true;
   const permissions: ScreenAccessProps['permissions'] = {
-    canPerformAdminActions: !isImpersonating && (appData?.currentUser?.role === 'admin'),
-    canPerformManagerActions: !isImpersonating && (appData?.currentUser?.role === 'admin' || appData?.currentUser?.role === 'manager'),
-    canModifyScheduleEntries: !isLocked && !isImpersonating && (appData?.currentUser?.role === 'admin' || appData?.currentUser?.role === 'manager' || appData?.currentUser?.role === 'assistant'),
-    canModifyTeacherSubjectLinks: !isLocked && !isImpersonating && (appData?.currentUser?.role === 'admin' || appData?.currentUser?.role === 'manager' || appData?.currentUser?.role === 'assistant'),
+    canPerformAdminActions: (appData?.currentUser?.role === 'admin'),
+    canPerformManagerActions: (appData?.currentUser?.role === 'admin' || appData?.currentUser?.role === 'manager'),
+    canModifyScheduleEntries: !isLocked && (appData?.currentUser?.role === 'admin' || appData?.currentUser?.role === 'manager' || appData?.currentUser?.role === 'assistant'),
+    canModifyTeacherSubjectLinks: !isLocked && (appData?.currentUser?.role === 'admin' || appData?.currentUser?.role === 'manager' || appData?.currentUser?.role === 'assistant'),
   };
-
-  // Path routing and guards for /platform-admin
-  useEffect(() => {
-    const handlePlatformAdminRoute = () => {
-      const path = window.location.pathname;
-      const hash = window.location.hash;
-      if (path === '/platform-admin' || hash === '#/platform-admin' || hash === '#platform-admin') {
-        if (appData?.currentUser) {
-          const isUserPm = appData.currentUser.role === 'platform_admin';
-          if (isUserPm) {
-            setCurrentView('platformAdmin');
-          } else {
-            alert("ไม่ได้รับสิทธิ์ให้เข้าสู่ระบบควบคุมส่วนกลาง (Access Denied)");
-            setCurrentView('schedule');
-            // Reset url of unauthorized user
-            if (window.location.pathname === '/platform-admin') {
-              window.history.replaceState({}, '', '/');
-            } else {
-              window.location.hash = '';
-            }
-          }
-        }
-      }
-    };
-
-    handlePlatformAdminRoute();
-    window.addEventListener('popstate', handlePlatformAdminRoute);
-    window.addEventListener('hashchange', handlePlatformAdminRoute);
-    return () => {
-      window.removeEventListener('popstate', handlePlatformAdminRoute);
-      window.removeEventListener('hashchange', handlePlatformAdminRoute);
-    };
-  }, [appData?.currentUser]);
 
 
   const { handleBackupData, handleRestoreData } = useBackupRestore(appData, setAppData as (data: AppData) => void, setRestoreFile, setShowRestoreConfirm);
@@ -213,7 +187,7 @@ const App: React.FC = () => {
             setAppData(newAppData);
             
             // Persist immediately to Firestore
-            await saveAppData(newAppData, resolvedUserOrgId);
+            await saveAppData(newAppData, ORG_ID);
           }
           
           setShowRestoreConfirm(false);
@@ -486,9 +460,9 @@ const App: React.FC = () => {
         return <div className="flex justify-center items-center h-full text-xl text-slate-600">Redirecting...</div>;
       }
       
-      const isUserAdminOrPlatAdmin = appData.currentUser.role === 'admin' || appData.currentUser.role === 'platform_admin';
+      const isUserAdmin = appData.currentUser.role === 'admin';
 
-      if (!isUserAdminOrPlatAdmin && currentManageDataSubView === 'users') {
+      if (!isUserAdmin && currentManageDataSubView === 'users') {
         setCurrentManageDataSubView('subjects');
         return <div className="text-red-500 p-4">Access Denied. Redirecting to an accessible page.</div>;
       }
@@ -553,7 +527,7 @@ const App: React.FC = () => {
                                       name: 'School Admin',
                                       email: newEmail,
                                       role: 'admin',
-                                      organizationId: resolvedUserOrgId
+                                      organizationId: ORG_ID
                                   });
                               }
                           }
@@ -567,7 +541,6 @@ const App: React.FC = () => {
                        });
                     }}
                     currentUser={appData.currentUser}
-                    resolvedUserOrgId={resolvedUserOrgId}
                     {...screenAccessProps}
                  />;
         case 'academicStructure':
@@ -599,7 +572,7 @@ const App: React.FC = () => {
         case 'adminSettings':
              return <AdminSettingsScreen appData={appData} setAppData={setAppData as any} />;
         case 'systemHealth':
-             return <SystemHealthScreen appData={appData} setAppData={setAppData as any} resolvedUserOrgId={resolvedUserOrgId} />;
+             return <SystemHealthScreen appData={appData} setAppData={setAppData as any} />;
         case 'teachers':
         case 'subjects':
         case 'gradeLevels':
@@ -679,7 +652,7 @@ const App: React.FC = () => {
   };
   
   const NavButton: React.FC<{
-    viewName: View | ManageDataSubView | 'logout' | 'backup' | 'restore' | 'importData';
+    viewName: View | ManageDataSubView | 'logout' | 'backup' | 'restore' | 'importData' | 'exportData';
     label: string;
     icon: React.ElementType;
     isActive?: boolean;
@@ -899,6 +872,15 @@ const App: React.FC = () => {
                 onClick={() => setIsImportModalOpen(true)}
               />
             </li>
+            <li>
+              <NavButton
+                viewName="exportData" 
+                label="Export Data (Excel)" 
+                icon={Icons.Export}
+                isActive={isExportModalOpen} 
+                onClick={() => handleOpenExportModal('all')}
+              />
+            </li>
             {appData?.currentUser?.role === 'admin' && (
               <>
                 <div className="my-2 border-t border-slate-200"></div>
@@ -934,24 +916,6 @@ const App: React.FC = () => {
         </div>
       </nav>
       <main className="flex-1 p-4 md:p-8 overflow-auto md:ml-[80px] print:ml-0 print:p-0 print:overflow-visible">
-        {impersonatedOrgId && (
-          <div className="bg-amber-500 text-white font-medium p-3 rounded-lg mb-6 flex justify-between items-center shadow-md animate-pulse shrink-0 print:hidden">
-            <div className="flex items-center space-x-2">
-              <span className="text-xl">⚠️</span>
-              <span>
-                กำลังอยู่ใน <strong>โหมดช่วยจัดตารางสอนทำงานแทนสถาบัน (Support Only Mode)</strong> สำหรับสถาบันรหัส: <code className="bg-amber-600 px-1.5 py-0.5 rounded font-bold text-xs">{impersonatedOrgId}</code> - ข้อมูลนี้เปิดใน <strong>โหมดอ่านอย่างเดียว (Read-Only)</strong>
-              </span>
-            </div>
-            <button
-              onClick={() => {
-                setImpersonatedOrgId(null);
-              }}
-              className="bg-white text-amber-900 hover:bg-amber-50 text-xs px-2.5 py-1.5 rounded font-bold shadow-sm transition-all shadow-amber-900/10"
-            >
-              ออกจากโหมดเลียนแบบ
-            </button>
-          </div>
-        )}
         {renderView()}
       </main>
       
@@ -962,6 +926,17 @@ const App: React.FC = () => {
           appData={appData}
           setAppData={setAppData}
           entityConfigurations={entityConfigurations as Record<ImportableEntityType, { singular: string; plural: string; fields: FormField[]; getIcon: () => React.ElementType }>}
+          onOpenExport={() => handleOpenExportModal('all')}
+        />
+      )}
+
+      {isDataLoaded && appData && (
+        <ExportDataModal
+          isOpen={isExportModalOpen}
+          onClose={() => setIsExportModalOpen(false)}
+          appData={appData}
+          initialExportType={exportModalTarget}
+          initialDepartment={exportModalDept}
         />
       )}
 

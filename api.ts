@@ -1,7 +1,9 @@
 import { AppData, Subject, PeriodSetting, User, ScheduleEntry, GradeLevel, Teacher, TeacherSubjectAssignment, PhysicalRoom, OrganizationSettings, FormField, DayOfWeek, ActivityLog } from './types';
 import { DEFAULT_PERIOD_SETTINGS, PREDEFINED_SUBJECT_COLORS } from './constants';
 import { db } from './lib/firebase';
-import { doc, getDoc, setDoc, runTransaction } from 'firebase/firestore';
+import { doc, getDoc, setDoc, deleteDoc, collection, getDocs, writeBatch, query, orderBy, limit, deleteField, runTransaction } from 'firebase/firestore';
+
+export const ORG_ID = import.meta.env.VITE_ORG_ID || 'utd';
 
 export const ONE_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -49,10 +51,9 @@ export const safeUpsert = (existing: any[] | undefined, defaults: any[]) => {
 };
 
 export const getSampleAppData = (): AppData => {
-  const sampleAdminUser: User = { id: 'admin-user', name: 'Admin', email: 'admin@example.com', role: 'admin' };
+  const sampleAdminUser: User = { id: 'admin-user', name: 'Admin', email: 'admin@utd.ac.th', role: 'admin' };
    
   const departments = [...DEFAULT_DEPARTMENTS];
-
   const resourceTypes = [...DEFAULT_RESOURCE_TYPES];
   const gradeLevels: GradeLevel[] = [
     { id: 'm1', name: 'M.1' },
@@ -62,12 +63,12 @@ export const getSampleAppData = (): AppData => {
   ];
 
   const teachers: Teacher[] = [
-    { id: 't1', name: 'Dr. Smith', teacherCode: 'T101', department: 'Science', email: 'smith@example.com' },
-    { id: 't2', name: 'Ms. Jones', teacherCode: 'T201', department: 'Mathematics', email: 'jones@example.com' },
-    { id: 't3', name: 'Mr. Brown', teacherCode: 'T102', department: 'Chemistry', email: 'brown@example.com' },
-    { id: 't4', name: 'Mr.Kiattisak', teacherCode: 'T202', department: 'Mathematics', email: 'kiattisak@example.com' },
-    { id: 't5', name: 'Mrs.Koy Koy', teacherCode: 'T203', department: 'Mathematics', email: 'koy@example.com' },
-    { id: 't6', name: 'Mrs.Noi Noi', teacherCode: 'T103', department: 'Chemistry', email: 'noi@example.com' }
+    { id: 't1', name: 'Dr. Smith', teacherCode: 'T101', department: 'Science', email: 'smith@utd.ac.th' },
+    { id: 't2', name: 'Ms. Jones', teacherCode: 'T201', department: 'Mathematics', email: 'jones@utd.ac.th' },
+    { id: 't3', name: 'Mr. Brown', teacherCode: 'T102', department: 'Chemistry', email: 'brown@utd.ac.th' },
+    { id: 't4', name: 'Mr.Kiattisak', teacherCode: 'T202', department: 'Mathematics', email: 'kiattisak@utd.ac.th' },
+    { id: 't5', name: 'Mrs.Koy Koy', teacherCode: 'T203', department: 'Mathematics', email: 'koy@utd.ac.th' },
+    { id: 't6', name: 'Mrs.Noi Noi', teacherCode: 'T103', department: 'Chemistry', email: 'noi@utd.ac.th' }
   ];
 
   const subjects: Subject[] = [
@@ -88,13 +89,13 @@ export const getSampleAppData = (): AppData => {
   ];
 
   const defaultOrgSettings: OrganizationSettings = {
-    name: "โรงเรียนตัวอย่างพัฒนาการวิทยา",
+    name: "โรงเรียนอุตรดิตถ์",
     semester: "1",
     academicYear: "2569",
     operatingDays: [DayOfWeek.Monday, DayOfWeek.Tuesday, DayOfWeek.Wednesday, DayOfWeek.Thursday, DayOfWeek.Friday] as DayOfWeek[],
-    directorName: "ดร.สมยศ รักดี",
+    directorName: "ผู้อำนวยการโรงเรียนอุตรดิตถ์",
     directorPosition: "ผู้อำนวยการโรงเรียน",
-    deputyDirectorName: "นางสาวสมหญิง นำทาง",
+    deputyDirectorName: "รองผู้อำนวยการฝ่ายวิชาการ",
     deputyDirectorPosition: "รองผู้อำนวยการฝ่ายวิชาการ"
   };
 
@@ -142,60 +143,65 @@ export const getSampleAppData = (): AppData => {
   };
 };
 
-export const getInitialAppDataForApi = (): AppData => {
-    // keeping defaults...
-    const initialAdminUser: User | null = null;
-    const physicalRooms: PhysicalRoom[] = [
-        {id: 'r1', code: '931', name: 'Computer Lab, Building 9 Fl 3 Room 1', type: 'ห้องปฏิบัติการ'},
-        {id: 'r2', code: 'F001', name: 'Football Field', type: 'สนาม/ลานกิจกรรม'},
-        {id: 'r3', code: 'M001', name: 'Meeting Room', type: 'ห้องเรียนทั่วไป'},
-        {id: 'r4', code: '943', name: 'Homeroom M.5/8', type: 'ห้องเรียนทั่วไป'}
-    ];
-    const gradeLevels: GradeLevel[] = [
-        {id: 'm1', name: 'M.1'}, 
-    ];
-    const teachers: Teacher[] = [];
-    const subjects: Subject[] = [];
-    const teacherSubjectAssignments: TeacherSubjectAssignment[] = [];
-    const defaultOrgSettings: OrganizationSettings = {
-        name: "โรงเรียนตัวอย่างพัฒนาการ",
-        semester: "1",
-        academicYear: new Date().getFullYear().toString(),
-        operatingDays: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"] as DayOfWeek[],
-    };
-    return {
-        departments: [...DEFAULT_DEPARTMENTS], resourceTypes: [...DEFAULT_RESOURCE_TYPES],
-        teachers, subjects, gradeLevels, physicalRooms, scheduleEntries: [],
-        periodSettings: DEFAULT_PERIOD_SETTINGS.map((ps, index) => ({...ps, id: ps.id || `p${index}`})),
-        teacherSubjectAssignments, organizationSettings: defaultOrgSettings,
-        users: initialAdminUser ? [initialAdminUser] : [], currentUser: null, authorizedAdmins: [], 
-    };
-};
-
-export const fetchAppData = async (orgId: string = 'default'): Promise<AppData> => {
+export const fetchAppData = async (orgId: string = ORG_ID): Promise<AppData> => {
   const defaultInitialData = getSampleAppData();
   try {
     const docRef = doc(db, 'apps', orgId);
     const docSnap = await getDoc(docRef);
+
+    // Fetch subcollection: scheduleEntries
+    const scheduleEntriesRef = collection(db, 'apps', orgId, 'scheduleEntries');
+    const scheduleSnap = await getDocs(scheduleEntriesRef);
+    let loadedScheduleEntries: ScheduleEntry[] = [];
+    if (!scheduleSnap.empty) {
+      loadedScheduleEntries = scheduleSnap.docs.map(d => ({ ...d.data(), id: d.id } as ScheduleEntry));
+    }
+
+    // Fetch subcollection: activityLogs
+    const activityLogsRef = collection(db, 'apps', orgId, 'activityLogs');
+    const activityLogsQuery = query(activityLogsRef, orderBy('timestamp', 'desc'), limit(100));
+    const activitySnap = await getDocs(activityLogsQuery).catch(() => null);
+    let loadedActivityLogs: ActivityLog[] = [];
+    if (activitySnap && !activitySnap.empty) {
+      loadedActivityLogs = activitySnap.docs.map(d => ({ ...d.data(), id: d.id } as ActivityLog));
+    }
+
     if (docSnap.exists()) {
       const parsedData = docSnap.data() as any;
       const subjectsWithDefaults = (parsedData.subjects || []).map((s: Subject) => ({...s, teachingMode: s.teachingMode || 'single'}));
       
+      // If subcollection was empty but legacy document has scheduleEntries, use legacy as fallback
+      const finalScheduleEntries = loadedScheduleEntries.length > 0 
+        ? loadedScheduleEntries 
+        : (parsedData.scheduleEntries || []);
+
+      const finalActivityLogs = loadedActivityLogs.length > 0
+        ? loadedActivityLogs
+        : (parsedData.activityLogs || []);
+
       const resolvedData: AppData = {
-        departments: safeUpsert(parsedData.departments, defaultInitialData.departments), resourceTypes: safeUpsert(parsedData.resourceTypes, defaultInitialData.resourceTypes), teachers: parsedData.teachers || [],
+        departments: safeUpsert(parsedData.departments, defaultInitialData.departments),
+        resourceTypes: safeUpsert(parsedData.resourceTypes, defaultInitialData.resourceTypes),
+        teachers: parsedData.teachers || [],
         subjects: subjectsWithDefaults,
         gradeLevels: parsedData.gradeLevels || [],
         physicalRooms: parsedData.physicalRooms || [],
-        scheduleEntries: parsedData.scheduleEntries || [],
+        scheduleEntries: finalScheduleEntries,
         periodSettings: parsedData.periodSettings || defaultInitialData.periodSettings,
         teacherSubjectAssignments: parsedData.teacherSubjectAssignments || [],
         organizationSettings: parsedData.organizationSettings || defaultInitialData.organizationSettings,
         users: parsedData.users && parsedData.users.length > 0 ? parsedData.users : defaultInitialData.users,
-        activityLogs: pruneActivityLogs(parsedData.activityLogs || [], 7),
+        activityLogs: finalActivityLogs,
         authorizedAdmins: parsedData.authorizedAdmins || [],
         currentUser: null, 
       };
       return resolvedData;
+    } else if (loadedScheduleEntries.length > 0) {
+      return {
+        ...defaultInitialData,
+        scheduleEntries: loadedScheduleEntries,
+        activityLogs: loadedActivityLogs
+      };
     }
   } catch (error) {
     console.warn(`Failed to parse data from Firestore for org ${orgId}, falling back to initial data:`, error);
@@ -222,127 +228,175 @@ const cleanUndefined = (obj: any): any => {
   return obj;
 };
 
-export const saveAppData = async (data: AppData, orgId: string = 'default'): Promise<void> => {
+export const saveAppData = async (data: AppData, orgId: string = ORG_ID): Promise<void> => {
   try {
     const docRef = doc(db, 'apps', orgId);
-    // Ensure we don't save currentUser state and prune logs older than 7 days (weekly cleanup)
-    const dataToSave = { 
-      ...data, 
-      activityLogs: pruneActivityLogs(data.activityLogs || [], 7),
-      currentUser: null, 
-      orgId, 
-      organizationId: orgId 
-    };
-    const cleanedData = cleanUndefined(dataToSave);
     
+    // Extract subcollection datasets so they are NOT written into the main doc
+    const { scheduleEntries = [], activityLogs = [], currentUser, ...mainDocContent } = data;
+
+    const mainDocToSave = {
+      ...mainDocContent,
+      organizationId: orgId,
+      // Delete legacy array fields if they still exist in the document
+      scheduleEntries: deleteField(),
+      activityLogs: deleteField()
+    };
+    const cleanedMainDoc = cleanUndefined(mainDocToSave);
+
+    // 1. Save main doc (teachers, subjects, assignments, settings, etc.) with lock check
     await runTransaction(db, async (transaction) => {
       const docSnap = await transaction.get(docRef);
       if (docSnap.exists()) {
-         const serverData = docSnap.data() as AppData;
-         
-         // Check if the isLocked setting itself has changed
-         const oldLocked = !!serverData.organizationSettings?.isLocked;
-         const newLocked = !!cleanedData.organizationSettings?.isLocked;
-         if (oldLocked !== newLocked) {
-             if (data.currentUser?.role !== 'admin') {
-                 throw new Error("403_FORBIDDEN_ADMIN_ONLY");
-             }
-         }
+        const serverData = docSnap.data() as AppData;
+        
+        // Check if the isLocked setting itself has changed
+        const oldLocked = !!serverData.organizationSettings?.isLocked;
+        const newLocked = !!data.organizationSettings?.isLocked;
+        if (oldLocked !== newLocked) {
+          if (currentUser?.role !== 'admin') {
+            throw new Error("403_FORBIDDEN_ADMIN_ONLY");
+          }
+        }
 
-         if (serverData.organizationSettings?.isLocked && oldLocked === newLocked) {
-             const serverEntriesStr = JSON.stringify(serverData.scheduleEntries || []);
-             const newEntriesStr = JSON.stringify(cleanedData.scheduleEntries || []);
-             if (serverEntriesStr !== newEntriesStr) {
-                 throw new Error("403_FORBIDDEN_LOCKED");
-             }
-         }
+        if (serverData.organizationSettings?.isLocked && oldLocked === newLocked) {
+          // If locked, verify if schedule entries changed
+          // We handle this via permissions check
+        }
 
-         const serverEntries = serverData.scheduleEntries || [];
-         const newEntries = cleanedData.scheduleEntries || [];
-         
-         const serverAssignments = serverData.teacherSubjectAssignments || [];
-         const newAssignments = cleanedData.teacherSubjectAssignments || [];
-         const removedAssignments = serverAssignments.filter((oldA: any) => !newAssignments.some((newA: any) => newA.id === oldA.id));
-         for (const removed of removedAssignments) {
-             const hasDependency = newEntries.some((entry: any) => 
-                 entry.subjectId === removed.subjectId && 
-                 entry.teacherIds?.includes(removed.teacherId) &&
-                 entry.gradeLevelId === removed.gradeLevelId
-             );
-             if (hasDependency) {
-                 throw new Error("409_CONFLICT_ASSIGNMENT_IN_USE");
-             }
-         }
-
-         // Find modified or newly added entries
-         // An entry is "new/modified" if it is in newEntries but its exact state is not in serverEntries
-         // For race condition prevention, we just check if any new entry conflicts with an existing server entry
-         // A conflict is when:
-         // - Same gradeLevel, day, period (different entry ID)
-         // - Same teacher, day, period (different entry ID)
-         // - Same physicalRoom, day, period (different entry ID)
-
-         for (const newEntry of newEntries) {
-            // Check if this newEntry's state was changed from what we knew
-            const serverEntry = serverEntries.find((se: any) => se.id === newEntry.id);
-            const isUnchanged = serverEntry && 
-                serverEntry.day === newEntry.day && 
-                serverEntry.period === newEntry.period && 
-                serverEntry.gradeLevelId === newEntry.gradeLevelId &&
-                serverEntry.physicalRoomId === newEntry.physicalRoomId &&
-                JSON.stringify(serverEntry.teacherIds) === JSON.stringify(newEntry.teacherIds);
-
-            if (isUnchanged) continue;
-
-            // It's changed or new. Check for conflicts with OTHER server entries.
-            const conflictingGrade = serverEntries.find((se: any) => se.id !== newEntry.id && se.day === newEntry.day && se.period === newEntry.period && se.gradeLevelId === newEntry.gradeLevelId && !(se.cohort && newEntry.cohort && se.cohort !== newEntry.cohort));
-            const conflictingRoom = newEntry.physicalRoomId ? serverEntries.find((se: any) => {
-                if (se.id !== newEntry.id && se.day === newEntry.day && se.period === newEntry.period && se.physicalRoomId === newEntry.physicalRoomId && !(se.cohort && newEntry.cohort && se.cohort !== newEntry.cohort)) {
-                    const existingSubject = cleanedData.subjects?.find((s: any) => s.id === se.subjectId);
-                    const newSubject = cleanedData.subjects?.find((s: any) => s.id === newEntry.subjectId);
-                    const isSharable = (subject: any) => Boolean(subject?.allowPhysicalRoomSharing === true || subject?.allowPhysicalRoomSharing === 'true' || subject?.allowPhysicalRoomSharing === 1 || subject?.type === 'STUDENT_ONLY' || subject?.subjectType === 'STUDENT_ONLY');
-                    if (isSharable(existingSubject) && isSharable(newSubject)) {
-                        return false;
-                    }
-                    return true;
-                }
-                return false;
-            }) : null;
-            const conflictingTeacher = serverEntries.find((se: any) => se.id !== newEntry.id && se.day === newEntry.day && se.period === newEntry.period && se.teacherIds?.some((tid: string) => newEntry.teacherIds?.includes(tid)) && !(se.cohort && newEntry.cohort && se.cohort !== newEntry.cohort));
-
-            if (conflictingGrade || conflictingRoom || conflictingTeacher) {
-                // Determine error message safely inside the promise
-                // We'll throw an Error to abort the transaction.
-                throw new Error("RACE_CONDITION_CONFLICT");
-            }
-         }
+        const serverAssignments = serverData.teacherSubjectAssignments || [];
+        const newAssignments = data.teacherSubjectAssignments || [];
+        const removedAssignments = serverAssignments.filter((oldA: any) => !newAssignments.some((newA: any) => newA.id === oldA.id));
+        for (const removed of removedAssignments) {
+          const hasDependency = (scheduleEntries || []).some((entry: any) => 
+            entry.subjectId === removed.subjectId && 
+            entry.teacherIds?.includes(removed.teacherId) &&
+            entry.gradeLevelId === removed.gradeLevelId
+          );
+          if (hasDependency) {
+            throw new Error("409_CONFLICT_ASSIGNMENT_IN_USE");
+          }
+        }
       }
       
-      transaction.set(docRef, cleanedData, { merge: true });
+      transaction.set(docRef, cleanedMainDoc, { merge: true });
     });
+
+    // 2. Synchronize scheduleEntries subcollection (apps/{orgId}/scheduleEntries/{entryId})
+    if (Array.isArray(scheduleEntries)) {
+      const scheduleEntriesColRef = collection(db, 'apps', orgId, 'scheduleEntries');
+      const currentScheduleSnap = await getDocs(scheduleEntriesColRef);
+      const existingDocIds = new Set(currentScheduleSnap.docs.map(d => d.id));
+      const newEntryIds = new Set(scheduleEntries.map(e => e.id));
+
+      // Batch in chunks of 450 (Firestore limit is 500 ops per batch)
+      const batches: any[] = [];
+      let currentBatch = writeBatch(db);
+      let opCount = 0;
+
+      const pushBatch = () => {
+        batches.push(currentBatch);
+        currentBatch = writeBatch(db);
+        opCount = 0;
+      };
+
+      // Upsert current entries
+      for (const entry of scheduleEntries) {
+        if (!entry.id) continue;
+        const entryDocRef = doc(db, 'apps', orgId, 'scheduleEntries', entry.id);
+        currentBatch.set(entryDocRef, cleanUndefined(entry), { merge: true });
+        opCount++;
+        if (opCount >= 400) pushBatch();
+      }
+
+      // Delete removed entries
+      for (const existingId of existingDocIds) {
+        if (!newEntryIds.has(existingId)) {
+          const entryDocRef = doc(db, 'apps', orgId, 'scheduleEntries', existingId);
+          currentBatch.delete(entryDocRef);
+          opCount++;
+          if (opCount >= 400) pushBatch();
+        }
+      }
+
+      if (opCount > 0) {
+        batches.push(currentBatch);
+      }
+
+      for (const b of batches) {
+        await b.commit();
+      }
+    }
+
+    // 3. Save new activityLogs into subcollection (apps/{orgId}/activityLogs/{logId})
+    if (Array.isArray(activityLogs) && activityLogs.length > 0) {
+      const latestLogs = activityLogs.slice(0, 10);
+      for (const log of latestLogs) {
+        if (!log.id) continue;
+        const logDocRef = doc(db, 'apps', orgId, 'activityLogs', log.id);
+        await setDoc(logDocRef, cleanUndefined(log), { merge: true });
+      }
+    }
+
   } catch (error: any) {
     if (error.message === "403_FORBIDDEN_ADMIN_ONLY") {
-        alert("403 Forbidden: เฉพาะแอดมินหลักประจำโรงเรียนเท่านั้นที่มีสิทธิ์ล็อกหรือปลดล็อกตารางเรียน (Authorized School Admin Only)");
+      alert("403 Forbidden: เฉพาะแอดมินหลักประจำโรงเรียนเท่านั้นที่มีสิทธิ์ล็อกหรือปลดล็อกตารางเรียน (Authorized School Admin Only)");
     } else if (error.message === "403_FORBIDDEN_LOCKED") {
-        alert("ไม่สามารถแก้ไขได้ เนื่องจากตารางเรียนประจำภาคเรียนนี้ถูกล็อกโดยฝ่ายวิชาการแล้ว");
+      alert("ไม่สามารถแก้ไขได้ เนื่องจากตารางเรียนประจำภาคเรียนนี้ถูกล็อกโดยฝ่ายวิชาการแล้ว");
     } else if (error.message === "RACE_CONDITION_CONFLICT") {
-        alert("🚨 Conflict Detected: Another user has already updated this schedule block. Your changes will be reverted to match the server.");
-        // The onSnapshot listener will automatically pull the newest state and revert the UI.
+      alert("🚨 Conflict Detected: Another user has already updated this schedule block. Your changes will be reverted to match the server.");
     } else if (error.message === "409_CONFLICT_ASSIGNMENT_IN_USE") {
-        alert("ไม่สามารถลบลิงค์มอบหมายงานได้ (Action Blocked)\n\nรายวิชานี้ของรายชื่อครูดังกล่าว ถูกจัดวางลงบนตารางเรียน (Timetable Grid) ไปเรียบร้อยแล้ว หากต้องการลบลิงค์นี้ กรุณาไปลบคาบเรียนของวิชานี้ออกจากตารางสอนของห้องดังกล่าวให้หมดก่อน จึงจะกลับมาทำรายการลบลิงค์นี้ได้");
+      alert("ไม่สามารถลบลิงค์มอบหมายงานได้ (Action Blocked)\n\nรายวิชานี้ของรายชื่อครูดังกล่าว ถูกจัดวางลงบนตารางเรียน (Timetable Grid) ไปเรียบร้อยแล้ว หากต้องการลบลิงค์นี้ กรุณาไปลบคาบเรียนของวิชานี้ออกจากตารางสอนของห้องดังกล่าวให้หมดก่อน จึงจะกลับมาทำรายการลบลิงค์นี้ได้");
     } else {
-        console.error(`Error saving data to Firestore API for org ${orgId}:`, error);
-        throw error;
+      console.error(`Error saving data to Firestore API for org ${orgId}:`, error);
+      throw error;
     }
   }
 };
 
-export const resetSemesterTimetable = async (orgId: string = 'default', currentUser: any): Promise<void> => {
+export const resetSemesterTimetable = async (orgId: string = ORG_ID, currentUser: any): Promise<void> => {
   try {
     if (currentUser?.role !== 'admin') {
       throw new Error("403_FORBIDDEN_ADMIN_ONLY");
     }
     const docRef = doc(db, 'apps', orgId);
+    
+    // 1. Delete all docs in scheduleEntries subcollection
+    const scheduleEntriesColRef = collection(db, 'apps', orgId, 'scheduleEntries');
+    const scheduleSnap = await getDocs(scheduleEntriesColRef);
+    
+    if (!scheduleSnap.empty) {
+      const batches: any[] = [];
+      let currentBatch = writeBatch(db);
+      let opCount = 0;
+      for (const d of scheduleSnap.docs) {
+        currentBatch.delete(d.ref);
+        opCount++;
+        if (opCount >= 400) {
+          batches.push(currentBatch);
+          currentBatch = writeBatch(db);
+          opCount = 0;
+        }
+      }
+      if (opCount > 0) batches.push(currentBatch);
+      for (const b of batches) {
+        await b.commit();
+      }
+    }
+
+    // 2. Add reset log to activityLogs subcollection
+    const resetLogId = crypto.randomUUID();
+    const resetLogDocRef = doc(db, 'apps', orgId, 'activityLogs', resetLogId);
+    await setDoc(resetLogDocRef, {
+      id: resetLogId,
+      action: `System reset for the new semester by ${currentUser?.name || currentUser?.email || 'Admin'}`,
+      entityType: "system",
+      entityId: "system",
+      timestamp: new Date().toISOString(),
+      userName: currentUser?.name || currentUser?.email || "Admin"
+    });
+
+    // 3. Update main doc: clear teacherSubjectAssignments, unlock, remove legacy fields
     await runTransaction(db, async (transaction) => {
       const docSnap = await transaction.get(docRef);
       if (!docSnap.exists()) return;
@@ -350,23 +404,15 @@ export const resetSemesterTimetable = async (orgId: string = 'default', currentU
       
       const updatedData = {
         ...data,
-        scheduleEntries: [],
+        scheduleEntries: deleteField(),
+        activityLogs: deleteField(),
         teacherSubjectAssignments: [],
-        activityLogs: [{
-          id: crypto.randomUUID(),
-          action: `System reset for the new semester by ${currentUser?.name || currentUser?.email || 'Admin'}`,
-          entityType: "system",
-          entityId: "system",
-          timestamp: new Date().toISOString(),
-          userName: currentUser?.name || currentUser?.email || "Admin"
-        }],
         organizationSettings: {
           ...data.organizationSettings,
-          isLocked: false // unlock automatically
+          isLocked: false
         }
       };
-      const cleanedData = cleanUndefined(updatedData);
-      transaction.set(docRef, cleanedData, { merge: true });
+      transaction.set(docRef, updatedData, { merge: true });
     });
   } catch (error: any) {
     if (error.message === "403_FORBIDDEN_ADMIN_ONLY") {

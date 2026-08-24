@@ -3,13 +3,12 @@ import React, { useState, useEffect, ChangeEvent, FormEvent } from 'react';
 import { OrganizationSettings, ScreenAccessProps, DayOfWeek, User } from '../types';
 import { Icons } from '../constants';
 import ConfirmationModal from './ConfirmationModal';
-import { fetchAppData, resetSemesterTimetable } from '../api';
+import { fetchAppData, resetSemesterTimetable, ORG_ID } from '../api';
 
 interface OrganizationSettingsScreenProps extends ScreenAccessProps {
   organizationSettings: OrganizationSettings | null;
   setOrganizationSettings: (settings: OrganizationSettings | null) => void;
   currentUser?: User | null;
-  resolvedUserOrgId?: string;
 }
 
 const OrganizationSettingsScreen: React.FC<OrganizationSettingsScreenProps> = ({
@@ -17,7 +16,6 @@ const OrganizationSettingsScreen: React.FC<OrganizationSettingsScreenProps> = ({
   setOrganizationSettings,
   permissions,
   currentUser,
-  resolvedUserOrgId,
 }) => {
   const [currentSettings, setCurrentSettings] = useState<Partial<OrganizationSettings>>({});
   const [logoPreview, setLogoPreview] = useState<string | null>(null);
@@ -131,27 +129,6 @@ const OrganizationSettingsScreen: React.FC<OrganizationSettingsScreenProps> = ({
         return;
     }
 
-    // Sync adminEmail to platform_admin_data if changed
-    if (resolvedUserOrgId && currentSettings.schoolAdminEmail !== organizationSettings?.schoolAdminEmail) {
-      try {
-        const { doc, getDoc, setDoc } = await import('firebase/firestore');
-        const { db } = await import('../lib/firebase');
-        const platRef = doc(db, 'apps', 'platform_admin_data');
-        const platSnap = await getDoc(platRef);
-        if (platSnap.exists()) {
-          const platData = platSnap.data();
-          const mappings = platData.domainMappings || [];
-          const mappingIndex = mappings.findIndex((m: any) => m.organizationId === resolvedUserOrgId);
-          if (mappingIndex >= 0) {
-            mappings[mappingIndex].adminEmail = currentSettings.schoolAdminEmail?.trim().toLowerCase();
-            await setDoc(platRef, { ...platData, domainMappings: mappings }, { merge: true });
-          }
-        }
-      } catch (err) {
-        console.error("Failed to sync admin email to platform mapping:", err);
-      }
-    }
-
     setOrganizationSettings(currentSettings as OrganizationSettings);
     setSuccessMessage('บันทึกข้อมูลหน่วยงานสำเร็จแล้ว');
   };
@@ -179,7 +156,7 @@ const OrganizationSettingsScreen: React.FC<OrganizationSettingsScreenProps> = ({
 
   const handleDownloadBackup = async () => {
     try {
-      const orgId = currentUser?.organizationId || resolvedUserOrgId || 'default';
+      const orgId = ORG_ID;
       const appData = await fetchAppData(orgId);
       const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(appData, null, 2));
       const downloadAnchorNode = document.createElement('a');
@@ -202,7 +179,7 @@ const OrganizationSettingsScreen: React.FC<OrganizationSettingsScreenProps> = ({
     }
     try {
       setIsResetting(true);
-      const orgId = currentUser?.organizationId || resolvedUserOrgId || 'default';
+      const orgId = ORG_ID;
       await resetSemesterTimetable(orgId, currentUser);
       setIsResetSemesterModalOpen(false);
       alert("รีเซ็ตตารางเรียนสำหรับภาคเรียนใหม่เรียบร้อยแล้ว");

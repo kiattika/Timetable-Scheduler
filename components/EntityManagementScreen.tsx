@@ -1,6 +1,6 @@
 import { formatRoomDisplay } from "../utils/stringUtils";
-
 import React, { useState, useEffect, useMemo } from 'react';
+import * as XLSX from 'xlsx';
 // Fix: Ensure all types used from appData for optionsSource are correctly typed to have a 'name' property.
 import { AppData, Entity, EntityType, FormField, Identifiable, Subject as SubjectType, Teacher as TeacherType, SubjectTeachingMode, ScreenAccessProps, GradeLevel as GradeLevelType, PhysicalRoom as ClassroomType, TeacherSubjectAssignment, Teacher, Subject, GradeLevel, PhysicalRoom, ScheduleEntry } from '../types'; // Renamed Subject to avoid conflict
 import Modal from './Modal';
@@ -699,6 +699,65 @@ const EntityManagementScreen = <T extends Identifiable,>({
   };
 
 
+  const handleExportExcel = () => {
+    const wb = XLSX.utils.book_new();
+    let dataAOA: (string | number | boolean | undefined)[][] = [];
+    let sheetName = entityNameSingular;
+
+    if (entityType === 'teachers') {
+      const headers = ["ชื่อ-สกุล", "รหัสครู", "อีเมล", "กลุ่มสาระการเรียนรู้", "ห้องประจำชั้น/ที่ปรึกษา"];
+      const rows = (filteredItems as unknown as Teacher[]).map(t => {
+        const homeroomNames = (t.homeroomGradeLevelIds || [])
+          .map(id => appData.gradeLevels.find(g => g.id === id)?.name || id)
+          .join(', ');
+        return [t.name || '', t.teacherCode || '', t.email || '', t.department || '', homeroomNames];
+      });
+      dataAOA = [headers, ...rows];
+    } else if (entityType === 'subjects') {
+      const headers = [
+        "ชื่อวิชา", "รหัสวิชา", "จำนวนคาบ/สัปดาห์", "กลุ่มสาระการเรียนรู้", "สีประจำวิชา",
+        "รูปแบบการสอน", "รูปแบบการจัดคาบ", "อนุญาตให้ใช้ห้องร่วม", "วิชาเรียนรวม",
+        "วิชาโฮมรูม/แนะแนว", "ผูกกับครูประจำชั้นอัตโนมัติ", "ระดับชั้นที่เปิดสอน"
+      ];
+      const rows = (filteredItems as unknown as Subject[]).map(s => {
+        const applicableGrades = (s.applicableParentGradeLevelIds || [])
+          .map(id => appData.gradeLevels.find(g => g.id === id)?.name || id)
+          .join(', ');
+        return [
+          s.name || '', s.subjectCode || '', s.periodsPerWeek ?? 1, s.department || '', s.color || '#3B82F6',
+          s.teachingMode || 'single', s.schedulingPattern || '',
+          s.allowClassroomSharing ? 'ใช่' : 'ไม่ใช่',
+          s.isBroadAssignment ? 'ใช่' : 'ไม่ใช่',
+          s.isHomeroomAdvisorySubject ? 'ใช่' : 'ไม่ใช่',
+          s.autoLinkToHomeroomTeachers ? 'ใช่' : 'ไม่ใช่',
+          applicableGrades
+        ];
+      });
+      dataAOA = [headers, ...rows];
+    } else if (entityType === 'gradeLevels' || entityType === 'classrooms') {
+      const headers = [entityType === 'classrooms' ? "ชื่อห้องเรียน" : "ชื่อระดับชั้น", "ห้องประจำ/โฮมรูม", "คำอธิบาย"];
+      const rows = (filteredItems as unknown as GradeLevel[]).map(g => {
+        const room = appData.physicalRooms.find(r => r.id === g.homeroomPhysicalRoomId);
+        return [g.name || '', room ? formatRoomDisplay(room) : '', g.description || ''];
+      });
+      dataAOA = [headers, ...rows];
+    } else if (entityType === 'physicalRooms') {
+      const headers = ["รหัสห้อง", "ชื่อห้อง", "ประเภทห้อง", "ความจุ (คน)"];
+      const rows = (filteredItems as unknown as PhysicalRoom[]).map(r => [
+        r.code || '', r.name || '', r.type || 'ห้องเรียนทั่วไป', r.capacity ?? 40
+      ]);
+      dataAOA = [headers, ...rows];
+    } else {
+      const headers = formFields.map(f => f.label);
+      const rows = filteredItems.map(item => formFields.map(f => (item as any)[f.name] || ''));
+      dataAOA = [headers, ...rows];
+    }
+
+    const ws = XLSX.utils.aoa_to_sheet(dataAOA);
+    XLSX.utils.book_append_sheet(wb, ws, sheetName);
+    XLSX.writeFile(wb, `${entityNamePlural}_export.xlsx`);
+  };
+
   return (
     <div className="p-4 md:p-6 bg-white shadow-lg rounded-lg relative">
       {toastMessage && (
@@ -712,12 +771,20 @@ const EntityManagementScreen = <T extends Identifiable,>({
           {IconComponent && <IconComponent size={32} className="mr-3 text-blue-600" />}
           <h2 className="text-2xl font-semibold text-slate-800">Manage {entityNamePlural}</h2>
         </div>
-        <div className="flex space-x-2">
+        <div className="flex items-center space-x-2">
+          <button
+            type="button"
+            onClick={handleExportExcel}
+            className="flex items-center bg-emerald-600 hover:bg-emerald-700 text-white font-medium py-2 px-3.5 rounded-md shadow-sm transition-colors duration-150 text-sm"
+            title={`ส่งออกข้อมูล ${entityNamePlural} เป็นไฟล์ Excel (.xlsx)`}
+          >
+            <Icons.Download size={16} className="mr-1.5" /> Export Excel
+          </button>
           <button
             onClick={openModalForNew}
-            className="flex items-center bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-md shadow-md transition-colors duration-150"
+            className="flex items-center bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-md shadow-md transition-colors duration-150 text-sm"
           >
-            <Icons.Add size={20} className="mr-2" /> Add New {entityNameSingular}
+            <Icons.Add size={18} className="mr-1.5" /> Add New {entityNameSingular}
           </button>
         </div>
       </div>

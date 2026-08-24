@@ -26,8 +26,8 @@ export const db = isValidDbId
 export const auth = getAuth(app);
 const provider = new GoogleAuthProvider();
 provider.setCustomParameters({ 
-  hd: 'utd.ac.th',
-  prompt: 'select_account' 
+  prompt: 'consent',
+  hd: 'utd.ac.th'
 });
 
 let isSigningIn = false;

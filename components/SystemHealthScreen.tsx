@@ -3,12 +3,11 @@ import { AppData, ActivityLog } from '../types';
 import { Icons } from '../constants';
 import { collection, getDocs, limit, orderBy, query, deleteDoc, doc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
-import { pruneActivityLogs, saveAppData } from '../api';
+import { pruneActivityLogs, saveAppData, ORG_ID } from '../api';
 
 interface SystemHealthScreenProps {
   appData: AppData;
   setAppData?: React.Dispatch<React.SetStateAction<AppData | null>>;
-  resolvedUserOrgId?: string;
 }
 
 interface ErrorLog {
@@ -21,7 +20,6 @@ interface ErrorLog {
 export const SystemHealthScreen: React.FC<SystemHealthScreenProps> = ({ 
   appData,
   setAppData,
-  resolvedUserOrgId = 'default'
 }) => {
   const [errorLogs, setErrorLogs] = useState<ErrorLog[]>([]);
   const [isLoadingLogs, setIsLoadingLogs] = useState(false);
@@ -30,7 +28,7 @@ export const SystemHealthScreen: React.FC<SystemHealthScreenProps> = ({
 
   const isAdmin = appData.currentUser?.role === 'admin';
 
-  const orgId = resolvedUserOrgId || 'default';
+  const orgId = ORG_ID;
 
   const fetchAndCleanLogs = useCallback(async () => {
     setIsLoadingLogs(true);

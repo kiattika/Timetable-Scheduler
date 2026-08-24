@@ -119,7 +119,7 @@ export interface OrganizationSettings {
   schoolAdminEmail?: string; // อีเมลแอดมินโรงเรียน
 }
 
-export type UserRole = 'admin' | 'manager' | 'assistant' | 'guest';
+export type UserRole = 'admin' | 'manager' | 'teacher' | 'assistant' | 'guest';
 
 export interface User extends Identifiable {
   name: string;

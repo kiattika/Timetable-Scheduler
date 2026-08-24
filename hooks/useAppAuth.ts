@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
-import { fetchAppData, saveAppData, safeUpsert, DEFAULT_DEPARTMENTS, DEFAULT_RESOURCE_TYPES, pruneActivityLogs } from '../api';
-import { AppData, User } from '../types';
+import { fetchAppData, saveAppData, safeUpsert, DEFAULT_DEPARTMENTS, DEFAULT_RESOURCE_TYPES, ORG_ID } from '../api';
+import { AppData, User, ScheduleEntry, ActivityLog } from '../types';
 import { db } from '../lib/firebase';
-import { doc, getDoc, onSnapshot } from 'firebase/firestore';
+import { doc, collection, onSnapshot, query, orderBy, limit } from 'firebase/firestore';
 import { DEFAULT_PERIOD_SETTINGS } from '../constants';
 
 export const useAppAuth = (
@@ -11,9 +11,6 @@ export const useAppAuth = (
   setIsDataLoaded: (val: boolean) => void,
   setCurrentView: (view: any) => void
 ) => {
-  const [impersonatedOrgId, setImpersonatedOrgId] = useState<string | null>(null);
-  const [resolvedUserOrgId, setResolvedUserOrgId] = useState<string>('default');
-
   const [isAuthChecking, setIsAuthChecking] = useState(true);
   const [googleAccessToken, setGoogleAccessToken] = useState<string | null>(() => {
     if (typeof window !== 'undefined') {
@@ -27,108 +24,191 @@ export const useAppAuth = (
   useEffect(() => {
     if (isAuthChecking) return;
     let isMounted = true;
-    let unsubscribeSnapshot: (() => void) | null = null;
+    let unsubMainDoc: (() => void) | null = null;
+    let unsubSchedule: (() => void) | null = null;
+    let unsubLogs: (() => void) | null = null;
 
-    const loadDataWithDomainRouting = async () => {
+    const loadData = async () => {
       setIsLoadingInitialData(true);
       try {
         const userEmail = firebaseUser?.email ? firebaseUser.email.toLowerCase().trim() : '';
 
-        // Not logged in -> Show login screen immediately
+        // Not logged in -> Show login / default state
         if (!userEmail) {
-           if (!isMounted) return;
-           const initData = await fetchAppData('default');
-           setAppData({ ...initData, currentUser: null });
-           setIsDataLoaded(true);
-           return;
+          if (!isMounted) return;
+          const initData = await fetchAppData(ORG_ID);
+          setAppData({ ...initData, currentUser: null });
+          setIsDataLoaded(true);
+          return;
         }
 
-        const activeOrgId = 'default';
-        setResolvedUserOrgId(activeOrgId);
+        // Fetch custom claims to verify role securely from JWT token
+        let userClaimRole: string | null = null;
+        try {
+          const idTokenResult = await firebaseUser.getIdTokenResult(true);
+          if (idTokenResult?.claims?.role) {
+            userClaimRole = String(idTokenResult.claims.role);
+          }
+        } catch (claimErr) {
+          console.warn("Could not read custom claims:", claimErr);
+        }
 
-        // Real-time listener for UTD school data
-        unsubscribeSnapshot = onSnapshot(doc(db, 'apps', activeOrgId), async (docSnap) => {
-           if (!isMounted) return;
-           if (!docSnap.exists()) {
-               console.warn("Doc does not exist, fetching defaults.");
-               const defaultInit = await fetchAppData('default');
-               setAppData(defaultInit);
-               setIsDataLoaded(true);
-               return;
-           }
+        let currentScheduleEntries: ScheduleEntry[] = [];
+        let currentActivityLogs: ActivityLog[] = [];
+        let mainParsedData: any = null;
 
-           const parsedData = docSnap.data() as any;
-           const subjectsWithDefaults = (parsedData.subjects || []).map((s: any) => ({...s, teachingMode: s.teachingMode || 'single'}));
-           
-           const data: AppData = {
-              departments: safeUpsert(parsedData.departments, DEFAULT_DEPARTMENTS), resourceTypes: safeUpsert(parsedData.resourceTypes, DEFAULT_RESOURCE_TYPES), teachers: parsedData.teachers || [],
-              subjects: subjectsWithDefaults,
-              gradeLevels: parsedData.gradeLevels || [],
-              physicalRooms: parsedData.physicalRooms || [],
-              scheduleEntries: parsedData.scheduleEntries || [],
-              periodSettings: parsedData.periodSettings || DEFAULT_PERIOD_SETTINGS,
-              teacherSubjectAssignments: parsedData.teacherSubjectAssignments || [],
-              organizationSettings: parsedData.organizationSettings || null,
-              users: parsedData.users || [],
-              activityLogs: pruneActivityLogs(parsedData.activityLogs || [], 7),
-              currentUser: null, 
-              authorizedAdmins: parsedData.authorizedAdmins || []
-           };
+        const updateCombinedAppData = async () => {
+          if (!isMounted) return;
+          if (!mainParsedData) {
+            const defaultInit = await fetchAppData(ORG_ID);
+            setAppData(defaultInit);
+            setIsDataLoaded(true);
+            return;
+          }
 
-           let appUser = data.users.find(u => u.email.toLowerCase() === userEmail);
-           let newUsers = [...data.users];
-           let authStateChanged = false;
-           
-           const isAuthorizedAdmin = (data.authorizedAdmins || []).some(adminEmail => adminEmail.toLowerCase() === userEmail);
+          const subjectsWithDefaults = (mainParsedData.subjects || []).map((s: any) => ({
+            ...s, 
+            teachingMode: s.teachingMode || 'single'
+          }));
 
-           if (!appUser) {
-              appUser = { 
-                  id: firebaseUser!.uid, 
-                  name: firebaseUser!.displayName || 'UTD Member', 
-                  email: userEmail, 
-                  role: isAuthorizedAdmin ? 'admin' : 'guest',
-                  organizationId: activeOrgId
-              };
-              newUsers.push(appUser);
-              authStateChanged = true;
-           } else {
-              if (isAuthorizedAdmin && appUser.role !== 'admin') {
-                 appUser = { ...appUser, role: 'admin' };
-                 authStateChanged = true;
-              }
-           }
+          const isAuthorizedAdmin = (mainParsedData.authorizedAdmins || []).some(
+            (adminEmail: string) => adminEmail.toLowerCase() === userEmail
+          ) || userClaimRole === 'admin';
 
-           if (authStateChanged) {
-              newUsers = newUsers.map(u => u.id === appUser!.id ? appUser! : u);
-           }
+          let resolvedRole: 'admin' | 'manager' | 'teacher' | 'assistant' | 'guest' = 'guest';
+          if (userClaimRole === 'admin' || isAuthorizedAdmin) {
+            resolvedRole = 'admin';
+          } else if (userClaimRole === 'manager') {
+            resolvedRole = 'manager';
+          } else if (userClaimRole === 'assistant') {
+            resolvedRole = 'assistant';
+          } else if (userClaimRole === 'teacher') {
+            resolvedRole = 'teacher';
+          }
 
-           const updatedData: AppData = {
-             ...data,
-             users: newUsers,
-             currentUser: appUser
-           };
-           
-           if (authStateChanged) {
-              await saveAppData(updatedData, activeOrgId);
-           }
+          const existingUsers: User[] = mainParsedData.users || [];
+          let appUser = existingUsers.find(u => u.email.toLowerCase() === userEmail);
+          let newUsers = [...existingUsers];
+          let authStateChanged = false;
 
-           setAppData(prev => ({
-               ...updatedData,
-               currentUser: appUser
-           }));
-           
-           setIsDataLoaded(true);
-        });
+          if (!appUser) {
+            appUser = {
+              id: firebaseUser.uid,
+              name: firebaseUser.displayName || 'UTD Member',
+              email: userEmail,
+              role: resolvedRole,
+              organizationId: ORG_ID
+            };
+            newUsers.push(appUser);
+            authStateChanged = true;
+          } else if (appUser.role !== resolvedRole) {
+            appUser = { ...appUser, role: resolvedRole };
+            newUsers = newUsers.map(u => u.id === appUser!.id ? appUser! : u);
+            authStateChanged = true;
+          }
+
+          const finalScheduleEntries = currentScheduleEntries.length > 0 
+            ? currentScheduleEntries 
+            : (mainParsedData.scheduleEntries || []);
+
+          const finalActivityLogs = currentActivityLogs.length > 0
+            ? currentActivityLogs
+            : (mainParsedData.activityLogs || []);
+
+          const updatedData: AppData = {
+            departments: safeUpsert(mainParsedData.departments, DEFAULT_DEPARTMENTS),
+            resourceTypes: safeUpsert(mainParsedData.resourceTypes, DEFAULT_RESOURCE_TYPES),
+            teachers: mainParsedData.teachers || [],
+            subjects: subjectsWithDefaults,
+            gradeLevels: mainParsedData.gradeLevels || [],
+            physicalRooms: mainParsedData.physicalRooms || [],
+            scheduleEntries: finalScheduleEntries,
+            periodSettings: mainParsedData.periodSettings || DEFAULT_PERIOD_SETTINGS,
+            teacherSubjectAssignments: mainParsedData.teacherSubjectAssignments || [],
+            organizationSettings: mainParsedData.organizationSettings || null,
+            users: newUsers,
+            activityLogs: finalActivityLogs,
+            currentUser: appUser,
+            authorizedAdmins: mainParsedData.authorizedAdmins || []
+          };
+
+          if (authStateChanged) {
+            await saveAppData(updatedData, ORG_ID);
+          }
+
+          setAppData(updatedData);
+          setIsDataLoaded(true);
+        };
+
+        // 1. Real-time listener for main doc (apps/{ORG_ID})
+        unsubMainDoc = onSnapshot(
+          doc(db, 'apps', ORG_ID),
+          (docSnap) => {
+            if (!isMounted) return;
+            if (docSnap.exists()) {
+              mainParsedData = docSnap.data();
+            } else {
+              mainParsedData = null;
+            }
+            updateCombinedAppData();
+          },
+          (error) => {
+            console.warn("Firestore main doc listener error:", error);
+            if (!mainParsedData) {
+              fetchAppData(ORG_ID).then(fallbackData => {
+                if (isMounted) {
+                  setAppData(prev => prev || fallbackData);
+                  setIsDataLoaded(true);
+                }
+              }).catch(console.error);
+            }
+          }
+        );
+
+        // 2. Real-time listener for subcollection (apps/{ORG_ID}/scheduleEntries)
+        unsubSchedule = onSnapshot(
+          collection(db, 'apps', ORG_ID, 'scheduleEntries'),
+          (colSnap) => {
+            if (!isMounted) return;
+            if (!colSnap.empty) {
+              currentScheduleEntries = colSnap.docs.map(d => ({ ...d.data(), id: d.id } as ScheduleEntry));
+            } else {
+              currentScheduleEntries = [];
+            }
+            updateCombinedAppData();
+          },
+          (error) => {
+            console.warn("Firestore scheduleEntries listener error:", error);
+          }
+        );
+
+        // 3. Real-time listener for subcollection (apps/{ORG_ID}/activityLogs)
+        const logsQuery = query(collection(db, 'apps', ORG_ID, 'activityLogs'), orderBy('timestamp', 'desc'), limit(50));
+        unsubLogs = onSnapshot(
+          logsQuery,
+          (logsSnap) => {
+            if (!isMounted) return;
+            if (!logsSnap.empty) {
+              currentActivityLogs = logsSnap.docs.map(d => ({ ...d.data(), id: d.id } as ActivityLog));
+            } else {
+              currentActivityLogs = [];
+            }
+            updateCombinedAppData();
+          },
+          (err) => {
+            console.warn("ActivityLogs subcollection listener warning:", err);
+          }
+        );
 
       } catch (error) {
         console.error("Failed to fetch/subscribe to initial app data:", error);
         if (!isMounted) return;
-        const initialErrorUser: User = { id: crypto.randomUUID(), name: 'Error User', email: 'error@example.com', role: 'guest' };
+        const initialErrorUser: User = { id: crypto.randomUUID(), name: 'Error User', email: 'error@utd.ac.th', role: 'guest' };
         setAppData({
-            departments: [], resourceTypes: [], teachers: [], subjects: [], gradeLevels: [], physicalRooms: [], scheduleEntries: [],
-            periodSettings: DEFAULT_PERIOD_SETTINGS.map((ps, index) => ({...ps, id: ps.id || `p${index}`})),
-            teacherSubjectAssignments: [], organizationSettings: null, users: [initialErrorUser], currentUser: null,
-            activityLogs: []
+          departments: [], resourceTypes: [], teachers: [], subjects: [], gradeLevels: [], physicalRooms: [], scheduleEntries: [],
+          periodSettings: DEFAULT_PERIOD_SETTINGS.map((ps, index) => ({...ps, id: ps.id || `p${index}`})),
+          teacherSubjectAssignments: [], organizationSettings: null, users: [initialErrorUser], currentUser: null,
+          activityLogs: []
         });
         setIsDataLoaded(true);
       } finally {
@@ -136,13 +216,15 @@ export const useAppAuth = (
       }
     };
 
-    loadDataWithDomainRouting();
+    loadData();
     
     return () => { 
-       isMounted = false; 
-       if (unsubscribeSnapshot) unsubscribeSnapshot();
+      isMounted = false; 
+      if (unsubMainDoc) unsubMainDoc();
+      if (unsubSchedule) unsubSchedule();
+      if (unsubLogs) unsubLogs();
     };
-  }, [isAuthChecking, firebaseUser?.email, impersonatedOrgId]);
+  }, [isAuthChecking, firebaseUser?.email]);
 
   useEffect(() => {
     import('../lib/firebase').then(({ initAuth }) => {
@@ -164,11 +246,10 @@ export const useAppAuth = (
   const handleLoginSuccess = (user: any, token: string | null) => {
     setGoogleAccessToken(token);
     if (token) {
-        localStorage.setItem('googleAccessToken', token);
+      localStorage.setItem('googleAccessToken', token);
     } else {
-        localStorage.removeItem('googleAccessToken');
+      localStorage.removeItem('googleAccessToken');
     }
-    // User state is handled by onAuthStateChanged in useEffect
   };
 
   const handleLogout = () => {
@@ -181,10 +262,6 @@ export const useAppAuth = (
   };
 
   return {
-    impersonatedOrgId,
-    setImpersonatedOrgId,
-    resolvedUserOrgId,
-    setResolvedUserOrgId,
     isAuthChecking,
     googleAccessToken,
     firebaseUser,
