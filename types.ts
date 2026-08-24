@@ -46,7 +46,6 @@ export interface Subject extends Identifiable {
 export interface GradeLevel extends Identifiable {
   name: string; 
   homeroomPhysicalRoomId?: string; // ID of the homeroom physical room for this specific grade
-  groupEmail?: string; // Added: For the Classrooms Group mapping
   description?: string; // Added: Description for the classroom
 }
 

@@ -22,7 +22,7 @@ import { TeacherScheduleTable } from './components/TeacherScheduleView';
 import { RoomUsageScheduleTable } from './components/RoomUsageView';
 
 import { Icons, APP_TITLE, PREDEFINED_SUBJECT_COLORS, DEFAULT_PERIOD_SETTINGS } from './constants';
-import { fetchAppData, saveAppData, getInitialAppDataForApi } from './api'; 
+import { fetchAppData, saveAppData, getInitialAppDataForApi, DEFAULT_DEPARTMENTS, DEFAULT_RESOURCE_TYPES, pruneActivityLogs } from './api'; 
 import { isParentGrade as checkIsParentGradeUtil, getParentGradeLevelId, getChildGradeLevelIds, isChildOf } from './components/scheduleUtils';
 import { useAppAuth } from './hooks/useAppAuth';
 import { useBackupRestore } from './hooks/useBackupRestore';
@@ -48,6 +48,17 @@ const App: React.FC = () => {
   const [restoreFile, setRestoreFile] = useState<File | null>(null);
   const [showRestoreConfirm, setShowRestoreConfirm] = useState(false);
   const [restoreConfirmationText, setRestoreConfirmationText] = useState("");
+  const [restoreFileInfo, setRestoreFileInfo] = useState<{
+    schoolName?: string;
+    academicTerm?: string;
+    teachersCount: number;
+    subjectsCount: number;
+    gradeLevelsCount: number;
+    physicalRoomsCount: number;
+    scheduleEntriesCount: number;
+    assignmentsCount: number;
+  } | null>(null);
+  const [isRestoring, setIsRestoring] = useState(false);
 
   const {
     impersonatedOrgId, setImpersonatedOrgId,
@@ -90,10 +101,10 @@ const App: React.FC = () => {
   const isImpersonating = impersonatedOrgId !== null;
   const isLocked = appData?.organizationSettings?.isLocked === true;
   const permissions: ScreenAccessProps['permissions'] = {
-    canPerformAdminActions: !isImpersonating && (appData?.currentUser?.role === 'admin' || appData?.currentUser?.role === 'platform_admin'),
-    canPerformManagerActions: !isImpersonating && (appData?.currentUser?.role === 'admin' || appData?.currentUser?.role === 'manager' || appData?.currentUser?.role === 'platform_admin'),
-    canModifyScheduleEntries: !isLocked && !isImpersonating && (appData?.currentUser?.role === 'admin' || appData?.currentUser?.role === 'manager' || appData?.currentUser?.role === 'assistant' || appData?.currentUser?.role === 'platform_admin'),
-    canModifyTeacherSubjectLinks: !isLocked && !isImpersonating && (appData?.currentUser?.role === 'admin' || appData?.currentUser?.role === 'manager' || appData?.currentUser?.role === 'assistant' || appData?.currentUser?.role === 'platform_admin'),
+    canPerformAdminActions: !isImpersonating && (appData?.currentUser?.role === 'admin'),
+    canPerformManagerActions: !isImpersonating && (appData?.currentUser?.role === 'admin' || appData?.currentUser?.role === 'manager'),
+    canModifyScheduleEntries: !isLocked && !isImpersonating && (appData?.currentUser?.role === 'admin' || appData?.currentUser?.role === 'manager' || appData?.currentUser?.role === 'assistant'),
+    canModifyTeacherSubjectLinks: !isLocked && !isImpersonating && (appData?.currentUser?.role === 'admin' || appData?.currentUser?.role === 'manager' || appData?.currentUser?.role === 'assistant'),
   };
 
   // Path routing and guards for /platform-admin
@@ -132,7 +143,92 @@ const App: React.FC = () => {
 
   const { handleBackupData, handleRestoreData } = useBackupRestore(appData, setAppData as (data: AppData) => void, setRestoreFile, setShowRestoreConfirm);
 
-    const entityConfigurations: Record<ManageDataSubView | ImportableEntityType | 'departments' | 'resourceTypes', { singular: string; plural: string; fields?: FormField[]; getIcon: () => React.ElementType }> = {
+  useEffect(() => {
+    if (restoreFile) {
+      restoreFile.text().then(text => {
+        try {
+          const parsed = JSON.parse(text);
+          const raw = parsed.data || parsed;
+          const org = raw.organizationSettings || parsed.organizationSettings;
+          setRestoreFileInfo({
+            schoolName: org?.name || parsed.schoolName || 'ไม่ระบุชื่อโรงเรียน',
+            academicTerm: org?.academicYear ? `${org?.semester || '1'}/${org.academicYear}` : (parsed.academicTerm || 'ไม่ระบุภาคเรียน'),
+            teachersCount: Array.isArray(raw.teachers) ? raw.teachers.length : 0,
+            subjectsCount: Array.isArray(raw.subjects) ? raw.subjects.length : 0,
+            gradeLevelsCount: Array.isArray(raw.gradeLevels) ? raw.gradeLevels.length : 0,
+            physicalRoomsCount: Array.isArray(raw.physicalRooms) ? raw.physicalRooms.length : 0,
+            scheduleEntriesCount: Array.isArray(raw.scheduleEntries) ? raw.scheduleEntries.length : 0,
+            assignmentsCount: Array.isArray(raw.teacherSubjectAssignments) ? raw.teacherSubjectAssignments.length : 0,
+          });
+        } catch (e) {
+          setRestoreFileInfo(null);
+        }
+      }).catch(() => setRestoreFileInfo(null));
+    } else {
+      setRestoreFileInfo(null);
+    }
+  }, [restoreFile]);
+
+  const executeRestore = async () => {
+      if (restoreConfirmationText !== 'RESTORE') {
+          alert("กรุณาพิมพ์ 'RESTORE' ให้ถูกต้องเพื่อยืนยันการกู้คืนข้อมูล");
+          return;
+      }
+      if (!restoreFile) return;
+      setIsRestoring(true);
+
+      try {
+          const text = await restoreFile.text();
+          const parsedData = JSON.parse(text);
+          const rawData = parsedData.data || parsedData;
+          
+          if (appData && rawData) {
+            const restoredOrgSettings = rawData.organizationSettings || parsedData.organizationSettings || appData.organizationSettings;
+            
+            const newAppData: AppData = {
+                departments: rawData.departments && rawData.departments.length > 0 ? rawData.departments : (appData.departments || [...DEFAULT_DEPARTMENTS]),
+                resourceTypes: rawData.resourceTypes && rawData.resourceTypes.length > 0 ? rawData.resourceTypes : (appData.resourceTypes || [...DEFAULT_RESOURCE_TYPES]),
+                teachers: Array.isArray(rawData.teachers) ? rawData.teachers : [],
+                subjects: Array.isArray(rawData.subjects) ? rawData.subjects.map((s: any) => ({
+                  ...s,
+                  teachingMode: s.teachingMode || 'single',
+                  allowClassroomSharing: !!s.allowClassroomSharing,
+                  isBroadAssignment: !!s.isBroadAssignment,
+                  isHomeroomAdvisorySubject: !!s.isHomeroomAdvisorySubject,
+                  autoLinkToHomeroomTeachers: !!s.autoLinkToHomeroomTeachers,
+                  applicableParentGradeLevelIds: s.applicableParentGradeLevelIds || []
+                })) : [],
+                gradeLevels: Array.isArray(rawData.gradeLevels) ? rawData.gradeLevels : [],
+                physicalRooms: Array.isArray(rawData.physicalRooms) ? rawData.physicalRooms : [],
+                scheduleEntries: Array.isArray(rawData.scheduleEntries) ? rawData.scheduleEntries : [],
+                periodSettings: Array.isArray(rawData.periodSettings) && rawData.periodSettings.length > 0 ? rawData.periodSettings : (appData.periodSettings || [...DEFAULT_PERIOD_SETTINGS]),
+                teacherSubjectAssignments: Array.isArray(rawData.teacherSubjectAssignments) ? rawData.teacherSubjectAssignments : [],
+                organizationSettings: restoredOrgSettings,
+                users: Array.isArray(rawData.users) && rawData.users.length > 0 ? rawData.users : (appData.users || []),
+                currentUser: appData.currentUser, // strictly preserve active session
+                authorizedAdmins: Array.isArray(rawData.authorizedAdmins) ? rawData.authorizedAdmins : (appData.authorizedAdmins || []),
+                activityLogs: pruneActivityLogs(Array.isArray(rawData.activityLogs) ? rawData.activityLogs : (appData.activityLogs || []), 7)
+            };
+
+            setAppData(newAppData);
+            
+            // Persist immediately to Firestore
+            await saveAppData(newAppData, resolvedUserOrgId);
+          }
+          
+          setShowRestoreConfirm(false);
+          setRestoreFile(null);
+          setRestoreConfirmationText("");
+          alert("กู้คืนข้อมูลระบบสำเร็จเรียบร้อยแล้ว ข้อมูลทั้งหมดได้รับการบันทึกและซิงค์ลงฐานข้อมูลแล้ว");
+      } catch (e: any) {
+          console.error("Restore error:", e);
+          alert(`การกู้คืนข้อมูลล้มเหลว: ${e?.message || 'กรุณาตรวจสอบไฟล์สำรองข้อมูล'}`);
+      } finally {
+          setIsRestoring(false);
+      }
+  };
+
+  const entityConfigurations: Record<ManageDataSubView | ImportableEntityType | 'departments' | 'resourceTypes', { singular: string; plural: string; fields?: FormField[]; getIcon: () => React.ElementType }> = {
     departments: {
       singular: 'Department',
       plural: 'Departments',
@@ -208,7 +304,6 @@ const App: React.FC = () => {
       fields: [
         { name: 'name', label: 'Grade Level Name', type: 'text', required: true, placeholder: 'e.g., M.1' },
         { name: 'homeroomPhysicalRoomId', label: 'Homeroom (ห้องโฮมรูม)', type: 'select', optionsSource: 'physicalRooms', placeholder: 'Select Homeroom' },
-        { name: 'groupEmail', label: 'Email Group (อีเมลกรุ๊ป)', type: 'email', placeholder: 'e.g., m1@school.edu' },
         { name: 'description', label: 'Description (คำอธิบาย)', type: 'textarea', placeholder: 'Additional info...' },
       ],
       getIcon: () => Icons.GradeLevel,
@@ -219,7 +314,6 @@ const App: React.FC = () => {
        fields: [
           { name: 'name', label: 'Classroom Name (ชื่อห้องเรียน)', type: 'text', required: true, placeholder: 'e.g., M.1/1' },
           { name: 'homeroomPhysicalRoomId', label: 'Homeroom (ห้องเรียนประจำ)', type: 'select', optionsSource: 'physicalRooms', required: false },
-          { name: 'groupEmail', label: 'Student Group Email (อีเมลกลุ่ม)', type: 'email', required: false, placeholder: 'e.g., 1.2569.m5.8@utd.ac.th' },
           { name: 'description', label: 'Description/Notes', type: 'textarea', required: false, placeholder: 'Optional description' },
        ],
        getIcon: () => Icons.Users,
@@ -505,7 +599,7 @@ const App: React.FC = () => {
         case 'adminSettings':
              return <AdminSettingsScreen appData={appData} setAppData={setAppData as any} />;
         case 'systemHealth':
-             return <SystemHealthScreen appData={appData} />;
+             return <SystemHealthScreen appData={appData} setAppData={setAppData as any} resolvedUserOrgId={resolvedUserOrgId} />;
         case 'teachers':
         case 'subjects':
         case 'gradeLevels':
@@ -697,33 +791,6 @@ const App: React.FC = () => {
     );
   }
 
-  const executeRestore = async () => {
-      if (restoreConfirmationText !== 'RESTORE') {
-          alert("Please type 'RESTORE' exactly to confirm.");
-          return;
-      }
-      if (!restoreFile) return;
-
-      try {
-          const text = await restoreFile.text();
-          const parsedData = JSON.parse(text);
-          
-          if (appData) {
-            setAppData({
-                ...parsedData.data,
-                currentUser: appData.currentUser // preserve current user
-            });
-          }
-          
-          setShowRestoreConfirm(false);
-          setRestoreFile(null);
-          setRestoreConfirmationText("");
-          alert("Data restored successfully!");
-      } catch (e) {
-          alert("Restore failed.");
-      }
-  };
-
   return (
     <div className="flex flex-col md:flex-row min-h-screen bg-slate-100 print:block">
       <nav className="w-full md:w-[80px] md:hover:w-72 bg-white px-2 py-4 shadow-lg md:min-h-screen border-r border-slate-200 flex flex-col transition-all duration-300 ease-in-out z-30 group shrink-0 overflow-x-hidden whitespace-nowrap md:fixed md:h-screen md:top-0 print:hidden" aria-label="Main navigation">
@@ -899,44 +966,78 @@ const App: React.FC = () => {
       )}
 
       {showRestoreConfirm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
-          <div className="bg-white rounded-xl shadow-2xl border border-red-100 p-6 max-w-md w-full animate-in fade-in zoom-in duration-200">
-            <div className="flex items-center gap-4 text-red-600 mb-4">
-              <Icons.Warning size={32} />
-              <h3 className="text-xl font-bold">Destructive Action Warning</h3>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl border border-red-100 p-6 max-w-lg w-full animate-in fade-in zoom-in duration-200">
+            <div className="flex items-center gap-3 text-red-600 mb-4 pb-3 border-b border-red-100">
+              <Icons.AlertTriangle size={28} className="shrink-0" />
+              <div>
+                <h3 className="text-lg font-bold text-slate-800">ยืนยันการกู้คืนข้อมูล (Restore Database)</h3>
+                <p className="text-xs text-slate-500">การดำเนินการนี้จะแทนที่ข้อมูลตารางสอนและการตั้งค่าปัจจุบันทั้งหมด</p>
+              </div>
             </div>
-            <p className="text-slate-700 mb-6">
-              🚨 <strong>Warning:</strong> Restoring this backup will completely replace all current timetable and settings data. This action cannot be undone.
-            </p>
-            <div className="mb-6">
-              <label className="block text-sm font-medium text-slate-700 mb-2">
-                Please type <span className="font-mono bg-red-100 text-red-800 px-1 rounded">RESTORE</span> to confirm:
+
+            {restoreFileInfo && (
+              <div className="mb-4 p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-2 text-xs">
+                <div className="flex justify-between items-center text-slate-700">
+                  <span className="font-semibold text-slate-900">หน่วยงาน/สถานศึกษา:</span>
+                  <span className="font-medium text-blue-700">{restoreFileInfo.schoolName}</span>
+                </div>
+                <div className="flex justify-between items-center text-slate-700">
+                  <span className="font-semibold text-slate-900">ภาคเรียน/ปีการศึกษา:</span>
+                  <span className="text-slate-600">{restoreFileInfo.academicTerm}</span>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 pt-2 border-t border-slate-200 text-slate-600">
+                  <div>ครูผู้สอน: <strong className="text-slate-800">{restoreFileInfo.teachersCount}</strong> ท่าน</div>
+                  <div>รายวิชา: <strong className="text-slate-800">{restoreFileInfo.subjectsCount}</strong> วิชา</div>
+                  <div>ระดับชั้น/ห้อง: <strong className="text-slate-800">{restoreFileInfo.gradeLevelsCount}</strong> ชั้น</div>
+                  <div>ห้องเรียน/สถานที่: <strong className="text-slate-800">{restoreFileInfo.physicalRoomsCount}</strong> ห้อง</div>
+                  <div>การมอบหมายสอน: <strong className="text-slate-800">{restoreFileInfo.assignmentsCount}</strong> รายการ</div>
+                  <div>คาบตารางสอน: <strong className="text-slate-800">{restoreFileInfo.scheduleEntriesCount}</strong> คาบ</div>
+                </div>
+              </div>
+            )}
+
+            <div className="mb-5">
+              <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                พิมพ์คำว่า <span className="font-mono bg-red-100 text-red-800 px-1.5 py-0.5 rounded font-bold">RESTORE</span> เพื่อยืนยัน:
               </label>
               <input
                 type="text"
-                className="w-full border border-slate-300 rounded-md p-2 focus:ring-red-500 focus:border-red-500 font-mono"
+                className="w-full border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-red-500 focus:border-red-500 font-mono text-sm tracking-wider"
                 value={restoreConfirmationText}
                 onChange={(e) => setRestoreConfirmationText(e.target.value)}
                 placeholder="RESTORE"
+                disabled={isRestoring}
               />
             </div>
-            <div className="flex justify-end gap-3 mt-6">
+            <div className="flex justify-end gap-3 pt-2">
               <button
                 onClick={() => {
                   setShowRestoreConfirm(false);
                   setRestoreFile(null);
                   setRestoreConfirmationText("");
                 }}
-                className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-md font-medium transition-colors"
+                disabled={isRestoring}
+                className="px-4 py-2 text-sm text-slate-600 hover:bg-slate-100 rounded-lg font-medium transition-colors"
               >
-                Cancel
+                ยกเลิก
               </button>
               <button
                 onClick={executeRestore}
-                disabled={restoreConfirmationText !== 'RESTORE'}
-                className="px-4 py-2 bg-red-600 text-white rounded-md font-medium hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm"
+                disabled={restoreConfirmationText !== 'RESTORE' || isRestoring}
+                className="px-5 py-2 text-sm bg-red-600 text-white rounded-lg font-medium hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm flex items-center gap-2"
               >
-                Apply Restore
+                {isRestoring ? (
+                  <>
+                    <svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    กำลังกู้คืนข้อมูล...
+                  </>
+                ) : (
+                  'ยืนยันการกู้คืนข้อมูล'
+                )}
               </button>
             </div>
           </div>

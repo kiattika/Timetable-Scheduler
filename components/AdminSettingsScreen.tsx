@@ -61,7 +61,7 @@ export const AdminSettingsScreen: React.FC<AdminSettingsScreenProps> = ({ appDat
           <Icons.Users className="mr-3 text-blue-600" size={28} />
           Dynamic Admin Permissions
         </h2>
-        <p className="text-slate-600 mt-2">Manage which users have administrative access to the system and Calendar sync.</p>
+        <p className="text-slate-600 mt-2">จัดการสิทธิ์ผู้ดูแลระบบ (Admin) สำหรับการจัดการข้อมูลและตั้งค่าระบบ</p>
       </div>
 
       <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">

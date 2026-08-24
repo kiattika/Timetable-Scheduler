@@ -1,7 +1,18 @@
-import { AppData, Subject, PeriodSetting, User, ScheduleEntry, GradeLevel, Teacher, TeacherSubjectAssignment, PhysicalRoom, OrganizationSettings, FormField, DayOfWeek } from './types';
+import { AppData, Subject, PeriodSetting, User, ScheduleEntry, GradeLevel, Teacher, TeacherSubjectAssignment, PhysicalRoom, OrganizationSettings, FormField, DayOfWeek, ActivityLog } from './types';
 import { DEFAULT_PERIOD_SETTINGS, PREDEFINED_SUBJECT_COLORS } from './constants';
 import { db } from './lib/firebase';
 import { doc, getDoc, setDoc, runTransaction } from 'firebase/firestore';
+
+export const ONE_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+
+export const pruneActivityLogs = (logs: ActivityLog[] = [], maxDays: number = 7): ActivityLog[] => {
+  const cutoffTime = Date.now() - maxDays * 24 * 60 * 60 * 1000;
+  return logs.filter(log => {
+    if (!log || !log.timestamp) return false;
+    const logTime = new Date(log.timestamp).getTime();
+    return !isNaN(logTime) && logTime >= cutoffTime;
+  });
+};
 
 export const DEFAULT_DEPARTMENTS = [
   { id: 'dep1', name: 'Science' },
@@ -180,7 +191,7 @@ export const fetchAppData = async (orgId: string = 'default'): Promise<AppData> 
         teacherSubjectAssignments: parsedData.teacherSubjectAssignments || [],
         organizationSettings: parsedData.organizationSettings || defaultInitialData.organizationSettings,
         users: parsedData.users && parsedData.users.length > 0 ? parsedData.users : defaultInitialData.users,
-        activityLogs: parsedData.activityLogs || [],
+        activityLogs: pruneActivityLogs(parsedData.activityLogs || [], 7),
         authorizedAdmins: parsedData.authorizedAdmins || [],
         currentUser: null, 
       };
@@ -214,8 +225,14 @@ const cleanUndefined = (obj: any): any => {
 export const saveAppData = async (data: AppData, orgId: string = 'default'): Promise<void> => {
   try {
     const docRef = doc(db, 'apps', orgId);
-    // Ensure we don't save currentUser state
-    const dataToSave = { ...data, currentUser: null, orgId, organizationId: orgId };
+    // Ensure we don't save currentUser state and prune logs older than 7 days (weekly cleanup)
+    const dataToSave = { 
+      ...data, 
+      activityLogs: pruneActivityLogs(data.activityLogs || [], 7),
+      currentUser: null, 
+      orgId, 
+      organizationId: orgId 
+    };
     const cleanedData = cleanUndefined(dataToSave);
     
     await runTransaction(db, async (transaction) => {

@@ -775,18 +775,7 @@ const EntityManagementScreen = <T extends Identifiable,>({
                 <tr key={item.id} className="hover:bg-slate-50 transition-colors">
                   {formFields.map(field => (
                     <td key={field.name as string} className="px-4 py-3 whitespace-nowrap text-sm text-slate-700">
-                        {entityType === 'gradeLevels' && field.name === 'groupEmail' ? (
-                          <input 
-                            type="email"
-                            value={(item as any).groupEmail || ''}
-                            onChange={(e) => {
-                              const value = e.target.value;
-                              setItems(prev => prev.map(gl => gl.id === item.id ? { ...gl, groupEmail: value } : gl) as unknown as T[]);
-                            }}
-                            className="w-full p-1 border border-slate-300 rounded focus:ring-blue-500 focus:border-blue-500 text-xs"
-                            placeholder="e.g., m1.1@utd.ac.th"
-                          />
-                        ) : entityType === 'gradeLevels' && field.name === 'description' ? (
+                        {entityType === 'gradeLevels' && field.name === 'description' ? (
                           <input 
                             type="text"
                             value={(item as any).description || ''}

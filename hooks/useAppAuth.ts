@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { fetchAppData, saveAppData, safeUpsert, DEFAULT_DEPARTMENTS, DEFAULT_RESOURCE_TYPES } from '../api';
+import { fetchAppData, saveAppData, safeUpsert, DEFAULT_DEPARTMENTS, DEFAULT_RESOURCE_TYPES, pruneActivityLogs } from '../api';
 import { AppData, User } from '../types';
 import { db } from '../lib/firebase';
 import { doc, getDoc, onSnapshot } from 'firebase/firestore';
@@ -70,7 +70,7 @@ export const useAppAuth = (
               teacherSubjectAssignments: parsedData.teacherSubjectAssignments || [],
               organizationSettings: parsedData.organizationSettings || null,
               users: parsedData.users || [],
-              activityLogs: parsedData.activityLogs || [],
+              activityLogs: pruneActivityLogs(parsedData.activityLogs || [], 7),
               currentUser: null, 
               authorizedAdmins: parsedData.authorizedAdmins || []
            };

@@ -30,84 +30,24 @@ const OrganizationSettingsScreen: React.FC<OrganizationSettingsScreenProps> = ({
   const [fetchedDomain, setFetchedDomain] = useState<string>('');
 
   useEffect(() => {
-    let isMounted = true;
-    const fetchOrgData = async () => {
-      const orgId = currentUser?.organizationId || resolvedUserOrgId;
-      if (!orgId) return;
-
-      try {
-        const { doc, getDoc } = await import('firebase/firestore');
-        const { db } = await import('../lib/firebase');
-        
-        // Fetch domain mapping
-        const platRef = doc(db, 'apps', 'platform_admin_data');
-        const platSnap = await getDoc(platRef);
-        if (platSnap.exists() && isMounted) {
-          const platData = platSnap.data();
-          const mappings = platData.domainMappings || [];
-          const matched = mappings.find((m: any) => m.organizationId === orgId);
-          if (matched) {
-            setFetchedDomain(matched.domain);
-          }
-        }
-
-        // Fetch organization settings specifically using currentUser.organizationId
-        const orgRef = doc(db, 'apps', orgId);
-        const orgSnap = await getDoc(orgRef);
-        
-        if (orgSnap.exists() && isMounted) {
-          const orgData = orgSnap.data();
-          const fetchedSettings = orgData.organizationSettings;
-          
-          if (fetchedSettings) {
-             const defaultSettings: Partial<OrganizationSettings> = {
-                name: '',
-                semester: '',
-                academicYear: '',
-                directorName: '',
-                directorPosition: 'ผู้อำนวยการ',
-                deputyDirectorName: '',
-                deputyDirectorPosition: 'รองผู้อำนวยการ',
-                semesterStartDate: '',
-                semesterEndDate: '',
-                schoolHolidays: '',
-                operatingDays: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"] as DayOfWeek[],
-                allowedDomain: '',
-                schoolAdminEmail: '',
-             };
-             setCurrentSettings({ ...defaultSettings, ...fetchedSettings });
-             setLogoPreview(fetchedSettings.logoUrl || null);
-          }
-        }
-      } catch (err) {
-        console.error("Failed to fetch organization details:", err);
-      }
-    };
-    
-    fetchOrgData();
-    return () => { isMounted = false; };
-  }, [currentUser?.organizationId, resolvedUserOrgId]);
-
-  useEffect(() => {
-    // Only use organizationSettings prop as a fallback if fetch hasn't completed or has no data
-    if (Object.keys(currentSettings).length === 0 && organizationSettings) {
-       const defaultSettings: Partial<OrganizationSettings> = {
-          name: '',
-          semester: '',
-          academicYear: '',
-          directorName: '',
-          directorPosition: 'ผู้อำนวยการ',
-          deputyDirectorName: '',
-          deputyDirectorPosition: 'รองผู้อำนวยการ',
-          semesterStartDate: '',
-          semesterEndDate: '',
-          schoolHolidays: '',
-          operatingDays: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"] as DayOfWeek[],
-          allowedDomain: '',
-          schoolAdminEmail: '',
-       };
-       setCurrentSettings({ ...defaultSettings, ...organizationSettings });
-       setLogoPreview(organizationSettings.logoUrl || null);
+    if (organizationSettings) {
+      const defaultSettings: Partial<OrganizationSettings> = {
+        name: '',
+        semester: '',
+        academicYear: '',
+        directorName: '',
+        directorPosition: 'ผู้อำนวยการ',
+        deputyDirectorName: '',
+        deputyDirectorPosition: 'รองผู้อำนวยการ',
+        semesterStartDate: '',
+        semesterEndDate: '',
+        schoolHolidays: '',
+        operatingDays: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"] as DayOfWeek[],
+        allowedDomain: '',
+        schoolAdminEmail: '',
+      };
+      setCurrentSettings({ ...defaultSettings, ...organizationSettings });
+      setLogoPreview(organizationSettings.logoUrl || null);
     }
   }, [organizationSettings]);
 
@@ -630,7 +570,7 @@ const OrganizationSettingsScreen: React.FC<OrganizationSettingsScreenProps> = ({
                    className="w-full h-32 p-3 font-mono border border-slate-300 rounded-md focus:ring-blue-500 focus:border-blue-500 shadow-sm text-sm"
                    placeholder="2026-07-25&#10;2026-08-12"
                />
-               <p className="text-xs text-slate-500 mt-2">รูปแบบวันที่ YYYY-MM-DD เพื่อใช้ประกอบการซิงค์ตารางเข้า Google Calendar</p>
+               <p className="text-xs text-slate-500 mt-2">รูปแบบวันที่ YYYY-MM-DD (เช่น 2026-07-25)</p>
            </div>
         </fieldset>
 
