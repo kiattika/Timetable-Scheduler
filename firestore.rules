@@ -7,8 +7,8 @@ service cloud.firestore {
     }
 
     function isUtdDomain() {
-      return isAuthenticated() 
-        && request.auth.token.email != null 
+      return isAuthenticated()
+        && request.auth.token.email != null
         && request.auth.token.email.matches('.*@utd[.]ac[.]th$');
     }
 
@@ -16,18 +16,26 @@ service cloud.firestore {
       return isUtdDomain() && (request.auth.token.role == 'admin');
     }
 
-    // Main App Configuration, Subcollections, and all documents
     match /apps/{appId} {
-      allow read, write: if true;
+      allow read: if isUtdDomain();
+      allow write: if isUtdDomain();
 
-      match /{allSubcollections=**} {
-        allow read, write: if true;
+      match /scheduleEntries/{entryId} {
+        allow read: if isUtdDomain();
+        allow write: if isUtdDomain();
       }
-    }
 
-    match /{document=**} {
-      allow read, write: if true;
+      match /activityLogs/{logId} {
+        allow read: if isUtdDomain();
+        allow create: if isUtdDomain();
+        allow update, delete: if isAdmin();
+      }
+
+      match /errors/{errorId} {
+        allow read: if isUtdDomain();
+        allow create: if isAuthenticated();
+        allow update, delete: if isAdmin();
+      }
     }
   }
 }
-
