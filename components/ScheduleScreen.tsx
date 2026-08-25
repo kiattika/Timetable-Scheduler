@@ -1740,6 +1740,30 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
         });
 
     } else {
+        if (viewType === 'teacherSchedules' && fixedTeacherId) {
+            const teacherSubjectIds = new Set(
+                teacherSubjectAssignments
+                    .filter(tsa => tsa.teacherId === fixedTeacherId)
+                    .map(tsa => tsa.subjectId)
+            );
+        const filteredByTeacher = subjects.filter(function(s) { return teacherSubjectIds.has(s.id); });
+        const filteredByQuota = filteredByTeacher.filter(function(s) {
+            if (s.periodsPerWeek === undefined) { return true; }
+            const relevantGradeIds = teacherSubjectAssignments
+                .filter(function(tsa) { return tsa.teacherId === fixedTeacherId && tsa.subjectId === s.id; })
+                .map(function(tsa) { return tsa.gradeLevelId; });
+            if (relevantGradeIds.length === 0) { return true; }
+            return relevantGradeIds.some(function(gid) {
+                const scheduledCount = scheduleEntries.filter(function(e) { return e.gradeLevelId === gid && e.subjectId === s.id; }).length;
+                return scheduledCount < s.periodsPerWeek;
+            });
+        });
+        const teacherOnlySubjects = subjects.filter(function(s) { return s.type === 'TEACHER_ONLY'; });
+        const merged = [...filteredByQuota];
+            const mergedIds = new Set(merged.map(s => s.id));
+            teacherOnlySubjects.forEach(function(s) { if (!mergedIds.has(s.id)) { merged.push(s); } });
+            return merged;
+        }
         return subjects; 
     }
 

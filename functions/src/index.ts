@@ -1,4 +1,4 @@
-import * as functions from 'firebase-functions';
+﻿import * as functions from 'firebase-functions/v1';
 import * as admin from 'firebase-admin';
 
 if (!admin.apps.length) {
@@ -155,3 +155,4 @@ export const cleanupOldActivityLogs = functions.pubsub.schedule('every 24 hours'
     return null;
   }
 });
+
