@@ -63,7 +63,8 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
     teacherName: string; teacherCode: string; subjectName: string; subjectCode: string; roomName: string; required: number; isVisible: boolean;
   } | null>(null);
 
-  const { teachers, subjects, gradeLevels, physicalRooms, scheduleEntries, periodSettings, teacherSubjectAssignments } = appData;
+  const { teachers, subjects, gradeLevels, physicalRooms, periodSettings, teacherSubjectAssignments } = appData;
+  const scheduleEntries = Array.isArray(appData.scheduleEntries) ? appData.scheduleEntries : [];
 
   const prevAllocationRef = React.useRef<Record<string, number>>({});
 

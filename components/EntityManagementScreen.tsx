@@ -338,7 +338,8 @@ const EntityManagementScreen = <T extends Identifiable,>({
                 const newRoomId = addedRooms[0];
                 
                 const hrCzSubjectIds = hrCzSubjects.map(s => s.id);
-                const affectedEntries = appData.scheduleEntries.filter(entry => 
+                const currentScheduleEntries = Array.isArray(appData.scheduleEntries) ? appData.scheduleEntries : [];
+                const affectedEntries = currentScheduleEntries.filter(entry => 
                     entry.gradeLevelId === oldRoomId && 
                     entry.teacherIds?.includes(editingId) && 
                     hrCzSubjectIds.includes(entry.subjectId)
@@ -347,7 +348,7 @@ const EntityManagementScreen = <T extends Identifiable,>({
                 if (affectedEntries.length > 0) {
                     const newRoomName = appData.gradeLevels.find(g => g.id === newRoomId)?.name || newRoomId;
                     for (const entry of affectedEntries) {
-                        const conflict = appData.scheduleEntries.find(e => 
+                        const conflict = currentScheduleEntries.find(e => 
                             e.gradeLevelId === newRoomId && 
                             e.day === entry.day && 
                             e.period === entry.period

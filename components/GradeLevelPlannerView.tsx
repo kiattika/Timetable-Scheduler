@@ -32,7 +32,8 @@ export const GradeLevelScheduleTable: React.FC<SingleScheduleTableProps & {
   draggedEntryId, permissions, gradeHierarchyHelpers, isPrint, selectedCohort,
   startTouchDrag, handleTouchMove, finishTouchDrag
 }) => {
-  const { gradeLevels, scheduleEntries } = appData;
+  const { gradeLevels } = appData;
+  const scheduleEntries = Array.isArray(appData.scheduleEntries) ? appData.scheduleEntries : [];
   const longPressTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
 
   const handleTouchStart = (e: React.TouchEvent<HTMLTableCellElement | HTMLDivElement>, targetInfo: ContextMenuTargetInfo) => {
@@ -377,7 +378,8 @@ const GradeLevelPlannerView: React.FC<GradeLevelPlannerViewPropsExtended> = (pro
     handleSlotContextMenu, gradeHierarchyHelpers, permissions, setAppData, checkConflicts,
     isScheduleVisible, setIsScheduleVisible, openPrintOptionsModal, onGradeBlockSelect
   } = props;
-  const { gradeLevels, scheduleEntries, teachers, subjects, physicalRooms, teacherSubjectAssignments } = appData; 
+  const { gradeLevels, teachers, subjects, physicalRooms, teacherSubjectAssignments } = appData; 
+  const scheduleEntries = Array.isArray(appData.scheduleEntries) ? appData.scheduleEntries : []; 
   const getParentGradeLevelIdFromUtil = getParentIdUtil;
   const checkIsParentGrade = checkIsParentGradeUtil;
 

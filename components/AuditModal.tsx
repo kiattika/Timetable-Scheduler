@@ -18,8 +18,9 @@ export const AuditModal: React.FC<AuditModalProps> = ({ isOpen, onClose, appData
     
     // Create a map to quickly count allocations and last physicalRoom used
     const allocationCounts = new Map<string, { count: number, lastPhysicalRoomId: string | null }>();
+    const scheduleEntries = Array.isArray(appData.scheduleEntries) ? appData.scheduleEntries : [];
     
-    appData.scheduleEntries.forEach(entry => {
+    scheduleEntries.forEach(entry => {
       entry.teacherIds.forEach(tId => {
         const key = `${tId}-${entry.subjectId}-${entry.gradeLevelId}`;
         const current = allocationCounts.get(key) || { count: 0, lastPhysicalRoomId: null };

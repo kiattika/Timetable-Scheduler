@@ -194,7 +194,8 @@ const TeacherSubjectAssignmentScreen: React.FC<TeacherSubjectAssignmentScreenPro
 
     const assignment = assignments.find(a => a.id === id);
     if (assignment) {
-        const hasDependencies = appData.scheduleEntries.some(entry => 
+        const scheduleEntries = Array.isArray(appData.scheduleEntries) ? appData.scheduleEntries : [];
+        const hasDependencies = scheduleEntries.some(entry => 
             entry.subjectId === assignment.subjectId && 
             entry.teacherIds?.includes(assignment.teacherId) && 
             entry.gradeLevelId === assignment.gradeLevelId

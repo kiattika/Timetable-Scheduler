@@ -2,6 +2,7 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, User } from 'firebase/auth';
 import { initializeFirestore } from 'firebase/firestore';
+import { getFunctions } from 'firebase/functions';
 
 const firebaseConfig = {
   projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
@@ -22,6 +23,8 @@ const isValidDbId = dbId && dbId !== '(default)' && dbId !== 'none' && dbId !== 
 export const db = isValidDbId
   ? initializeFirestore(app, { experimentalForceLongPolling: true }, String(dbId).trim())
   : initializeFirestore(app, { experimentalForceLongPolling: true });
+
+export const functions = getFunctions(app);
 
 export const auth = getAuth(app);
 const provider = new GoogleAuthProvider();

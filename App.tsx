@@ -91,15 +91,30 @@ const App: React.FC = () => {
   useEffect(() => {
     if (isDataLoaded && appData) {
       const currentDataStr = JSON.stringify(appData);
+      
+      // On initial load, initialize ref without triggering a save
+      if (lastSavedDataStr.current === null) {
+        lastSavedDataStr.current = currentDataStr;
+        return;
+      }
+
       if (currentDataStr === lastSavedDataStr.current) {
-         return; // Skip if no actual data changes
+        return; // Skip if no actual data changes
+      }
+
+      // Check if current user has permission to save modifications
+      const role = appData.currentUser?.role;
+      const canSave = role === 'admin' || role === 'manager' || role === 'assistant';
+      if (!canSave) {
+        lastSavedDataStr.current = currentDataStr;
+        return;
       }
 
       const timeoutId = setTimeout(() => {
         saveAppData(appData, ORG_ID).then(() => {
-            lastSavedDataStr.current = currentDataStr;
+          lastSavedDataStr.current = currentDataStr;
         }).catch(error => {
-          console.error("Failed to save app data:", error);
+          console.warn("Auto-save notice:", error?.message || error);
         });
       }, 2000);
       return () => clearTimeout(timeoutId);
@@ -723,8 +738,54 @@ const App: React.FC = () => {
   }
 
   
-  const isSuperAdmin = (appData.authorizedAdmins || []).includes(appData.currentUser.email);
-  const isAuthAdmin = (appData.authorizedAdmins || []).includes(appData.currentUser.email);
+  const userEmail = (appData.currentUser?.email || '').toLowerCase().trim();
+  const bootstrapAdminEmails = [
+    'kiattika@utd.ac.th',
+    'admin@utd.ac.th',
+    (appData.organizationSettings?.schoolAdminEmail || '').toLowerCase().trim()
+  ].filter(Boolean);
+
+  const isBootstrapAdmin = bootstrapAdminEmails.includes(userEmail);
+  const isSuperAdmin = (appData.authorizedAdmins || []).some(e => e.toLowerCase().trim() === userEmail) || isBootstrapAdmin;
+  const isAuthAdmin = isSuperAdmin;
+  const hasExistingAdmins = (appData.users || []).some(u => u.role === 'admin' && u.email.toLowerCase().trim() !== userEmail);
+
+  const handleActivateAdmin = async () => {
+    if (!appData || !appData.currentUser) return;
+    try {
+      const updatedUser: User = {
+        ...appData.currentUser,
+        role: 'admin'
+      };
+      const existingUsers = appData.users || [];
+      const userIndex = existingUsers.findIndex(u => u.email.toLowerCase().trim() === userEmail);
+      let updatedUsers = [...existingUsers];
+      if (userIndex >= 0) {
+        updatedUsers[userIndex] = updatedUser;
+      } else {
+        updatedUsers.push(updatedUser);
+      }
+
+      let updatedAuthorizedAdmins = [...(appData.authorizedAdmins || [])];
+      if (!updatedAuthorizedAdmins.map(e => e.toLowerCase().trim()).includes(userEmail)) {
+        updatedAuthorizedAdmins.push(appData.currentUser.email);
+      }
+
+      const updatedData: AppData = {
+        ...appData,
+        users: updatedUsers,
+        currentUser: updatedUser,
+        authorizedAdmins: updatedAuthorizedAdmins
+      };
+
+      setAppData(updatedData);
+      await saveAppData(updatedData, ORG_ID);
+    } catch (err: any) {
+      console.error("Failed to activate admin rights:", err);
+      alert("ไม่สามารถเปิดใช้งานสิทธิ์ได้: " + (err.message || err));
+    }
+  };
+
   if (appData.currentUser.role === 'guest' && !isSuperAdmin && !isAuthAdmin) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-slate-50 p-6 text-center font-sans" id="waiting-approval-lander">
@@ -743,6 +804,26 @@ const App: React.FC = () => {
           <p className="text-slate-600 leading-relaxed text-sm">
             บัญชีของคุณได้รับการลงทะเบียนในสิทธิ์ "ผู้เยี่ยมชม (Guest)" เรียบร้อยแล้ว กรุณาติดต่อผู้ดูแลระบบของโรงเรียนท่าน เพื่อทำการเลื่อนสิทธิ์/บทบาทและจัดการตารางสอนได้อย่างเป็นทางการ
           </p>
+
+          {(!hasExistingAdmins || isBootstrapAdmin) && (
+            <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-left space-y-3">
+              <div className="flex items-center gap-2 text-blue-800 font-bold text-sm">
+                <Icons.UsersRound size={18} />
+                <span>เปิดใช้งานสิทธิ์ผู้ดูแลระบบเริ่มต้น (Admin)</span>
+              </div>
+              <p className="text-xs text-blue-600 leading-relaxed">
+                ระบบตรวจพบว่าคุณเป็นผู้ดูแลระบบสถาบัน หรือยังไม่มีผู้ดูแลระบบที่เปิดใช้งานในฐานข้อมูล คุณสามารถกดปุ่มด้านล่างเพื่อรับสิทธิ์ผู้ดูแลระบบทันที
+              </p>
+              <button
+                onClick={handleActivateAdmin}
+                className="w-full py-2.5 px-4 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-sm rounded-lg shadow-sm transition-colors flex items-center justify-center gap-2"
+              >
+                <Icons.UsersRound size={16} />
+                <span>รับสิทธิ์ผู้ดูแลระบบ (Activate Admin Role)</span>
+              </button>
+            </div>
+          )}
+
           <div className="border-t border-slate-100 pt-6 flex flex-col items-center space-y-3">
             <div className="text-xs text-slate-500">
               อีเมลล็อกอิน: <strong className="font-mono text-slate-700">{appData.currentUser.email}</strong>

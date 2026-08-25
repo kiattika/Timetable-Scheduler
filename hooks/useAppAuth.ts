@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { fetchAppData, saveAppData, safeUpsert, DEFAULT_DEPARTMENTS, DEFAULT_RESOURCE_TYPES, ORG_ID } from '../api';
-import { AppData, User, ScheduleEntry, ActivityLog } from '../types';
+import { AppData, User, ScheduleEntry, ActivityLog, Teacher } from '../types';
 import { db } from '../lib/firebase';
 import { doc, collection, onSnapshot, query, orderBy, limit } from 'firebase/firestore';
 import { DEFAULT_PERIOD_SETTINGS } from '../constants';
@@ -71,11 +71,26 @@ export const useAppAuth = (
             teachingMode: s.teachingMode || 'single'
           }));
 
+          const bootstrapAdminEmails = [
+            'kiattika@utd.ac.th',
+            'admin@utd.ac.th',
+            (mainParsedData.organizationSettings?.schoolAdminEmail || '').toLowerCase().trim()
+          ].filter(Boolean);
+
+          const isBootstrapAdmin = bootstrapAdminEmails.includes(userEmail);
+
           const isAuthorizedAdmin = (mainParsedData.authorizedAdmins || []).some(
-            (adminEmail: string) => adminEmail.toLowerCase() === userEmail
-          ) || userClaimRole === 'admin';
+            (adminEmail: string) => adminEmail.toLowerCase().trim() === userEmail
+          ) || userClaimRole === 'admin' || isBootstrapAdmin;
+
+          const existingUsers: User[] = mainParsedData.users || [];
+          const existingUser = existingUsers.find(u => u.email.toLowerCase().trim() === userEmail);
+
+          // Count existing active admins
+          const existingAdminsCount = existingUsers.filter(u => u.role === 'admin').length;
 
           let resolvedRole: 'admin' | 'manager' | 'teacher' | 'assistant' | 'guest' = 'guest';
+
           if (userClaimRole === 'admin' || isAuthorizedAdmin) {
             resolvedRole = 'admin';
           } else if (userClaimRole === 'manager') {
@@ -84,17 +99,30 @@ export const useAppAuth = (
             resolvedRole = 'assistant';
           } else if (userClaimRole === 'teacher') {
             resolvedRole = 'teacher';
+          } else if (existingUser && ['admin', 'manager', 'teacher', 'assistant'].includes(existingUser.role)) {
+            // Respect role already saved in Firestore database
+            resolvedRole = existingUser.role;
+          } else if (existingAdminsCount === 0 && userEmail.endsWith('@utd.ac.th')) {
+            // If no admins exist yet in the database, promote the first organization user to admin
+            resolvedRole = 'admin';
+          } else {
+            // Check if user is a teacher registered in the system
+            const isTeacher = (mainParsedData.teachers || []).some(
+              (t: Teacher) => t.email && t.email.toLowerCase().trim() === userEmail
+            );
+            if (isTeacher) {
+              resolvedRole = 'teacher';
+            }
           }
 
-          const existingUsers: User[] = mainParsedData.users || [];
-          let appUser = existingUsers.find(u => u.email.toLowerCase() === userEmail);
+          let appUser = existingUser;
           let newUsers = [...existingUsers];
           let authStateChanged = false;
 
           if (!appUser) {
             appUser = {
               id: firebaseUser.uid,
-              name: firebaseUser.displayName || 'UTD Member',
+              name: firebaseUser.displayName || userEmail.split('@')[0],
               email: userEmail,
               role: resolvedRole,
               organizationId: ORG_ID
@@ -107,13 +135,22 @@ export const useAppAuth = (
             authStateChanged = true;
           }
 
-          const finalScheduleEntries = currentScheduleEntries.length > 0 
-            ? currentScheduleEntries 
-            : (mainParsedData.scheduleEntries || []);
+          // Maintain authorizedAdmins array
+          let updatedAuthorizedAdmins = Array.isArray(mainParsedData.authorizedAdmins) 
+            ? [...mainParsedData.authorizedAdmins] 
+            : [];
+          if (resolvedRole === 'admin' && !updatedAuthorizedAdmins.map((e: string) => e.toLowerCase().trim()).includes(userEmail)) {
+            updatedAuthorizedAdmins.push(userEmail);
+            authStateChanged = true;
+          }
 
-          const finalActivityLogs = currentActivityLogs.length > 0
+          const finalScheduleEntries: ScheduleEntry[] = Array.isArray(currentScheduleEntries) && currentScheduleEntries.length > 0 
+            ? currentScheduleEntries 
+            : (Array.isArray(mainParsedData.scheduleEntries) ? mainParsedData.scheduleEntries : []);
+
+          const finalActivityLogs: ActivityLog[] = Array.isArray(currentActivityLogs) && currentActivityLogs.length > 0
             ? currentActivityLogs
-            : (mainParsedData.activityLogs || []);
+            : (Array.isArray(mainParsedData.activityLogs) ? mainParsedData.activityLogs : []);
 
           const updatedData: AppData = {
             departments: safeUpsert(mainParsedData.departments, DEFAULT_DEPARTMENTS),
@@ -129,11 +166,13 @@ export const useAppAuth = (
             users: newUsers,
             activityLogs: finalActivityLogs,
             currentUser: appUser,
-            authorizedAdmins: mainParsedData.authorizedAdmins || []
+            authorizedAdmins: updatedAuthorizedAdmins
           };
 
-          if (authStateChanged) {
-            await saveAppData(updatedData, ORG_ID);
+          if (authStateChanged && appUser && (appUser.role === 'admin' || appUser.role === 'manager')) {
+            saveAppData(updatedData, ORG_ID).catch(e => {
+              console.warn("User sync notice:", e?.message || e);
+            });
           }
 
           setAppData(updatedData);
@@ -177,8 +216,8 @@ export const useAppAuth = (
             }
             updateCombinedAppData();
           },
-          (error) => {
-            console.warn("Firestore scheduleEntries listener error:", error);
+          (error: any) => {
+            console.warn("Firestore scheduleEntries subcollection notice (main doc listener active):", error?.message || error);
           }
         );
 
@@ -195,8 +234,8 @@ export const useAppAuth = (
             }
             updateCombinedAppData();
           },
-          (err) => {
-            console.warn("ActivityLogs subcollection listener warning:", err);
+          (err: any) => {
+            console.warn("Firestore activityLogs subcollection notice (main doc listener active):", err?.message || err);
           }
         );
 

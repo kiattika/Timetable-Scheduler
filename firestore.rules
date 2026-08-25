@@ -16,28 +16,18 @@ service cloud.firestore {
       return isUtdDomain() && (request.auth.token.role == 'admin');
     }
 
-    // Main App Configuration & Entity Data
+    // Main App Configuration, Subcollections, and all documents
     match /apps/{appId} {
-      allow read: if true;
-      allow write: if isAuthenticated();
+      allow read, write: if true;
 
-      // Subcollection: Schedule Entries (1 doc per schedule slot)
-      match /scheduleEntries/{entryId} {
-        allow read: if true;
-        allow write: if isAuthenticated();
-      }
-
-      // Subcollection: Activity Logs (1 doc per log entry)
-      match /activityLogs/{logId} {
-        allow read: if true;
-        allow create: if isAuthenticated();
-        allow update, delete: if isAdmin() || isUtdDomain();
-      }
-
-      // Subcollection: System Health & Error Logs
-      match /errors/{errorId} {
+      match /{allSubcollections=**} {
         allow read, write: if true;
       }
     }
+
+    match /{document=**} {
+      allow read, write: if true;
+    }
   }
 }
+

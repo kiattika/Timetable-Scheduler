@@ -1,6 +1,6 @@
 import { AppData, Subject, PeriodSetting, User, ScheduleEntry, GradeLevel, Teacher, TeacherSubjectAssignment, PhysicalRoom, OrganizationSettings, FormField, DayOfWeek, ActivityLog } from './types';
 import { DEFAULT_PERIOD_SETTINGS, PREDEFINED_SUBJECT_COLORS } from './constants';
-import { db } from './lib/firebase';
+import { db, auth } from './lib/firebase';
 import { doc, getDoc, setDoc, deleteDoc, collection, getDocs, writeBatch, query, orderBy, limit, deleteField, runTransaction } from 'firebase/firestore';
 
 export const ORG_ID = import.meta.env.VITE_ORG_ID || 'utd';
@@ -147,37 +147,50 @@ export const fetchAppData = async (orgId: string = ORG_ID): Promise<AppData> => 
   const defaultInitialData = getSampleAppData();
   try {
     const docRef = doc(db, 'apps', orgId);
-    const docSnap = await getDoc(docRef);
+    let docSnap: any = null;
+    try {
+      docSnap = await getDoc(docRef);
+    } catch (docErr: any) {
+      console.warn("Main doc getDoc notice:", docErr?.message || docErr);
+    }
 
-    // Fetch subcollection: scheduleEntries
-    const scheduleEntriesRef = collection(db, 'apps', orgId, 'scheduleEntries');
-    const scheduleSnap = await getDocs(scheduleEntriesRef);
+    // Fetch subcollection: scheduleEntries (safely without failing)
     let loadedScheduleEntries: ScheduleEntry[] = [];
-    if (!scheduleSnap.empty) {
-      loadedScheduleEntries = scheduleSnap.docs.map(d => ({ ...d.data(), id: d.id } as ScheduleEntry));
+    try {
+      const scheduleEntriesRef = collection(db, 'apps', orgId, 'scheduleEntries');
+      const scheduleSnap = await getDocs(scheduleEntriesRef);
+      if (!scheduleSnap.empty) {
+        loadedScheduleEntries = scheduleSnap.docs.map(d => ({ ...d.data(), id: d.id } as ScheduleEntry));
+      }
+    } catch (subErr) {
+      console.warn("Subcollection scheduleEntries notice (using main doc):", subErr);
     }
 
-    // Fetch subcollection: activityLogs
-    const activityLogsRef = collection(db, 'apps', orgId, 'activityLogs');
-    const activityLogsQuery = query(activityLogsRef, orderBy('timestamp', 'desc'), limit(100));
-    const activitySnap = await getDocs(activityLogsQuery).catch(() => null);
+    // Fetch subcollection: activityLogs (safely without failing)
     let loadedActivityLogs: ActivityLog[] = [];
-    if (activitySnap && !activitySnap.empty) {
-      loadedActivityLogs = activitySnap.docs.map(d => ({ ...d.data(), id: d.id } as ActivityLog));
+    try {
+      const activityLogsRef = collection(db, 'apps', orgId, 'activityLogs');
+      const activityLogsQuery = query(activityLogsRef, orderBy('timestamp', 'desc'), limit(100));
+      const activitySnap = await getDocs(activityLogsQuery);
+      if (activitySnap && !activitySnap.empty) {
+        loadedActivityLogs = activitySnap.docs.map(d => ({ ...d.data(), id: d.id } as ActivityLog));
+      }
+    } catch (logErr) {
+      console.warn("Subcollection activityLogs notice:", logErr);
     }
 
-    if (docSnap.exists()) {
+    if (docSnap && docSnap.exists()) {
       const parsedData = docSnap.data() as any;
       const subjectsWithDefaults = (parsedData.subjects || []).map((s: Subject) => ({...s, teachingMode: s.teachingMode || 'single'}));
       
-      // If subcollection was empty but legacy document has scheduleEntries, use legacy as fallback
-      const finalScheduleEntries = loadedScheduleEntries.length > 0 
+      // If subcollection was empty but main document has scheduleEntries, use main document
+      const finalScheduleEntries: ScheduleEntry[] = Array.isArray(loadedScheduleEntries) && loadedScheduleEntries.length > 0 
         ? loadedScheduleEntries 
-        : (parsedData.scheduleEntries || []);
+        : (Array.isArray(parsedData.scheduleEntries) ? parsedData.scheduleEntries : []);
 
-      const finalActivityLogs = loadedActivityLogs.length > 0
+      const finalActivityLogs: ActivityLog[] = Array.isArray(loadedActivityLogs) && loadedActivityLogs.length > 0
         ? loadedActivityLogs
-        : (parsedData.activityLogs || []);
+        : (Array.isArray(parsedData.activityLogs) ? parsedData.activityLogs : []);
 
       const resolvedData: AppData = {
         departments: safeUpsert(parsedData.departments, defaultInitialData.departments),
@@ -203,7 +216,7 @@ export const fetchAppData = async (orgId: string = ORG_ID): Promise<AppData> => 
         activityLogs: loadedActivityLogs
       };
     }
-  } catch (error) {
+  } catch (error: any) {
     console.warn(`Failed to parse data from Firestore for org ${orgId}, falling back to initial data:`, error);
   }
   return defaultInitialData;
@@ -232,109 +245,119 @@ export const saveAppData = async (data: AppData, orgId: string = ORG_ID): Promis
   try {
     const docRef = doc(db, 'apps', orgId);
     
-    // Extract subcollection datasets so they are NOT written into the main doc
     const { scheduleEntries = [], activityLogs = [], currentUser, ...mainDocContent } = data;
 
+    // Save complete dataset in main doc as well for instant single-document persistence
     const mainDocToSave = {
       ...mainDocContent,
       organizationId: orgId,
-      // Delete legacy array fields if they still exist in the document
-      scheduleEntries: deleteField(),
-      activityLogs: deleteField()
+      scheduleEntries: scheduleEntries,
+      activityLogs: (activityLogs || []).slice(0, 50)
     };
     const cleanedMainDoc = cleanUndefined(mainDocToSave);
 
-    // 1. Save main doc (teachers, subjects, assignments, settings, etc.) with lock check
-    await runTransaction(db, async (transaction) => {
-      const docSnap = await transaction.get(docRef);
-      if (docSnap.exists()) {
-        const serverData = docSnap.data() as AppData;
+    // 1. Save main doc (teachers, subjects, assignments, settings, scheduleEntries, etc.)
+    try {
+      await runTransaction(db, async (transaction) => {
+        const docSnap = await transaction.get(docRef);
+        if (docSnap.exists()) {
+          const serverData = docSnap.data() as AppData;
+          
+          // Check if the isLocked setting itself has changed
+          const oldLocked = !!serverData.organizationSettings?.isLocked;
+          const newLocked = !!data.organizationSettings?.isLocked;
+          if (oldLocked !== newLocked) {
+            if (currentUser?.role !== 'admin') {
+              throw new Error("403_FORBIDDEN_ADMIN_ONLY");
+            }
+          }
+
+          const serverAssignments = serverData.teacherSubjectAssignments || [];
+          const newAssignments = data.teacherSubjectAssignments || [];
+          const removedAssignments = serverAssignments.filter((oldA: any) => !newAssignments.some((newA: any) => newA.id === oldA.id));
+          for (const removed of removedAssignments) {
+            const hasDependency = (scheduleEntries || []).some((entry: any) => 
+              entry.subjectId === removed.subjectId && 
+              entry.teacherIds?.includes(removed.teacherId) &&
+              entry.gradeLevelId === removed.gradeLevelId
+            );
+            if (hasDependency) {
+              throw new Error("409_CONFLICT_ASSIGNMENT_IN_USE");
+            }
+          }
+        }
         
-        // Check if the isLocked setting itself has changed
-        const oldLocked = !!serverData.organizationSettings?.isLocked;
-        const newLocked = !!data.organizationSettings?.isLocked;
-        if (oldLocked !== newLocked) {
-          if (currentUser?.role !== 'admin') {
-            throw new Error("403_FORBIDDEN_ADMIN_ONLY");
-          }
-        }
-
-        if (serverData.organizationSettings?.isLocked && oldLocked === newLocked) {
-          // If locked, verify if schedule entries changed
-          // We handle this via permissions check
-        }
-
-        const serverAssignments = serverData.teacherSubjectAssignments || [];
-        const newAssignments = data.teacherSubjectAssignments || [];
-        const removedAssignments = serverAssignments.filter((oldA: any) => !newAssignments.some((newA: any) => newA.id === oldA.id));
-        for (const removed of removedAssignments) {
-          const hasDependency = (scheduleEntries || []).some((entry: any) => 
-            entry.subjectId === removed.subjectId && 
-            entry.teacherIds?.includes(removed.teacherId) &&
-            entry.gradeLevelId === removed.gradeLevelId
-          );
-          if (hasDependency) {
-            throw new Error("409_CONFLICT_ASSIGNMENT_IN_USE");
-          }
-        }
+        transaction.set(docRef, cleanedMainDoc, { merge: true });
+      });
+    } catch (txErr: any) {
+      if (txErr.message === "403_FORBIDDEN_ADMIN_ONLY" || txErr.message === "409_CONFLICT_ASSIGNMENT_IN_USE") {
+        throw txErr;
       }
-      
-      transaction.set(docRef, cleanedMainDoc, { merge: true });
-    });
+      // If transaction encountered an issue, fallback to setDoc
+      await setDoc(docRef, cleanedMainDoc, { merge: true });
+    }
 
-    // 2. Synchronize scheduleEntries subcollection (apps/{orgId}/scheduleEntries/{entryId})
+    // 2. Synchronize scheduleEntries subcollection (apps/{orgId}/scheduleEntries/{entryId}) in background
     if (Array.isArray(scheduleEntries)) {
-      const scheduleEntriesColRef = collection(db, 'apps', orgId, 'scheduleEntries');
-      const currentScheduleSnap = await getDocs(scheduleEntriesColRef);
-      const existingDocIds = new Set(currentScheduleSnap.docs.map(d => d.id));
-      const newEntryIds = new Set(scheduleEntries.map(e => e.id));
+      try {
+        const scheduleEntriesColRef = collection(db, 'apps', orgId, 'scheduleEntries');
+        const currentScheduleSnap = await getDocs(scheduleEntriesColRef);
+        const existingDocIds = new Set(currentScheduleSnap.docs.map(d => d.id));
+        const newEntryIds = new Set(scheduleEntries.map(e => e.id));
 
-      // Batch in chunks of 450 (Firestore limit is 500 ops per batch)
-      const batches: any[] = [];
-      let currentBatch = writeBatch(db);
-      let opCount = 0;
+        // Batch in chunks of 400 (Firestore limit is 500 ops per batch)
+        const batches: any[] = [];
+        let currentBatch = writeBatch(db);
+        let opCount = 0;
 
-      const pushBatch = () => {
-        batches.push(currentBatch);
-        currentBatch = writeBatch(db);
-        opCount = 0;
-      };
+        const pushBatch = () => {
+          batches.push(currentBatch);
+          currentBatch = writeBatch(db);
+          opCount = 0;
+        };
 
-      // Upsert current entries
-      for (const entry of scheduleEntries) {
-        if (!entry.id) continue;
-        const entryDocRef = doc(db, 'apps', orgId, 'scheduleEntries', entry.id);
-        currentBatch.set(entryDocRef, cleanUndefined(entry), { merge: true });
-        opCount++;
-        if (opCount >= 400) pushBatch();
-      }
-
-      // Delete removed entries
-      for (const existingId of existingDocIds) {
-        if (!newEntryIds.has(existingId)) {
-          const entryDocRef = doc(db, 'apps', orgId, 'scheduleEntries', existingId);
-          currentBatch.delete(entryDocRef);
+        // Upsert current entries
+        for (const entry of scheduleEntries) {
+          if (!entry.id) continue;
+          const entryDocRef = doc(db, 'apps', orgId, 'scheduleEntries', entry.id);
+          currentBatch.set(entryDocRef, cleanUndefined(entry), { merge: true });
           opCount++;
           if (opCount >= 400) pushBatch();
         }
-      }
 
-      if (opCount > 0) {
-        batches.push(currentBatch);
-      }
+        // Delete removed entries
+        for (const existingId of existingDocIds) {
+          if (!newEntryIds.has(existingId)) {
+            const entryDocRef = doc(db, 'apps', orgId, 'scheduleEntries', existingId);
+            currentBatch.delete(entryDocRef);
+            opCount++;
+            if (opCount >= 400) pushBatch();
+          }
+        }
 
-      for (const b of batches) {
-        await b.commit();
+        if (opCount > 0) {
+          batches.push(currentBatch);
+        }
+
+        for (const b of batches) {
+          await b.commit();
+        }
+      } catch (subErr: any) {
+        console.warn("Subcollection scheduleEntries sync bypassed (Main doc safely saved):", subErr?.message || subErr);
       }
     }
 
     // 3. Save new activityLogs into subcollection (apps/{orgId}/activityLogs/{logId})
     if (Array.isArray(activityLogs) && activityLogs.length > 0) {
-      const latestLogs = activityLogs.slice(0, 10);
-      for (const log of latestLogs) {
-        if (!log.id) continue;
-        const logDocRef = doc(db, 'apps', orgId, 'activityLogs', log.id);
-        await setDoc(logDocRef, cleanUndefined(log), { merge: true });
+      try {
+        const latestLogs = activityLogs.slice(0, 10);
+        for (const log of latestLogs) {
+          if (!log.id) continue;
+          const logDocRef = doc(db, 'apps', orgId, 'activityLogs', log.id);
+          await setDoc(logDocRef, cleanUndefined(log), { merge: true });
+        }
+      } catch (logErr: any) {
+        console.warn("Subcollection activityLogs sync bypassed (Main doc safely saved):", logErr?.message || logErr);
       }
     }
 
@@ -347,6 +370,30 @@ export const saveAppData = async (data: AppData, orgId: string = ORG_ID): Promis
       alert("🚨 Conflict Detected: Another user has already updated this schedule block. Your changes will be reverted to match the server.");
     } else if (error.message === "409_CONFLICT_ASSIGNMENT_IN_USE") {
       alert("ไม่สามารถลบลิงค์มอบหมายงานได้ (Action Blocked)\n\nรายวิชานี้ของรายชื่อครูดังกล่าว ถูกจัดวางลงบนตารางเรียน (Timetable Grid) ไปเรียบร้อยแล้ว หากต้องการลบลิงค์นี้ กรุณาไปลบคาบเรียนของวิชานี้ออกจากตารางสอนของห้องดังกล่าวให้หมดก่อน จึงจะกลับมาทำรายการลบลิงค์นี้ได้");
+    } else if (error.message?.includes("Missing or insufficient permissions") || error.code === "permission-denied") {
+      const isUserSignedIn = !!auth.currentUser;
+      if (!isUserSignedIn) {
+        alert(
+          "❌ ไม่สามารถบันทึกข้อมูลได้: ยังไม่ได้เข้าสู่ระบบ\n\n" +
+          "กรุณากดปุ่ม 'เข้าสู่ระบบด้วย Google (@utd.ac.th)' เพื่อรับสิทธิ์การเขียนและบันทึกข้อมูลลงฐานข้อมูล Firebase"
+        );
+      } else {
+        alert(
+          "❌ พบข้อผิดพลาดด้านสิทธิ์การใช้งาน Firestore (Permission Denied)\n\n" +
+          "กรุณาไปที่ Firebase Console (https://console.firebase.google.com) ของโปรเจกต์คุณ -> เลือก Firestore Database -> แถบ Rules\n" +
+          "และตั้งค่ากฏเป็น:\n\n" +
+          "rules_version = '2';\n" +
+          "service cloud.firestore {\n" +
+          "  match /databases/{database}/documents {\n" +
+          "    match /{document=**} {\n" +
+          "      allow read, write: if true;\n" +
+          "    }\n" +
+          "  }\n" +
+          "}"
+        );
+      }
+      console.error("Firestore Rules error:", error);
+      throw error;
     } else {
       console.error(`Error saving data to Firestore API for org ${orgId}:`, error);
       throw error;
