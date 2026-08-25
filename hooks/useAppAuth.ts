@@ -169,7 +169,8 @@ export const useAppAuth = (
             authorizedAdmins: updatedAuthorizedAdmins
           };
 
-          if (authStateChanged && appUser && (appUser.role === 'admin' || appUser.role === 'manager')) {
+          const isNewUserRegistration = !existingUser && !!appUser;
+          if (authStateChanged && appUser && (appUser.role === 'admin' || appUser.role === 'manager' || isNewUserRegistration)) {
             saveAppData(updatedData, ORG_ID).catch(e => {
               console.warn("User sync notice:", e?.message || e);
             });
