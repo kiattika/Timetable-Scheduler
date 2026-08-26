@@ -4,6 +4,9 @@ import { User, UserRole, ScreenAccessProps } from '../types';
 import Modal from './Modal';
 import ConfirmationModal from './ConfirmationModal'; // Import ConfirmationModal
 import { Icons } from '../constants';
+import { httpsCallable } from 'firebase/functions';
+import { functions } from '../lib/firebase';
+import { ORG_ID } from '../api';
 
 interface UserManagementScreenProps extends ScreenAccessProps {
   users: User[];
@@ -26,6 +29,7 @@ const UserManagementScreen: React.FC<UserManagementScreenProps> = ({
   const [searchTerm, setSearchTerm] = useState('');
   const [isConfirmDeleteModalOpen, setIsConfirmDeleteModalOpen] = useState(false);
   const [userToDelete, setUserToDelete] = useState<User | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
 
   const IconComponent = Icons.Users; // Using the new UsersRound icon
@@ -34,6 +38,7 @@ const UserManagementScreen: React.FC<UserManagementScreenProps> = ({
     { value: 'admin', label: 'ผู้ดูแลระบบ (Admin)' },
     { value: 'manager', label: 'ผู้จัดการ (Manager)' },
     { value: 'assistant', label: 'ผู้ช่วยจัดตารางสอน (Scheduler Assistant)' },
+    { value: 'teacher', label: 'ครูผู้สอน (Teacher)' },
     { value: 'guest', label: 'แขก (Guest)' },
   ];
 
@@ -56,6 +61,7 @@ const UserManagementScreen: React.FC<UserManagementScreenProps> = ({
   };
 
   const closeModal = () => {
+    if (isSubmitting) return;
     setIsModalOpen(false);
     setEditingUser({});
     setEditingId(null);
@@ -68,7 +74,7 @@ const UserManagementScreen: React.FC<UserManagementScreenProps> = ({
     setError(null); // Clear error on input change
   };
 
-  const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setError(null);
 
@@ -84,7 +90,8 @@ const UserManagementScreen: React.FC<UserManagementScreenProps> = ({
         setError('รูปแบบอีเมล์ไม่ถูกต้อง');
         return;
     }
-    if (!editingUser.email.toLowerCase().trim().endsWith('@utd.ac.th')) {
+    const cleanEmail = editingUser.email.toLowerCase().trim();
+    if (!cleanEmail.endsWith('@utd.ac.th')) {
         setError('อนุญาตเฉพาะอีเมลโดเมน @utd.ac.th ของโรงเรียนอุตรดิตถ์เท่านั้น');
         return;
     }
@@ -95,7 +102,7 @@ const UserManagementScreen: React.FC<UserManagementScreenProps> = ({
 
     // Check for unique email (excluding self if editing)
     const emailExists = users.some(
-      user => user.email.toLowerCase() === editingUser.email!.toLowerCase() && user.id !== editingId
+      user => user.email.toLowerCase().trim() === cleanEmail && user.id !== editingId
     );
     if (emailExists) {
       setError('อีเมล์นี้ถูกใช้งานแล้ว กรุณาใช้อีเมล์อื่น');
@@ -105,37 +112,67 @@ const UserManagementScreen: React.FC<UserManagementScreenProps> = ({
     // Prevent changing the role of the last admin to non-admin if it's the current user
     if (editingId && editingId === currentUser?.id && currentUser?.role === 'admin' && editingUser.role !== 'admin') {
         const adminCount = users.filter(u => u.role === 'admin').length;
-        if (adminCount === 1) {
+        if (adminCount <= 1) {
             setError('ไม่สามารถเปลี่ยนบทบาทของผู้ดูแลระบบคนสุดท้ายได้');
             return;
         }
     }
 
+    try {
+      setIsSubmitting(true);
+      // Call Cloud Function to assign custom claims and sync Firestore record
+      const setUserRoleFn = httpsCallable<
+        { targetEmail: string; role: string; orgId: string; name?: string; assignedDepartments?: string[] },
+        { success: boolean; message: string; users?: any[]; authorizedAdmins?: string[] }
+      >(functions, 'setUserRole');
 
-    if (editingId) {
-      setUsers(prev =>
-        prev.map(u => {
-          if (u.id === editingId) {
-            const updatedUser = { ...u, ...editingUser, id: editingId } as User;
-            if (updatedUser.role !== 'assistant') {
-              delete updatedUser.assignedDepartments;
-            }
-            return updatedUser;
-          }
-          return u;
-        })
-      );
-    } else {
-      const newUser: User = {
-        id: crypto.randomUUID(),
-        name: editingUser.name!,
-        email: editingUser.email!,
+      const res = await setUserRoleFn({
+        targetEmail: cleanEmail,
         role: editingUser.role!,
-        assignedDepartments: editingUser.role === 'assistant' ? editingUser.assignedDepartments : undefined,
-      };
-      setUsers(prev => [...prev, newUser]);
+        orgId: ORG_ID,
+        name: editingUser.name?.trim(),
+        assignedDepartments: editingUser.role === 'assistant' ? (editingUser.assignedDepartments || []) : undefined
+      });
+
+      if (editingId) {
+        setUsers(prev =>
+          prev.map(u => {
+            if (u.id === editingId) {
+              const updatedUser = { ...u, ...editingUser, email: cleanEmail, id: editingId } as User;
+              if (updatedUser.role !== 'assistant') {
+                delete updatedUser.assignedDepartments;
+              }
+              return updatedUser;
+            }
+            return u;
+          })
+        );
+      } else {
+        const newUser: User = {
+          id: crypto.randomUUID(),
+          name: editingUser.name!.trim(),
+          email: cleanEmail,
+          role: editingUser.role!,
+          assignedDepartments: editingUser.role === 'assistant' ? editingUser.assignedDepartments : undefined,
+        };
+        setUsers(prev => [...prev, newUser]);
+      }
+
+      alert(`บันทึกสิทธิ์เรียบร้อยแล้ว: ${res.data?.message || 'สำเร็จ'}\n\n(หมายเหตุ: ผู้ใช้งานที่ถูกเปลี่ยนบทบาท ต้องออกจากระบบแล้วเข้าใหม่อีกครั้ง เพื่อให้สิทธิ์ Firebase Token มีผลสมบูรณ์)`);
+      closeModal();
+    } catch (err: any) {
+      console.error("Error setting user role via Cloud Function:", err);
+      const rawMsg = err?.message || '';
+      if (rawMsg.includes('auth/user-not-found') || rawMsg.includes('not-found') || rawMsg.includes('ไม่พบบัญชีผู้ใช้')) {
+        setError('ไม่พบบัญชีผู้ใช้นี้ใน Firebase Auth กรุณาให้ผู้ใช้งานล็อกอินเข้าสู่ระบบด้วย Google (@utd.ac.th) อย่างน้อย 1 ครั้งก่อนกำหนดสิทธิ์');
+      } else if (rawMsg.includes('permission-denied') || rawMsg.includes('Only administrators')) {
+        setError('คุณไม่มีสิทธิ์ผู้ดูแลระบบในการเปลี่ยนแปลงบทบาทผู้ใช้');
+      } else {
+        setError(`เกิดข้อผิดพลาดในการบันทึกสิทธิ์: ${rawMsg || 'กรุณาลองใหม่อีกครั้ง'}`);
+      }
+    } finally {
+      setIsSubmitting(false);
     }
-    closeModal();
   };
 
   const requestDelete = (user: User) => {
@@ -154,12 +191,26 @@ const UserManagementScreen: React.FC<UserManagementScreenProps> = ({
     setIsConfirmDeleteModalOpen(true);
   };
 
-  const confirmDelete = () => {
-    if (userToDelete) {
+  const confirmDelete = async () => {
+    if (!userToDelete) return;
+    try {
+      setIsSubmitting(true);
+      // Revoke admin claims and downgrade to guest via Cloud Function
+      const setUserRoleFn = httpsCallable(functions, 'setUserRole');
+      await setUserRoleFn({
+        targetEmail: userToDelete.email.toLowerCase().trim(),
+        role: 'guest',
+        orgId: ORG_ID
+      }).catch(e => console.warn("Notice: Revoking claims on delete:", e?.message || e));
+
       setUsers(prevUsers => prevUsers.filter(user => user.id !== userToDelete.id));
+    } catch (err) {
+      console.error("Error revoking role on delete:", err);
+    } finally {
+      setIsSubmitting(false);
+      setIsConfirmDeleteModalOpen(false);
+      setUserToDelete(null);
     }
-    setIsConfirmDeleteModalOpen(false);
-    setUserToDelete(null);
   };
   
   const filteredUsers = users.filter(user => 
@@ -170,7 +221,7 @@ const UserManagementScreen: React.FC<UserManagementScreenProps> = ({
 
   return (
     <div className="p-4 md:p-6 bg-white shadow-lg rounded-lg">
-      <div className="flex flex-col sm:flex-row justify-between items-center mb-6 gap-4">
+      <div className="flex flex-col sm:flex-row justify-between items-center mb-4 gap-4">
         <div className="flex items-center">
           {IconComponent && <IconComponent size={32} className="mr-3 text-blue-600" />}
           <h2 className="text-2xl font-semibold text-slate-800">จัดการผู้ใช้งาน</h2>
@@ -182,6 +233,13 @@ const UserManagementScreen: React.FC<UserManagementScreenProps> = ({
         >
           <Icons.Add size={20} className="mr-2" /> เพิ่มผู้ใช้งานใหม่
         </button>
+      </div>
+
+      <div className="mb-4 bg-blue-50 border border-blue-200 text-blue-800 p-3 rounded-md text-xs sm:text-sm flex items-start gap-2">
+        <Icons.Info size={18} className="text-blue-600 shrink-0 mt-0.5" />
+        <div>
+          <span className="font-semibold">ระบบสิทธิ์และบทบาท (Firebase Custom Claims):</span> การกำหนดสิทธิ์จะถูกบันทึกลงในระบบความปลอดภัยของ Firebase ทันที โดยผู้ใช้งานที่ถูกเปลี่ยนบทบาทจำเป็นต้องออกจากระบบ (Sign Out) แล้วเข้าใหม่อีกครั้งเพื่อให้สิทธิ์ใหม่มีผลสมบูรณ์
+        </div>
       </div>
 
       <div className="mb-4 relative">
@@ -381,15 +439,24 @@ const UserManagementScreen: React.FC<UserManagementScreenProps> = ({
             <button
               type="button"
               onClick={closeModal}
-              className="px-4 py-2 text-sm font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-md border border-slate-300 transition-colors"
+              disabled={isSubmitting}
+              className="px-4 py-2 text-sm font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-md border border-slate-300 transition-colors disabled:opacity-50"
             >
               ยกเลิก
             </button>
             <button
               type="submit"
-              className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md shadow-sm transition-colors"
+              disabled={isSubmitting}
+              className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md shadow-sm transition-colors flex items-center disabled:opacity-50"
             >
-              {editingId ? 'บันทึกการเปลี่ยนแปลง' : 'เพิ่มผู้ใช้งาน'}
+              {isSubmitting ? (
+                <>
+                  <Icons.Loading size={16} className="animate-spin mr-2" />
+                  กำลังบันทึกสิทธิ์...
+                </>
+              ) : (
+                editingId ? 'บันทึกการเปลี่ยนแปลง' : 'เพิ่มผู้ใช้งาน'
+              )}
             </button>
           </div>
         </form>

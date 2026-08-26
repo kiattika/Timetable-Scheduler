@@ -593,7 +593,7 @@ const App: React.FC = () => {
         case 'teacherLoadReport':
              return <TeacherLoadReportScreen appData={appData} />;
         case 'adminSettings':
-             return <AdminSettingsScreen appData={appData} setAppData={setAppData as any} />;
+             return <AdminSettingsScreen appData={appData} setAppData={setAppData as any} setCurrentView={setCurrentView} />;
         case 'systemHealth':
              return <SystemHealthScreen appData={appData} setAppData={setAppData as any} />;
         case 'teachers':

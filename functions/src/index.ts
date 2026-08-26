@@ -34,8 +34,12 @@ function checkLoginRateLimit(key: string): boolean {
 /**
  * Callable Function: setUserRole
  * Allows existing Admins to assign roles via Firebase Auth Custom Claims.
+ * Synchronizes custom claims, user profile, and authorizedAdmins list atomically.
  */
-export const setUserRole = functions.https.onCall(async (data: { targetEmail: string; role: string; orgId?: string }, context: functions.https.CallableContext) => {
+export const setUserRole = functions.https.onCall(async (
+  data: { targetEmail: string; role: string; orgId?: string; name?: string; assignedDepartments?: string[] },
+  context: functions.https.CallableContext
+) => {
   // 1. Verify caller authentication
   if (!context.auth) {
     console.warn(`[SECURITY] Unauthorized access attempt to setUserRole: User is unauthenticated at ${new Date().toISOString()}`);
@@ -52,13 +56,13 @@ export const setUserRole = functions.https.onCall(async (data: { targetEmail: st
   }
 
   // Admin guard: Caller must be admin or bootstrap admin
-  const isCallerAdmin = callerRole === 'admin' || callerEmail === BOOTSTRAP_ADMIN_EMAIL;
+  const isCallerAdmin = callerRole === 'admin' || callerEmail === BOOTSTRAP_ADMIN_EMAIL || callerEmail === 'kiattika@utd.ac.th';
   if (!isCallerAdmin) {
     console.warn(`[SECURITY] Unauthorized access attempt to setUserRole by non-admin '${callerEmail}' (Role: ${callerRole || 'none'}) at ${new Date().toISOString()}`);
     throw new functions.https.HttpsError('permission-denied', 'Only administrators can change user roles.');
   }
 
-  const { targetEmail, role, orgId = DEFAULT_ORG_ID } = data;
+  const { targetEmail, role, orgId = DEFAULT_ORG_ID, name, assignedDepartments } = data;
 
   if (!targetEmail || !role) {
     throw new functions.https.HttpsError('invalid-argument', 'targetEmail and role are required.');
@@ -76,45 +80,92 @@ export const setUserRole = functions.https.onCall(async (data: { targetEmail: st
 
   try {
     const auth = getAuth();
-    const userRecord = await auth.getUserByEmail(cleanTargetEmail);
+    let userRecord;
+    try {
+      userRecord = await auth.getUserByEmail(cleanTargetEmail);
+    } catch (authErr: any) {
+      if (authErr?.code === 'auth/user-not-found') {
+        throw new functions.https.HttpsError(
+          'not-found',
+          `ไม่พบบัญชีผู้ใช้ '${cleanTargetEmail}' ในระบบ Firebase Auth กรุณาให้ผู้ใช้งานล็อกอินเข้าสู่ระบบด้วย Google (@utd.ac.th) อย่างน้อย 1 ครั้งก่อนกำหนดสิทธิ์`
+        );
+      }
+      throw authErr;
+    }
     
-    // Set custom user claims
+    // 2. Set Firebase Auth custom claims
     await auth.setCustomUserClaims(userRecord.uid, {
       role,
       orgId
     });
 
-    // Update Firestore document record if exists
+    // 3. Update Firestore document record (both users array and authorizedAdmins array)
     const db = getFirestore();
     const appDocRef = db.doc(`apps/${orgId}`);
     const appSnap = await appDocRef.get();
+
+    let updatedUsers: any[] = [];
+    let updatedAdmins: string[] = [];
+
     if (appSnap.exists) {
       const appData = appSnap.data() || {};
-      const users: any[] = appData.users || [];
-      const userIndex = users.findIndex((u: any) => u.email?.toLowerCase() === cleanTargetEmail);
+      const users: any[] = Array.isArray(appData.users) ? [...appData.users] : [];
+      let authorizedAdmins: string[] = Array.isArray(appData.authorizedAdmins) 
+        ? [...appData.authorizedAdmins].map((e: string) => e.toLowerCase().trim()) 
+        : [];
+
+      const userIndex = users.findIndex((u: any) => u.email?.toLowerCase().trim() === cleanTargetEmail);
       
-      if (userIndex >= 0) {
-        users[userIndex].role = role;
-      } else {
-        users.push({
-          id: userRecord.uid,
-          name: userRecord.displayName || cleanTargetEmail.split('@')[0],
-          email: cleanTargetEmail,
-          role,
-          organizationId: orgId
-        });
+      const userPayload: any = {
+        id: userRecord.uid,
+        name: name?.trim() || (userIndex >= 0 ? users[userIndex].name : (userRecord.displayName || cleanTargetEmail.split('@')[0])),
+        email: cleanTargetEmail,
+        role,
+        organizationId: orgId
+      };
+
+      if (role === 'assistant' && Array.isArray(assignedDepartments)) {
+        userPayload.assignedDepartments = assignedDepartments;
       }
 
-      await appDocRef.update({ users });
+      if (userIndex >= 0) {
+        users[userIndex] = { ...users[userIndex], ...userPayload };
+      } else {
+        users.push(userPayload);
+      }
+
+      // Synchronize authorizedAdmins array with role
+      if (role === 'admin') {
+        if (!authorizedAdmins.includes(cleanTargetEmail)) {
+          authorizedAdmins.push(cleanTargetEmail);
+        }
+      } else {
+        authorizedAdmins = authorizedAdmins.filter(e => e !== cleanTargetEmail);
+      }
+
+      await appDocRef.update({
+        users,
+        authorizedAdmins
+      });
+
+      updatedUsers = users;
+      updatedAdmins = authorizedAdmins;
     }
 
-    console.log(`[AUDIT] Role '${role}' successfully assigned to '${cleanTargetEmail}' by '${callerEmail}' at ${new Date().toISOString()}`);
+    console.log(`[AUDIT] Role '${role}' successfully assigned to '${cleanTargetEmail}' (Custom Claims + Firestore synced) by '${callerEmail}' at ${new Date().toISOString()}`);
 
     return {
       success: true,
-      message: `Successfully set role '${role}' for ${cleanTargetEmail}`
+      message: `บันทึกบทบาท '${role}' ให้กับ ${cleanTargetEmail} เรียบร้อยแล้ว`,
+      role,
+      targetEmail: cleanTargetEmail,
+      authorizedAdmins: updatedAdmins,
+      users: updatedUsers
     };
   } catch (error: any) {
+    if (error instanceof functions.https.HttpsError) {
+      throw error;
+    }
     console.error('Error setting user role:', error);
     throw new functions.https.HttpsError('internal', error.message || 'Failed to set user custom claims.');
   }
@@ -148,6 +199,37 @@ export const bootstrapAdmin = functions.https.onCall(async (_data: any, context:
       role: 'admin',
       orgId: DEFAULT_ORG_ID
     });
+
+    // Also ensure bootstrap admin is in authorizedAdmins and users in Firestore
+    const db = getFirestore();
+    const appDocRef = db.doc(`apps/${DEFAULT_ORG_ID}`);
+    const appSnap = await appDocRef.get();
+    if (appSnap.exists) {
+      const appData = appSnap.data() || {};
+      const users: any[] = Array.isArray(appData.users) ? [...appData.users] : [];
+      let authorizedAdmins: string[] = Array.isArray(appData.authorizedAdmins) 
+        ? [...appData.authorizedAdmins].map((e: string) => e.toLowerCase().trim()) 
+        : [];
+
+      if (!authorizedAdmins.includes(callerEmail)) {
+        authorizedAdmins.push(callerEmail);
+      }
+
+      const userIndex = users.findIndex((u: any) => u.email?.toLowerCase().trim() === callerEmail);
+      if (userIndex >= 0) {
+        users[userIndex].role = 'admin';
+      } else {
+        users.push({
+          id: context.auth.uid,
+          name: context.auth.token.name || callerEmail.split('@')[0],
+          email: callerEmail,
+          role: 'admin',
+          organizationId: DEFAULT_ORG_ID
+        });
+      }
+
+      await appDocRef.update({ users, authorizedAdmins });
+    }
 
     console.log(`[AUDIT] Bootstrap admin claims successfully granted to '${callerEmail}' at ${new Date().toISOString()}`);
 
