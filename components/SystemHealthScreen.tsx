@@ -70,34 +70,11 @@ export const SystemHealthScreen: React.FC<SystemHealthScreenProps> = ({
   const isAdmin = appData.currentUser?.role === 'admin';
   const orgId = ORG_ID;
 
-  // Real API Call: Fetch usage metrics from server API or Cloud Function
+  // Real API Call: Fetch usage metrics exclusively via secure callable Cloud Function (Admin only)
   const fetchCloudMonitoringStats = useCallback(async (days: number = selectedDays) => {
     setIsLoadingStats(true);
     setStatsError(null);
     try {
-      // 1. Try local Express backend API route first (/api/firestore-usage-stats)
-      try {
-        const response = await fetch(`/api/firestore-usage-stats?days=${days}`);
-        if (response.ok) {
-          const resData = await response.json();
-          if (resData && resData.success && Array.isArray(resData.dailyStats)) {
-            setUsageStats(resData);
-            setIsLoadingStats(false);
-            return;
-          } else if (resData && resData.error) {
-            throw new Error(resData.error);
-          }
-        } else {
-          const errJson = await response.json().catch(() => null);
-          if (errJson && errJson.error) {
-            throw new Error(errJson.error);
-          }
-        }
-      } catch (apiErr: any) {
-        console.warn('Express API fetch failed, trying Cloud Function:', apiErr.message);
-      }
-
-      // 2. Try Firebase Callable Cloud Function (getFirestoreUsageStats)
       const getStatsFn = httpsCallable<{ days: number }, FirestoreUsageResponse>(
         functions,
         'getFirestoreUsageStats'
@@ -109,12 +86,12 @@ export const SystemHealthScreen: React.FC<SystemHealthScreenProps> = ({
         throw new Error('ไม่ได้รับข้อมูลสถิติที่ถูกต้องจาก Cloud Function');
       }
     } catch (err: any) {
-      console.error('Failed to fetch Firestore usage stats from Cloud Function/API:', err);
+      console.error('Failed to fetch Firestore usage stats from Cloud Function:', err);
       let rawMessage = err?.message || 'เกิดข้อผิดพลาดในการเชื่อมต่อ Google Cloud Monitoring API';
       
       // Parse cryptic Firebase callable errors
       if (rawMessage === 'internal' || err?.code === 'functions/internal' || err?.code === 'internal') {
-        rawMessage = `ระบบไม่สามารถดึงข้อมูลสถิติได้ (Error: internal) — อาจเกิดจาก Service Account ของโปรเจกต์ยังไม่ได้รับบทบาท 'Monitoring Viewer' (roles/monitoring.viewer) บน Google Cloud IAM หรือ Cloud Function ยังไม่ได้ถูก Deploy`;
+        rawMessage = `ระบบไม่สามารถดึงข้อมูลสถิติได้ (Error: internal) — อาจเกิดจาก Service Account ของโปรเจกต์ยังไม่ได้รับบทบาท 'Monitoring Viewer' (roles/monitoring.viewer) บน Google Cloud IAM หรือ Cloud Function ยังไม่ได้ถูก Deploy บน Firebase`;
       } else if (err?.code === 'functions/unauthenticated' || rawMessage.includes('unauthenticated')) {
         rawMessage = 'จำเป็นต้องเข้าสู่ระบบด้วยสิทธิ์ผู้ดูแลระบบ (@utd.ac.th) เพื่อเรียกดูสถิตินี้';
       } else if (err?.code === 'functions/permission-denied' || rawMessage.includes('permission-denied')) {
