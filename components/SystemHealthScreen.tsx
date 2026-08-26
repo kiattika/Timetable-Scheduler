@@ -86,12 +86,12 @@ export const SystemHealthScreen: React.FC<SystemHealthScreenProps> = ({
         throw new Error('ไม่ได้รับข้อมูลสถิติที่ถูกต้องจาก Cloud Function');
       }
     } catch (err: any) {
-      console.error('Failed to fetch Firestore usage stats from Cloud Function:', err);
-      let rawMessage = err?.message || 'เกิดข้อผิดพลาดในการเชื่อมต่อ Google Cloud Monitoring API';
+      console.warn('Notice: Failed to fetch Firestore usage stats from Cloud Function:', err?.message || err);
+      let rawMessage = err?.details || err?.message || 'เกิดข้อผิดพลาดในการเชื่อมต่อ Google Cloud Monitoring API';
       
       // Parse cryptic Firebase callable errors
       if (rawMessage === 'internal' || err?.code === 'functions/internal' || err?.code === 'internal') {
-        rawMessage = `ระบบไม่สามารถดึงข้อมูลสถิติได้ (Error: internal) — อาจเกิดจาก Service Account ของโปรเจกต์ยังไม่ได้รับบทบาท 'Monitoring Viewer' (roles/monitoring.viewer) บน Google Cloud IAM หรือ Cloud Function ยังไม่ได้ถูก Deploy บน Firebase`;
+        rawMessage = `ระบบไม่สามารถดึงข้อมูลสถิติได้ (Error: internal) — อาจเกิดจากยังไม่ได้ Deploy Cloud Function 'getFirestoreUsageStats' บน Firebase (รันคำสั่ง firebase deploy --only functions ในเทอร์มินัล) หรือ Service Account ของโปรเจกต์ยังไม่ได้รับบทบาท 'Monitoring Viewer' (roles/monitoring.viewer) บน Google Cloud IAM`;
       } else if (err?.code === 'functions/unauthenticated' || rawMessage.includes('unauthenticated')) {
         rawMessage = 'จำเป็นต้องเข้าสู่ระบบด้วยสิทธิ์ผู้ดูแลระบบ (@utd.ac.th) เพื่อเรียกดูสถิตินี้';
       } else if (err?.code === 'functions/permission-denied' || rawMessage.includes('permission-denied')) {
