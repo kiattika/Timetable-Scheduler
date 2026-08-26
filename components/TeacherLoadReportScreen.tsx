@@ -169,7 +169,7 @@ export const TeacherLoadReportScreen: React.FC<TeacherLoadReportScreenProps> = (
     const wsData: any[][] = [];
     
     // Set column headers with formal names
-    wsData.push(['กลุ่มสาระ', 'ที่', 'ชื่อ-สกุล', 'ประจำชั้น', 'ลำดับวิชา', 'รหัสวิชา', 'ชื่อรายวิชา', 'คาบ/ห้อง', 'วัน-คาบที่สอน', 'ระดับ', 'สรุปคาบ']);
+    wsData.push(['กลุ่มสาระ', 'ที่', 'ชื่อ-สกุล', 'อีเมล', 'ประจำชั้น', 'ลำดับวิชา', 'รหัสวิชา', 'ชื่อรายวิชา', 'คาบ/ห้อง', 'วัน-คาบที่สอน', 'ระดับ', 'สรุปคาบ']);
     
     reportData.forEach((row) => {
       let subjectIndex = 1;
@@ -179,6 +179,7 @@ export const TeacherLoadReportScreen: React.FC<TeacherLoadReportScreenProps> = (
           isFirstOfTeacher ? row.department : '',
           isFirstOfTeacher ? row.no : '',
           isFirstOfTeacher ? row.name : '',
+          isFirstOfTeacher ? row.email : '',
           isFirstOfTeacher ? row.homeroom : '',
           subjectIndex++,
           group.subject.subjectCode || '-',
@@ -191,7 +192,7 @@ export const TeacherLoadReportScreen: React.FC<TeacherLoadReportScreenProps> = (
       };
 
       if (row.mainSubjects.length === 0 && row.activitySubjects.length === 0) {
-        wsData.push([row.department, row.no, row.name, row.homeroom, '', '-', '- ไม่มีภาระงานสอน -', '-', '-', '-', 0]);
+        wsData.push([row.department, row.no, row.name, row.email, row.homeroom, '', '-', '- ไม่มีภาระงานสอน -', '-', '-', '-', 0]);
       } else {
         row.mainSubjects.forEach((g, i) => addSubjectRow(g, false, i === 0));
         row.activitySubjects.forEach((g, i) => addSubjectRow(g, true, row.mainSubjects.length === 0 && i === 0));
@@ -199,14 +200,14 @@ export const TeacherLoadReportScreen: React.FC<TeacherLoadReportScreenProps> = (
 
       // Summary row for teacher
       wsData.push([
-        '', '', '', '', '', '', `รวมคาบสอน (วิชาหลัก: ${row.totalMain}, กิจกรรม: ${row.totalActivity})`, '', '', '', { t: 'n', v: row.grandTotal, f: `SUM(K${wsData.length - (row.mainSubjects.length + row.activitySubjects.length - 1)}:K${wsData.length})` } 
+        '', '', '', '', '', '', '', `รวมคาบสอน (วิชาหลัก: ${row.totalMain}, กิจกรรม: ${row.totalActivity})`, '', '', '', { t: 'n', v: row.grandTotal, f: `SUM(L${wsData.length - (row.mainSubjects.length + row.activitySubjects.length - 1)}:L${wsData.length})` } 
       ]);
     });
 
     const ws = XLSX.utils.aoa_to_sheet(wsData);
     
     // Styling the header row to be formal blue
-    for (let i = 0; i < 11; i++) {
+    for (let i = 0; i < 12; i++) {
         const cellRef = XLSX.utils.encode_cell({c: i, r: 0});
         if (!ws[cellRef]) continue;
         ws[cellRef].s = {
