@@ -96,6 +96,9 @@ const EntityManagementScreen = <T extends Identifiable,>({
       if (subjectItem.applicableParentGradeLevelIds === undefined) { // Initialize new field
         setCurrentItem(prev => ({ ...prev, applicableParentGradeLevelIds: [] } as Partial<T>));
       }
+      if (subjectItem.restrictedRoomTypes === undefined) {
+        setCurrentItem(prev => ({ ...prev, restrictedRoomTypes: [] } as Partial<T>));
+      }
     }
   }, [currentItem, entityType, items]);
 
@@ -116,6 +119,8 @@ const EntityManagementScreen = <T extends Identifiable,>({
       } else if (field.name === 'autoLinkToHomeroomTeachers' && entityType === 'subjects') {
         (acc as any)[field.name] = false;
       } else if (field.name === 'applicableParentGradeLevelIds' && entityType === 'subjects') { // Initialize new field
+        (acc as any)[field.name] = [];
+      } else if (field.name === 'restrictedRoomTypes' && entityType === 'subjects') {
         (acc as any)[field.name] = [];
       } else if (field.type === 'number') {
         (acc as any)[field.name] = ''; 
@@ -659,7 +664,7 @@ const EntityManagementScreen = <T extends Identifiable,>({
           if (fieldConfig.name === 'applicableParentGradeLevelIds') { 
             option = (sourceData as GradeLevel[]).find(opt => opt.id === id && !opt.name.includes('/'));
           } else {
-            option = sourceData.find(opt => opt.id === id);
+            option = sourceData.find(opt => opt.id === id || (opt as any).name === id);
           }
           return (fieldConfig.optionsSource === "physicalRooms" ? formatRoomDisplay(option as any) : option?.name) || id;
         }).join(', ');
@@ -718,12 +723,13 @@ const EntityManagementScreen = <T extends Identifiable,>({
       const headers = [
         "ชื่อวิชา", "รหัสวิชา", "จำนวนคาบ/สัปดาห์", "กลุ่มสาระการเรียนรู้", "สีประจำวิชา",
         "รูปแบบการสอน", "รูปแบบการจัดคาบ", "อนุญาตให้ใช้ห้องร่วม", "วิชาเรียนรวม",
-        "วิชาโฮมรูม/แนะแนว", "ผูกกับครูประจำชั้นอัตโนมัติ", "ระดับชั้นที่เปิดสอน"
+        "วิชาโฮมรูม/แนะแนว", "ผูกกับครูประจำชั้นอัตโนมัติ", "ระดับชั้นที่เปิดสอน", "ประเภทห้องที่จำกัด"
       ];
       const rows = (filteredItems as unknown as Subject[]).map(s => {
         const applicableGrades = (s.applicableParentGradeLevelIds || [])
           .map(id => appData.gradeLevels.find(g => g.id === id)?.name || id)
           .join(', ');
+        const restrictedRooms = (s.restrictedRoomTypes || []).join(', ');
         return [
           s.name || '', s.subjectCode || '', s.periodsPerWeek ?? 1, s.department || '', s.color || '#3B82F6',
           s.teachingMode || 'single', s.schedulingPattern || '',
@@ -731,7 +737,8 @@ const EntityManagementScreen = <T extends Identifiable,>({
           s.isBroadAssignment ? 'ใช่' : 'ไม่ใช่',
           s.isHomeroomAdvisorySubject ? 'ใช่' : 'ไม่ใช่',
           s.autoLinkToHomeroomTeachers ? 'ใช่' : 'ไม่ใช่',
-          applicableGrades
+          applicableGrades,
+          restrictedRooms
         ];
       });
       dataAOA = [headers, ...rows];

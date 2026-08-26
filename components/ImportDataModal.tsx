@@ -183,6 +183,7 @@ export const ImportDataModal: React.FC<ImportDataModalProps> = ({
       if (fn === 'isHomeroomAdvisorySubject' && (fh.includes('โฮมรูม') || fh.includes('แนะแนว') || fh === 'homeroom subject')) return true;
       if (fn === 'autoLinkToHomeroomTeachers' && (fh.includes('ผูกกับครู') || fh.includes('auto link') || fh === 'auto link teachers')) return true;
       if (fn === 'applicableParentGradeLevelIds' && (fh.includes('เปิดสอน') || fh.includes('applicable grades') || fh.includes('ระดับชั้นที่เรียน'))) return true;
+      if (fn === 'restrictedRoomTypes' && (fh.includes('ประเภทห้อง') || fh.includes('restricted room') || fh.includes('ห้องที่จำกัด'))) return true;
       if (fn === 'description' && (fh.includes('คำอธิบาย') || fh.includes('หมายเหตุ') || fh === 'description' || fh === 'notes')) return true;
 
       if (selectedEntityType === 'teacherSubjectAssignments') {
@@ -271,7 +272,7 @@ export const ImportDataModal: React.FC<ImportDataModalProps> = ({
               break;
             case 'multiselect': 
             case 'checkboxgroup':
-              if (internalField === 'homeroomGradeLevelIds' || internalField === 'applicableParentGradeLevelIds') {
+              if (internalField === 'homeroomGradeLevelIds' || internalField === 'applicableParentGradeLevelIds' || internalField === 'restrictedRoomTypes') {
                 processedValue = rawValue.split(/[,，\n]/).map(name => name.trim()).filter(Boolean);
               }
               break;
@@ -284,7 +285,7 @@ export const ImportDataModal: React.FC<ImportDataModalProps> = ({
             else if (fieldConfig.name === 'allowClassroomSharing' || fieldConfig.name === 'isHomeroomAdvisorySubject' || fieldConfig.name === 'autoLinkToHomeroomTeachers' || fieldConfig.name === 'isBroadAssignment') processedValue = false;
             else if (fieldConfig.name === 'color') processedValue = PREDEFINED_SUBJECT_COLORS[appData.subjects.length % PREDEFINED_SUBJECT_COLORS.length];
             else if (fieldConfig.name === 'schedulingPattern') processedValue = '';
-            else if (fieldConfig.name === 'applicableParentGradeLevelIds') processedValue = [];
+            else if (fieldConfig.name === 'applicableParentGradeLevelIds' || fieldConfig.name === 'restrictedRoomTypes') processedValue = [];
             else processedValue = undefined;
           } else if (selectedEntityType === 'teachers' && fieldConfig.name === 'homeroomGradeLevelIds') {
             processedValue = [];

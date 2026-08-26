@@ -284,6 +284,14 @@ const App: React.FC = () => {
         { name: 'isHomeroomAdvisorySubject', label: 'Homeroom/Advisory Subject (วิชาโฮมรูม/แนะแนว)', type: 'checkbox', required: false },
         { name: 'autoLinkToHomeroomTeachers', label: 'Auto-link to Homeroom Teachers (เชื่อมโยงกับครูที่ปรึกษาอัตโนมัติ)', type: 'checkbox', required: false, disabled: (item: any) => !item?.isHomeroomAdvisorySubject },
         { name: 'applicableParentGradeLevelIds', label: 'Applicable Parent Grades (สำหรับวิชาลูกเสือ/โฮมรูม)', type: 'multiselect', optionsSource: 'gradeLevels', required: false, disabled: (item: any) => !item?.isBroadAssignment && !item?.isHomeroomAdvisorySubject },
+        {
+          name: 'restrictedRoomTypes',
+          label: 'Restricted Room Types (จำกัดเฉพาะประเภทห้อง - ไม่เลือกคือใช้ได้ทุกห้อง)',
+          type: 'multiselect',
+          optionsSource: 'resourceTypes',
+          required: false,
+          placeholder: 'Select restricted room types (optional)'
+        },
       ],
       getIcon: () => Icons.Subject,
     },

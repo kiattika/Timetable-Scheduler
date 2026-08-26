@@ -1669,18 +1669,31 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
   
   const modalSubjects = useMemo(() => {
     if (!assignmentModalContext) return subjects;
-    const { day: targetDay, period: targetPeriod, viewType, fixedTeacherId } = assignmentModalContext;
+    const { day: targetDay, period: targetPeriod, viewType, fixedTeacherId, fixedPhysicalRoomId } = assignmentModalContext;
     const currentSelectedGradeId = currentAssignment.gradeLevelId;
 
+    const targetRoom = fixedPhysicalRoomId
+      ? (physicalRooms || []).find(r => r.id === fixedPhysicalRoomId)
+      : null;
+    const targetRoomType = targetRoom?.type;
+
+    const filterByRoomType = (subjectList: Subject[]) => {
+      if (!targetRoomType) return subjectList;
+      return subjectList.filter(s => 
+        !s.restrictedRoomTypes || s.restrictedRoomTypes.length === 0 || 
+        s.restrictedRoomTypes.includes(targetRoomType)
+      );
+    };
+
     if (currentSelectedGradeId === 'Non-Student') {
-        return subjects.filter(s => s.type === 'TEACHER_ONLY');
+        return filterByRoomType(subjects.filter(s => s.type === 'TEACHER_ONLY'));
     }
 
     let resultSubjects: Subject[] = [];
 
     if (currentSelectedGradeId) {
         const currentGradeDetails = gradeLevels.find(gl => gl.id === currentSelectedGradeId);
-        if (!currentGradeDetails) return subjects; 
+        if (!currentGradeDetails) return filterByRoomType(subjects); 
 
         let relevantGradeIdsForSubjectLinks: string[] = [currentSelectedGradeId];
         const parentIdOfCurrent = getParentGradeLevelId(currentSelectedGradeId, gradeLevels);
@@ -1762,9 +1775,9 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
         const merged = [...filteredByQuota];
             const mergedIds = new Set(merged.map(s => s.id));
             teacherOnlySubjects.forEach(function(s) { if (!mergedIds.has(s.id)) { merged.push(s); } });
-            return merged;
+            return filterByRoomType(merged);
         }
-        return subjects; 
+        return filterByRoomType(subjects); 
     }
 
     if (!editingEntryId && currentSelectedGradeId) {
@@ -1793,7 +1806,7 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
         });
     }
     
-    return resultSubjects;
+    return filterByRoomType(resultSubjects);
   }, [
     assignmentModalContext, 
     currentAssignment.gradeLevelId, 
@@ -1801,7 +1814,8 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
     teacherSubjectAssignments, 
     editingEntryId, 
     scheduleEntries,
-    gradeLevels 
+    gradeLevels,
+    physicalRooms
   ]);
 
   const modalTeachers = useMemo(() => {

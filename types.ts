@@ -41,6 +41,7 @@ export interface Subject extends Identifiable {
   autoLinkToHomeroomTeachers?: boolean; // Added: If true and isHomeroomAdvisorySubject, auto-link to homeroom teachers
   applicableParentGradeLevelIds?: string[]; // Added: IDs of parent grade levels this subject applies to (for homeroom linking)
   type?: SubjectType; // Added: Subject Type for special periods (PLC, Independent Study)
+  restrictedRoomTypes?: string[]; // Added: Room types (ResourceTypes) this subject is restricted to use
 }
 
 export interface GradeLevel extends Identifiable {
