@@ -3,6 +3,7 @@ import { initializeApp } from 'firebase/app';
 import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, User } from 'firebase/auth';
 import { initializeFirestore } from 'firebase/firestore';
 import { getFunctions } from 'firebase/functions';
+import { logLoginAttempt } from './logger';
 
 const firebaseConfig = {
   projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
@@ -73,6 +74,7 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
     const result = await signInWithPopup(auth, provider);
     const email = (result.user.email || '').toLowerCase().trim();
     if (!email.endsWith('@utd.ac.th')) {
+      await logLoginAttempt('failed', email, 'Unauthorized domain (Must be @utd.ac.th)');
       await auth.signOut();
       throw new Error('เข้าสู่ระบบได้เฉพาะบัญชี @utd.ac.th ของโรงเรียนอุตรดิตถ์เท่านั้น');
     }
@@ -85,6 +87,10 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
     return { user: result.user, accessToken: cachedAccessToken };
   } catch (error: any) {
     console.error('Sign in error:', error);
+    // If not already logged (e.g. auth popup error, auth/unauthorized-domain)
+    if (!error.message?.includes('ของโรงเรียนอุตรดิตถ์เท่านั้น')) {
+      logLoginAttempt('failed', auth.currentUser?.email || '', error?.message || 'Popup closed or authentication error');
+    }
     throw error;
   } finally {
     isSigningIn = false;

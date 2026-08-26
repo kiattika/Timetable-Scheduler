@@ -18,6 +18,7 @@ const BOOTSTRAP_ADMIN_EMAIL = (process.env.BOOTSTRAP_ADMIN_EMAIL || 'admin@utd.a
 export const setUserRole = functions.https.onCall(async (data: { targetEmail: string; role: string; orgId?: string }, context: functions.https.CallableContext) => {
   // 1. Verify caller authentication
   if (!context.auth) {
+    console.warn(`[SECURITY] Unauthorized access attempt to setUserRole: User is unauthenticated at ${new Date().toISOString()}`);
     throw new functions.https.HttpsError('unauthenticated', 'User must be authenticated.');
   }
 
@@ -26,12 +27,14 @@ export const setUserRole = functions.https.onCall(async (data: { targetEmail: st
 
   // Domain guard: Must be @utd.ac.th
   if (!callerEmail?.endsWith('@utd.ac.th')) {
+    console.warn(`[SECURITY] Unauthorized access attempt to setUserRole by non-domain account '${callerEmail || 'unknown'}' at ${new Date().toISOString()}`);
     throw new functions.https.HttpsError('permission-denied', 'Access restricted to @utd.ac.th domain.');
   }
 
   // Admin guard: Caller must be admin or bootstrap admin
   const isCallerAdmin = callerRole === 'admin' || callerEmail === BOOTSTRAP_ADMIN_EMAIL;
   if (!isCallerAdmin) {
+    console.warn(`[SECURITY] Unauthorized access attempt to setUserRole by non-admin '${callerEmail}' (Role: ${callerRole || 'none'}) at ${new Date().toISOString()}`);
     throw new functions.https.HttpsError('permission-denied', 'Only administrators can change user roles.');
   }
 
@@ -85,6 +88,8 @@ export const setUserRole = functions.https.onCall(async (data: { targetEmail: st
       await appDocRef.update({ users });
     }
 
+    console.log(`[AUDIT] Role '${role}' successfully assigned to '${cleanTargetEmail}' by '${callerEmail}' at ${new Date().toISOString()}`);
+
     return {
       success: true,
       message: `Successfully set role '${role}' for ${cleanTargetEmail}`
@@ -101,16 +106,19 @@ export const setUserRole = functions.https.onCall(async (data: { targetEmail: st
  */
 export const bootstrapAdmin = functions.https.onCall(async (_data: any, context: functions.https.CallableContext) => {
   if (!context.auth) {
+    console.warn(`[SECURITY] Unauthorized access attempt to bootstrapAdmin: User is unauthenticated at ${new Date().toISOString()}`);
     throw new functions.https.HttpsError('unauthenticated', 'User must be authenticated.');
   }
 
   const callerEmail = context.auth.token.email?.toLowerCase().trim();
   if (!callerEmail) {
+    console.warn(`[SECURITY] bootstrapAdmin rejected: No email associated with caller uid ${context.auth.uid}`);
     throw new functions.https.HttpsError('invalid-argument', 'No email associated with account.');
   }
 
   // Check if caller matches bootstrap admin email
   if (callerEmail !== BOOTSTRAP_ADMIN_EMAIL && callerEmail !== 'kiattika@utd.ac.th') {
+    console.warn(`[SECURITY] Unauthorized bootstrapAdmin attempt by '${callerEmail}' at ${new Date().toISOString()}`);
     throw new functions.https.HttpsError('permission-denied', 'Only designated initial administrators can bootstrap.');
   }
 
@@ -120,6 +128,8 @@ export const bootstrapAdmin = functions.https.onCall(async (_data: any, context:
       role: 'admin',
       orgId: DEFAULT_ORG_ID
     });
+
+    console.log(`[AUDIT] Bootstrap admin claims successfully granted to '${callerEmail}' at ${new Date().toISOString()}`);
 
     return {
       success: true,
@@ -133,31 +143,44 @@ export const bootstrapAdmin = functions.https.onCall(async (_data: any, context:
 
 /**
  * Scheduled Cloud Function: cleanupOldActivityLogs
- * Runs daily at midnight to delete activity logs older than 90 days from the subcollection.
+ * Runs daily at midnight to delete activity logs and error reports older than 90 days.
  */
 export const cleanupOldActivityLogs = functions.pubsub.schedule('every 24 hours').onRun(async () => {
   const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
   const db = getFirestore();
 
   try {
-    const logsRef = db.collection(`apps/${DEFAULT_ORG_ID}/activityLogs`);
-    const snapshot = await logsRef.where('timestamp', '<', ninetyDaysAgo).get();
+    let totalPurged = 0;
 
-    if (snapshot.empty) {
-      console.log('No expired activity logs to clean.');
-      return null;
+    // 1. Purge activity logs older than 90 days
+    const logsRef = db.collection(`apps/${DEFAULT_ORG_ID}/activityLogs`);
+    const logsSnap = await logsRef.where('timestamp', '<', ninetyDaysAgo).get();
+    if (!logsSnap.empty) {
+      const batch = db.batch();
+      logsSnap.docs.forEach((doc: any) => batch.delete(doc.ref));
+      await batch.commit();
+      totalPurged += logsSnap.size;
+      console.log(`[MAINTENANCE] Purged ${logsSnap.size} expired activity log documents.`);
     }
 
-    const batch = db.batch();
-    snapshot.docs.forEach((doc: any) => {
-      batch.delete(doc.ref);
-    });
+    // 2. Purge application error reports older than 90 days
+    const errorsRef = db.collection(`apps/${DEFAULT_ORG_ID}/errors`);
+    const errorsSnap = await errorsRef.where('timestamp', '<', ninetyDaysAgo).get();
+    if (!errorsSnap.empty) {
+      const batch2 = db.batch();
+      errorsSnap.docs.forEach((doc: any) => batch2.delete(doc.ref));
+      await batch2.commit();
+      totalPurged += errorsSnap.size;
+      console.log(`[MAINTENANCE] Purged ${errorsSnap.size} expired error log documents.`);
+    }
 
-    await batch.commit();
-    console.log(`Successfully purged ${snapshot.size} expired activity logs.`);
+    if (totalPurged === 0) {
+      console.log('[MAINTENANCE] No expired activity logs or error records found.');
+    }
+
     return null;
   } catch (error) {
-    console.error('Error cleaning old activity logs:', error);
+    console.error('Error cleaning old activity/error logs:', error);
     return null;
   }
 });
@@ -171,6 +194,7 @@ export const cleanupOldActivityLogs = functions.pubsub.schedule('every 24 hours'
 export const getFirestoreUsageStats = functions.https.onCall(async (data: { days?: number }, context: functions.https.CallableContext) => {
   // 1. Authorization check
   if (!context.auth) {
+    console.warn(`[SECURITY] Unauthorized access attempt to getFirestoreUsageStats: User is unauthenticated at ${new Date().toISOString()}`);
     throw new functions.https.HttpsError('unauthenticated', 'User must be authenticated.');
   }
 
@@ -179,6 +203,7 @@ export const getFirestoreUsageStats = functions.https.onCall(async (data: { days
   const isCallerAdmin = callerRole === 'admin' || callerEmail === BOOTSTRAP_ADMIN_EMAIL || callerEmail === 'kiattika@utd.ac.th';
 
   if (!isCallerAdmin) {
+    console.warn(`[SECURITY] Unauthorized getFirestoreUsageStats attempt by '${callerEmail || 'unknown'}' (Role: ${callerRole || 'none'}) at ${new Date().toISOString()}`);
     throw new functions.https.HttpsError('permission-denied', 'Only administrators can access Firestore usage metrics.');
   }
 

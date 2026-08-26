@@ -21,7 +21,7 @@ interface ImportDataModalProps {
   isOpen: boolean;
   onClose: () => void;
   appData: AppData;
-  setAppData: React.Dispatch<React.SetStateAction<AppData | null>> | ((data: AppData) => void);
+  setAppData: any;
   entityConfigurations: Record<ImportableEntityType, { singular: string; plural: string; fields: FormField[]; getIcon: () => React.ElementType }>;
   onOpenExport?: () => void;
 }

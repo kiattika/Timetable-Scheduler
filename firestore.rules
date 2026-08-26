@@ -27,7 +27,7 @@ service cloud.firestore {
 
       match /activityLogs/{logId} {
         allow read: if isUtdDomain();
-        allow create: if isUtdDomain();
+        allow create: if isAuthenticated();
         allow update, delete: if isAdmin();
       }
 

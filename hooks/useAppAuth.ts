@@ -1,9 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { fetchAppData, saveAppData, safeUpsert, DEFAULT_DEPARTMENTS, DEFAULT_RESOURCE_TYPES, ORG_ID } from '../api';
 import { AppData, User, ScheduleEntry, ActivityLog, Teacher } from '../types';
 import { db } from '../lib/firebase';
 import { doc, collection, onSnapshot, query, orderBy, limit } from 'firebase/firestore';
 import { DEFAULT_PERIOD_SETTINGS } from '../constants';
+import { logActivity, logLoginAttempt } from '../lib/logger';
 
 export const useAppAuth = (
   appData: AppData | null,
@@ -20,6 +21,7 @@ export const useAppAuth = (
   });
   const [firebaseUser, setFirebaseUser] = useState<any>(null);
   const [isLoadingInitialData, setIsLoadingInitialData] = useState(false);
+  const recordedLoginSessionRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (isAuthChecking) return;
@@ -176,6 +178,19 @@ export const useAppAuth = (
             });
           }
 
+          // Session Login Audit Logging (Record once per user per session)
+          if (appUser && recordedLoginSessionRef.current !== userEmail) {
+            recordedLoginSessionRef.current = userEmail;
+            
+            if (appUser.role === 'guest') {
+              // Log guest awaiting role approval as an audit notice
+              logLoginAttempt('failed', userEmail, 'Guest account awaiting administrator approval', 'guest', ORG_ID);
+            } else {
+              // Log successful user login
+              logLoginAttempt('success', userEmail, undefined, appUser.role, ORG_ID);
+            }
+          }
+
           setAppData(updatedData);
           setIsDataLoaded(true);
         };
@@ -293,6 +308,7 @@ export const useAppAuth = (
   };
 
   const handleLogout = () => {
+    recordedLoginSessionRef.current = null;
     import('../lib/firebase').then(({ logout }) => {
       logout();
     });

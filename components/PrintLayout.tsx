@@ -89,8 +89,8 @@ export const PrintLayout: React.FC<PrintLayoutProps> = ({ appData, printOptions,
             let classInfo = grade.name || 'N/A';
             if (grade.homeroomPhysicalRoomId && !checkIsParentGradeUtil(grade.id, appData.gradeLevels)) {
                 const cl = appData.physicalRooms.find(c => c.id === grade.homeroomPhysicalRoomId);
-                if (cl?.roomNumber) {
-                    classInfo += ` (${cl.roomNumber})`;
+                if (cl?.name) {
+                    classInfo += ` (${cl.name})`;
                 }
             }
             rightSideText = `ระดับชั้น/ห้อง: ${classInfo}`;
@@ -100,7 +100,7 @@ export const PrintLayout: React.FC<PrintLayoutProps> = ({ appData, printOptions,
         }
 
         return (
-          <div key={item.id} className="printed-item-container mb-10 pb-5" style={{ pageBreakInside: layout === '2/page' ? 'avoid' : 'auto', pageBreakAfter: layout === '1/page' ? 'always' : 'auto' }}>
+          <div key={item.id} className="printed-item-container mb-10 pb-5" style={{ pageBreakInside: layout === '1x2_per_page' ? 'avoid' : 'auto', pageBreakAfter: layout === '1_per_page' ? 'always' : 'auto' }}>
             <div className={`schedule-print-header-base ${itemType}-schedule-print-header border-b-2 border-black pb-1 mb-2.5 flex justify-between items-center`}>
               <div className="flex flex-col items-start justify-center">
                   {logoUrl && <img src={logoUrl} alt="School Logo" className="h-12 mb-1" />}

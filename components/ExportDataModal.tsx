@@ -309,8 +309,8 @@ export const ExportDataModal: React.FC<ExportDataModalProps> = ({
     };
 
     const sortedEntries = [...entries].sort((a, b) => {
-      const dA = dayOrder[a.dayOfWeek] || 99;
-      const dB = dayOrder[b.dayOfWeek] || 99;
+      const dA = dayOrder[a.day] || 99;
+      const dB = dayOrder[b.day] || 99;
       if (dA !== dB) return dA - dB;
       if (a.period !== b.period) return a.period - b.period;
       const gA = (appData.gradeLevels || []).find(g => g.id === a.gradeLevelId)?.name || '';
@@ -333,7 +333,7 @@ export const ExportDataModal: React.FC<ExportDataModalProps> = ({
       const room = (appData.physicalRooms || []).find(r => r.id === e.physicalRoomId);
 
       return [
-        dayMap[e.dayOfWeek] || e.dayOfWeek,
+        dayMap[e.day] || e.day,
         `คาบ ${e.period}`,
         periodTime,
         grade?.name || e.gradeLevelId,

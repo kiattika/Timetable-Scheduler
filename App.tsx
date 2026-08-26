@@ -1117,7 +1117,6 @@ const App: React.FC = () => {
             currentItemId={printOptionsModalProps.currentItemId}
             allItems={printOptionsModalProps.allItems}
             appData={appData}
-            googleAccessToken={googleAccessToken}
         />
       )}
       

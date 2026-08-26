@@ -191,7 +191,7 @@ export const GradeLevelScheduleTable: React.FC<SingleScheduleTableProps & {
                   onDragEnd={(e) => { e.stopPropagation(); handleDragEnd(e); }}
                   onContextMenu={(e) => {
                      e.stopPropagation();
-                     handleSlotContextMenu(e, { day, period: periodIndex, entryId: entry.id, currentGradeLevelId: selectedGradeLevelId, viewType: 'gradeLevelPlanner' });
+                     handleSlotContextMenu(e as any, { day, period: periodIndex, entryId: entry.id, currentGradeLevelId: selectedGradeLevelId, viewType: 'gradeLevelPlanner' });
                   }}
                   onTouchStart={(e) => { e.stopPropagation(); handleTouchStart(e, { day, period: periodIndex, entryId: entry.id, currentGradeLevelId: selectedGradeLevelId, viewType: 'gradeLevelPlanner' }); if (isDraggable && startTouchDrag) startTouchDrag(e, entry.id, entry); }}
                   onTouchEnd={(e) => { handleTouchCancel(); if (isDraggable && finishTouchDrag) finishTouchDrag(e); }}
@@ -786,7 +786,7 @@ const GradeLevelPlannerView: React.FC<GradeLevelPlannerViewPropsExtended> = (pro
                               </select>
                               <select 
                                   value={assistantTargetPeriod} 
-                                  onChange={(e) => setAssistantTargetPeriod(e.target.value)}
+                                  onChange={(e) => setAssistantTargetPeriod(e.target.value === '' ? '' : Number(e.target.value))}
                                   className="flex-1 p-1.5 border border-slate-300 rounded text-xs"
                               >
                                   <option value="">-- คาบ --</option>

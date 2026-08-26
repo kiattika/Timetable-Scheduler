@@ -130,12 +130,27 @@ export interface User extends Identifiable {
   assignedDepartments?: string[];
 }
 
+export type ActivityLogAction = 'Added' | 'Removed' | 'Updated' | 'Cleared' | 'Logged In' | 'Login Failed';
+
 export interface ActivityLog {
   id: string;
   timestamp: string;
-  action: 'Added' | 'Removed' | 'Updated' | 'Cleared' | 'Logged In';
+  action: ActivityLogAction;
   description: string;
   user?: string; 
+  details?: string;
+}
+
+export interface AppErrorLog {
+  id: string;
+  message: string;
+  stack?: string;
+  timestamp: string;
+  userEmail?: string;
+  userName?: string;
+  url?: string;
+  componentStack?: string;
+  details?: string;
 }
 
 export interface AppData {
@@ -270,7 +285,7 @@ export type PrintLayoutOption = '1_per_page' | '1x2_per_page' | '2x2_per_page' |
 export type PrintOrientation = 'portrait' | 'landscape';
 
 export interface PrintOptions {
-  itemType: 'teacher' | 'gradeLevel' | 'classroom';
+  itemType: 'teacher' | 'gradeLevel' | 'classroom' | 'physicalRoom';
   scope: PrintItemScope;
   selectedItemIds: string[]; // IDs of teachers, grade levels, or classrooms to print
   layout: PrintLayoutOption;
@@ -282,7 +297,7 @@ export interface PrintWithOptionsModalProps {
   isOpen: boolean;
   onClose: () => void;
   onConfirmPrint: (options: PrintOptions) => void;
-  itemType: 'teacher' | 'gradeLevel' | 'classroom';
+  itemType: 'teacher' | 'gradeLevel' | 'classroom' | 'physicalRoom';
   currentItemId: string | null; // ID of the currently viewed item (teacher, grade, room)
   allItems: Identifiable[]; // All available items (teachers, grades, rooms) for multi-select
   appData: AppData; // To resolve names for selection list
