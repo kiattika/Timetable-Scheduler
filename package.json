@@ -11,6 +11,7 @@
     "lint": "tsc --noEmit"
   },
   "dependencies": {
+    "@google-cloud/monitoring": "^6.0.0",
     "@types/file-saver": "^2.0.7",
     "docx": "^9.7.1",
     "express": "^5.2.1",
