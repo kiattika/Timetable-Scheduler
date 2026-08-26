@@ -250,6 +250,34 @@ export const TeacherLoadReportScreen: React.FC<TeacherLoadReportScreenProps> = (
       const academicYear = organizationSettings?.academicYear || '.....';
       const semester = organizationSettings?.semester || '.....';
 
+      const pageMarginDxa = 1000;
+      // Standard A4 Landscape width is 16,838 DXA (297mm).
+      // Usable width = 16,838 - 1,000 (left margin) - 1,000 (right margin) = 14,838 DXA.
+      const pageLandscapeWidthDxa = 16838;
+      const usableWidthDxa = pageLandscapeWidthDxa - (pageMarginDxa * 2);
+
+      // Proportional column percentages based on real content length:
+      // 1. กลุ่มสาระ (13%): Extended for long department names like "วิทยาศาสตร์และเทคโนโลยี(คอมพิวเตอร์)"
+      // 2. ที่ (3%): Short number 1-2 digits
+      // 3. ชื่อ-สกุล (12%): Full teacher name
+      // 4. อีเมล (12%): Full email address
+      // 5. ประจำชั้น (6%): Homeroom class (e.g. "ม.1/1")
+      // 6. ลำดับวิชา (4%): Short subject index
+      // 7. รหัสวิชา (6%): Subject code (e.g. "ว21101")
+      // 8. ชื่อรายวิชา (18%): Longest column for subject name & activity labels
+      // 9. คาบ/ห้อง (8%): Periods and room name
+      // 10. วัน-คาบที่สอน (8%): Day and period slots
+      // 11. ระดับ (6%): Grade level
+      // 12. สรุปคาบ (4%): Short period total
+      const colPercentages = [13, 3, 12, 12, 6, 4, 6, 18, 8, 8, 6, 4];
+      const colWidths = colPercentages.map((pct, idx) => {
+        if (idx === colPercentages.length - 1) {
+          const sumPrev = colPercentages.slice(0, idx).reduce((sum, p) => sum + Math.round((p / 100) * usableWidthDxa), 0);
+          return usableWidthDxa - sumPrev;
+        }
+        return Math.round((pct / 100) * usableWidthDxa);
+      });
+
       const thinBorder = {
         style: BorderStyle.SINGLE,
         size: 4,
@@ -268,8 +296,6 @@ export const TeacherLoadReportScreen: React.FC<TeacherLoadReportScreenProps> = (
         'กลุ่มสาระ', 'ที่', 'ชื่อ-สกุล', 'อีเมล', 'ประจำชั้น',
         'ลำดับวิชา', 'รหัสวิชา', 'ชื่อรายวิชา', 'คาบ/ห้อง', 'วัน-คาบที่สอน', 'ระดับ', 'สรุปคาบ'
       ];
-      // Landscape table column widths in DXA
-      const colWidths = [1200, 350, 1600, 1600, 1000, 500, 750, 2000, 1100, 1100, 800, 600];
 
       const headerRow = new TableRow({
         tableHeader: true,
@@ -344,10 +370,12 @@ export const TeacherLoadReportScreen: React.FC<TeacherLoadReportScreenProps> = (
         }
 
         // Summary row for teacher
+        const colSpan11Width = colWidths.slice(0, 11).reduce((sum, w) => sum + w, 0);
         tableRows.push(new TableRow({
           children: [
             new TableCell({
               columnSpan: 11,
+              width: { size: colSpan11Width, type: WidthType.DXA },
               shading: { fill: 'F8FAFC', type: ShadingType.CLEAR },
               children: [new Paragraph({
                 alignment: AlignmentType.RIGHT,
@@ -381,7 +409,7 @@ export const TeacherLoadReportScreen: React.FC<TeacherLoadReportScreenProps> = (
           properties: {
             page: {
               size: { orientation: PageOrientation.LANDSCAPE },
-              margin: { top: 1000, bottom: 1000, left: 1000, right: 1000 }
+              margin: { top: pageMarginDxa, bottom: pageMarginDxa, left: pageMarginDxa, right: pageMarginDxa }
             }
           },
           children: [
@@ -408,6 +436,7 @@ export const TeacherLoadReportScreen: React.FC<TeacherLoadReportScreenProps> = (
             new Paragraph({ text: '' }),
             new Table({
               width: { size: 100, type: WidthType.PERCENTAGE },
+              columnWidths: colWidths,
               borders: tableBorders,
               rows: tableRows
             }),
