@@ -3,6 +3,7 @@ import { initializeApp, getApps, getApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
 import { MetricServiceClient } from '@google-cloud/monitoring';
+import { randomUUID } from 'crypto';
 
 if (!getApps().length) {
   initializeApp();
@@ -10,6 +11,25 @@ if (!getApps().length) {
 
 const DEFAULT_ORG_ID = process.env.VITE_ORG_ID || 'utd';
 const BOOTSTRAP_ADMIN_EMAIL = (process.env.BOOTSTRAP_ADMIN_EMAIL || 'admin@utd.ac.th').toLowerCase().trim();
+
+// In-memory rate limiting map for login log attempts (prevents spam DoS)
+const loginRateLimitMap = new Map<string, { count: number; resetTime: number }>();
+const RATE_LIMIT_WINDOW_MS = 60 * 1000; // 1 minute
+const MAX_LOGS_PER_WINDOW = 20; // 20 attempts per minute per key
+
+function checkLoginRateLimit(key: string): boolean {
+  const now = Date.now();
+  const record = loginRateLimitMap.get(key);
+  if (!record || now > record.resetTime) {
+    loginRateLimitMap.set(key, { count: 1, resetTime: now + RATE_LIMIT_WINDOW_MS });
+    return true;
+  }
+  if (record.count >= MAX_LOGS_PER_WINDOW) {
+    return false;
+  }
+  record.count += 1;
+  return true;
+}
 
 /**
  * Callable Function: setUserRole
@@ -142,6 +162,87 @@ export const bootstrapAdmin = functions.https.onCall(async (_data: any, context:
 });
 
 /**
+ * Callable Function: logLoginAttempt
+ * Secure server-side logger for authentication attempts (Logged In & Login Failed).
+ * Bypasses client-side Firestore Rules safely via Admin SDK while enforcing rate limits and caller verification.
+ */
+export const logLoginAttempt = functions.https.onCall(async (
+  data: { status: 'success' | 'failed'; email?: string; reason?: string; role?: string; orgId?: string },
+  context: functions.https.CallableContext
+) => {
+  // 1. Rate limiting check (prevent spam / DoS)
+  const rateLimitKey = context.auth?.uid || (context.rawRequest?.ip as string) || (data?.email || 'anonymous');
+  if (!checkLoginRateLimit(rateLimitKey)) {
+    console.warn(`[SECURITY] logLoginAttempt rate limit exceeded for key '${rateLimitKey}' at ${new Date().toISOString()}`);
+    throw new functions.https.HttpsError('resource-exhausted', 'Too many log requests. Please try again later.');
+  }
+
+  const status = data?.status;
+  if (status !== 'success' && status !== 'failed') {
+    throw new functions.https.HttpsError('invalid-argument', 'Invalid status. Must be "success" or "failed".');
+  }
+
+  const orgId = (data?.orgId || DEFAULT_ORG_ID).replace(/[^a-zA-Z0-9_-]/g, '');
+
+  let userEmail = 'Unknown';
+  let role = data?.role ? String(data.role).slice(0, 50) : undefined;
+  const reason = data?.reason ? String(data.reason).slice(0, 300) : undefined;
+
+  // 2. Validate caller identity
+  if (status === 'success') {
+    // For successful login, caller must be authenticated and email must match caller's token
+    if (!context.auth) {
+      console.warn(`[SECURITY] Spoofed login success attempt rejected: Unauthenticated context at ${new Date().toISOString()}`);
+      throw new functions.https.HttpsError('unauthenticated', 'User must be authenticated to record successful login.');
+    }
+    userEmail = (context.auth.token.email || data?.email || 'unknown').toLowerCase().trim().slice(0, 100);
+  } else {
+    // For failed login, take email from request payload or token (may be non-domain account or unauthenticated)
+    userEmail = (data?.email || context.auth?.token?.email || 'Unknown').toLowerCase().trim().slice(0, 100);
+  }
+
+  const action = status === 'success' ? 'Logged In' : 'Login Failed';
+  let description = '';
+  if (status === 'success') {
+    description = `User logged into the application (${role || 'user'})`;
+  } else {
+    description = `Login attempt failed for ${userEmail}: ${reason || 'Authentication denied'}`;
+  }
+
+  const logId = randomUUID();
+  const logEntry = {
+    id: logId,
+    timestamp: new Date().toISOString(),
+    action,
+    description,
+    user: userEmail,
+    details: reason ? `Reason: ${reason}` : undefined
+  };
+
+  try {
+    const db = getFirestore();
+    const logDocRef = db.doc(`apps/${orgId}/activityLogs/${logId}`);
+    await logDocRef.set(logEntry);
+
+    // Google Cloud Structured Security Log
+    if (status === 'success') {
+      console.log(`[AUDIT] Login successful for '${userEmail}' (${role || 'user'}) at ${logEntry.timestamp}`);
+    } else {
+      console.warn(`[SECURITY] Login failed for '${userEmail}': ${reason || 'Denied'} at ${logEntry.timestamp}`);
+    }
+
+    return {
+      success: true,
+      id: logId,
+      log: logEntry
+    };
+  } catch (error: any) {
+    console.error('Error recording login attempt in logLoginAttempt Cloud Function:', error);
+    throw new functions.https.HttpsError('internal', 'Failed to record login log.');
+  }
+});
+
+/**
  * Scheduled Cloud Function: cleanupOldActivityLogs
  * Runs daily at midnight to delete activity logs and error reports older than 90 days.
  */
@@ -231,11 +332,13 @@ export const getFirestoreUsageStats = functions.https.onCall(async (data: { days
     { key: 'deletes', type: 'firestore.googleapis.com/document/delete_count' }
   ];
 
-  // Helper to format Date to YYYY-MM-DD
+  // Helper to format Date to YYYY-MM-DD in Thailand Timezone (Asia/Bangkok, UTC+7)
   const formatDateKey = (d: Date): string => {
-    const year = d.getFullYear();
-    const month = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
+    // แปลงเป็นเวลาไทย (UTC+7) อย่างชัดเจน ไม่พึ่ง timezone ของเครื่อง server
+    const bangkokTime = new Date(d.getTime() + 7 * 60 * 60 * 1000);
+    const year = bangkokTime.getUTCFullYear();
+    const month = String(bangkokTime.getUTCMonth() + 1).padStart(2, '0');
+    const day = String(bangkokTime.getUTCDate()).padStart(2, '0');
     return `${year}-${month}-${day}`;
   };
 
