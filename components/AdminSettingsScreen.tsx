@@ -127,7 +127,7 @@ export const AdminSettingsScreen: React.FC<AdminSettingsScreenProps> = ({ appDat
       {isAuthorizedAdmin && (
       <div className="mt-8 bg-white p-6 rounded-lg shadow-sm border border-slate-200">
         <h2 className="text-xl font-bold text-slate-800 mb-4 flex items-center">
-            <Icons.Settings className="w-5 h-5 mr-2" /> Data Maintenance (Authorized Admin)
+            <Icons.Settings className="w-5 h-5 mr-2" /> เครื่องมือซ่อมแซมข้อมูลครู/วิชา (สำหรับผู้ดูแลระบบ)
         </h2>
         <div className="flex space-x-4">
             <button 
@@ -145,7 +145,7 @@ export const AdminSettingsScreen: React.FC<AdminSettingsScreenProps> = ({ appDat
                 }}
                 className="bg-orange-500 hover:bg-orange-600 text-white font-medium py-2 px-4 rounded-md transition-colors"
             >
-                Auto-Assign Orphaned Teachers/Subjects to 1st Department
+                จัดกลุ่มสาระให้ครู/วิชาที่ยังไม่มีกลุ่มสาระอัตโนมัติ
             </button>
         </div>
       </div>
