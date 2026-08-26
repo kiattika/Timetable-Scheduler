@@ -2,7 +2,6 @@ import { AppData, Subject, PeriodSetting, User, ScheduleEntry, GradeLevel, Teach
 import { DEFAULT_PERIOD_SETTINGS, PREDEFINED_SUBJECT_COLORS } from './constants';
 import { db, auth } from './lib/firebase';
 import { doc, getDoc, setDoc, deleteDoc, collection, getDocs, writeBatch, query, orderBy, limit, deleteField, runTransaction } from 'firebase/firestore';
-import { recordTelemetry } from './utils/telemetry';
 
 export const ORG_ID = import.meta.env.VITE_ORG_ID || 'utd';
 
@@ -178,14 +177,6 @@ export const fetchAppData = async (orgId: string = ORG_ID): Promise<AppData> => 
       }
     } catch (logErr) {
       console.warn("Subcollection activityLogs notice:", logErr);
-    }
-
-    let totalReads = 0;
-    if (docSnap && docSnap.exists()) totalReads += 1;
-    if (loadedScheduleEntries.length > 0) totalReads += loadedScheduleEntries.length;
-    if (loadedActivityLogs.length > 0) totalReads += loadedActivityLogs.length;
-    if (totalReads > 0) {
-      recordTelemetry('read', totalReads, 'fetchAppData');
     }
 
     if (docSnap && docSnap.exists()) {
@@ -368,18 +359,6 @@ export const saveAppData = async (data: AppData, orgId: string = ORG_ID): Promis
       } catch (logErr: any) {
         console.warn("Subcollection activityLogs sync bypassed (Main doc safely saved):", logErr?.message || logErr);
       }
-    }
-
-    // Record telemetry for write operations
-    try {
-      const approxBytes = new Blob([JSON.stringify(cleanedMainDoc)]).size;
-      const approxMB = +(approxBytes / (1024 * 1024)).toFixed(2);
-      let totalWrites = 1; // Main doc
-      if (Array.isArray(scheduleEntries)) totalWrites += scheduleEntries.length;
-      if (Array.isArray(activityLogs)) totalWrites += Math.min(10, activityLogs.length);
-      recordTelemetry('write', totalWrites, 'saveAppData', approxMB);
-    } catch (e) {
-      // ignore telemetry error
     }
 
   } catch (error: any) {
