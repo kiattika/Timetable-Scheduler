@@ -5,6 +5,7 @@ import { Icons } from '../constants';
 import ConfirmationModal from './ConfirmationModal';
 import { fetchAppData, resetSemesterTimetable, ORG_ID } from '../api';
 import { generateOfficialMemoPdf, generateSchoolOrderPdf } from '../utils/officialDocumentsPdf';
+import { generateOfficialMemoDocx, generateSchoolOrderDocx } from '../utils/officialDocumentsDocx';
 
 interface OrganizationSettingsScreenProps extends ScreenAccessProps {
   organizationSettings: OrganizationSettings | null;
@@ -46,6 +47,7 @@ const OrganizationSettingsScreen: React.FC<OrganizationSettingsScreenProps> = ({
         allowedDomain: '',
         schoolAdminEmail: '',
         orderNumber: '',
+        orderDate: '',
         department: 'กลุ่มบริหารวิชาการ',
         workGroupName: 'กลุ่มงานวิชาการและหลักสูตร',
         proposerName: '',
@@ -497,7 +499,7 @@ const OrganizationSettingsScreen: React.FC<OrganizationSettingsScreenProps> = ({
                 <Icons.FileText size={20} className="mr-2 text-blue-600" /> ข้อมูลสำหรับเอกสารราชการและคำสั่ง
             </legend>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 <div>
                     <label htmlFor="orderNumber" className="block text-sm font-medium text-slate-700 mb-1">
                         เลขที่คำสั่ง
@@ -510,6 +512,19 @@ const OrganizationSettingsScreen: React.FC<OrganizationSettingsScreenProps> = ({
                         onChange={handleInputChange}
                         className="w-full p-2 border border-slate-300 rounded-md focus:ring-blue-500 focus:border-blue-500 shadow-sm"
                         placeholder="เช่น 371/2569"
+                    />
+                </div>
+                <div>
+                    <label htmlFor="orderDate" className="block text-sm font-medium text-slate-700 mb-1">
+                        วันที่ออกคำสั่ง/บันทึกข้อความ
+                    </label>
+                    <input
+                        type="date"
+                        id="orderDate"
+                        name="orderDate"
+                        value={currentSettings.orderDate || ''}
+                        onChange={handleInputChange}
+                        className="w-full p-2 border border-slate-300 rounded-md focus:ring-blue-500 focus:border-blue-500 shadow-sm"
                     />
                 </div>
                 <div>
@@ -784,26 +799,52 @@ const OrganizationSettingsScreen: React.FC<OrganizationSettingsScreenProps> = ({
                 สร้างและดาวน์โหลดเอกสารราชการ A4 แบบฟอร์มมาตรฐาน (ฟอนต์ Sarabun พร้อมตราครุฑ) ตามข้อมูลที่ตั้งค่าไว้
               </p>
             </div>
-            <div className="flex flex-wrap gap-3">
-              <button
-                type="button"
-                onClick={() => generateOfficialMemoPdf(currentSettings as OrganizationSettings)}
-                className="inline-flex items-center gap-2 px-4 py-2.5 bg-white hover:bg-slate-50 text-indigo-700 font-medium rounded-lg border border-indigo-300 shadow-sm transition-all hover:shadow cursor-pointer"
-                title="พิมพ์บันทึกข้อความขออนุมัติคำสั่งสอน (A4 แนวตั้ง 4 ลำดับเซ็น)"
-              >
-                <Icons.FileText size={18} className="text-indigo-600" />
-                <span>พิมพ์บันทึกข้อความ (PDF)</span>
-              </button>
+            <div className="flex flex-col sm:flex-row flex-wrap items-stretch sm:items-center gap-3">
+              {/* กลุ่มบันทึกข้อความ */}
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => generateOfficialMemoPdf(currentSettings as OrganizationSettings)}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2.5 bg-white hover:bg-slate-50 text-indigo-700 font-medium rounded-lg border border-indigo-300 shadow-sm transition-all hover:shadow cursor-pointer text-sm"
+                  title="พิมพ์บันทึกข้อความขออนุมัติคำสั่งสอน (A4 แนวตั้ง PDF)"
+                >
+                  <Icons.FileText size={17} className="text-indigo-600" />
+                  <span>พิมพ์บันทึกข้อความ (PDF)</span>
+                </button>
 
-              <button
-                type="button"
-                onClick={() => generateSchoolOrderPdf(currentSettings as OrganizationSettings)}
-                className="inline-flex items-center gap-2 px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-medium rounded-lg shadow-sm transition-all hover:shadow cursor-pointer"
-                title="พิมพ์คำสั่งปฏิบัติหน้าที่สอน (A4 แนวตั้ง ลงนามโดย ผอ.)"
-              >
-                <Icons.FileText size={18} className="text-indigo-100" />
-                <span>พิมพ์คำสั่ง (PDF)</span>
-              </button>
+                <button
+                  type="button"
+                  onClick={() => generateOfficialMemoDocx(currentSettings as OrganizationSettings)}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2.5 bg-blue-50 hover:bg-blue-100 text-blue-800 font-medium rounded-lg border border-blue-300 shadow-sm transition-all hover:shadow cursor-pointer text-sm"
+                  title="ดาวน์โหลดบันทึกข้อความขออนุมัติคำสั่งสอน (Word .docx)"
+                >
+                  <Icons.Download size={17} className="text-blue-700" />
+                  <span>ดาวน์โหลดบันทึกข้อความ (Word)</span>
+                </button>
+              </div>
+
+              {/* กลุ่มคำสั่ง */}
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => generateSchoolOrderPdf(currentSettings as OrganizationSettings)}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-medium rounded-lg shadow-sm transition-all hover:shadow cursor-pointer text-sm"
+                  title="พิมพ์คำสั่งปฏิบัติหน้าที่สอน (A4 แนวตั้ง PDF)"
+                >
+                  <Icons.FileText size={17} className="text-indigo-100" />
+                  <span>พิมพ์คำสั่ง (PDF)</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => generateSchoolOrderDocx(currentSettings as OrganizationSettings)}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-800 font-medium rounded-lg border border-indigo-300 shadow-sm transition-all hover:shadow cursor-pointer text-sm"
+                  title="ดาวน์โหลดคำสั่งปฏิบัติหน้าที่สอน (Word .docx)"
+                >
+                  <Icons.Download size={17} className="text-indigo-700" />
+                  <span>ดาวน์โหลดคำสั่ง (Word)</span>
+                </button>
+              </div>
             </div>
           </div>
           

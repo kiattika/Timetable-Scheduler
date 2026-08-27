@@ -18,6 +18,7 @@ import PrintWithOptionsModal from './components/PrintWithOptionsModal';
 import { TeacherLoadReportScreen } from './components/TeacherLoadReportScreen';
 import { AdminSettingsScreen } from './components/AdminSettingsScreen';
 import { SystemHealthScreen } from './components/SystemHealthScreen';
+import { exportScheduleGridPdf } from './utils/schedulePdfExport';
 import { GradeLevelScheduleTable } from './components/GradeLevelPlannerView';
 import { TeacherScheduleTable } from './components/TeacherScheduleView';
 import { RoomUsageScheduleTable } from './components/RoomUsageView';
@@ -445,8 +446,15 @@ const App: React.FC = () => {
 
   const handleActualPrint = (options: PrintOptions) => {
     if (!appData) return;
-    setPrintJob(options);
     setIsPrintOptionsModalOpen(false);
+    if (options.outputFormat === 'pdf') {
+      exportScheduleGridPdf(appData, options, getEntryDisplay).catch(err => {
+        console.error('Failed to export schedule PDF:', err);
+        alert('เกิดข้อผิดพลาดในการสร้างไฟล์ PDF');
+      });
+    } else {
+      setPrintJob(options);
+    }
   };
 
 

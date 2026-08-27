@@ -18,12 +18,33 @@ import {
   ShadingType,
   Header,
   Footer,
-  PageNumber
+  PageNumber,
+  ImageRun
 } from 'docx';
 import { saveAs } from 'file-saver';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { SARABUN_REGULAR_BASE64, SARABUN_BOLD_BASE64 } from '../utils/sarabunFont';
+
+function getImageTypeAndData(base64Str?: string): { data: Uint8Array; type: 'png' | 'jpg' } | null {
+  if (!base64Str || typeof base64Str !== 'string' || !base64Str.startsWith('data:image')) return null;
+  try {
+    const isJpeg = base64Str.startsWith('data:image/jpeg') || base64Str.startsWith('data:image/jpg');
+    const type: 'png' | 'jpg' = isJpeg ? 'jpg' : 'png';
+    const commaIdx = base64Str.indexOf(',');
+    const raw = commaIdx >= 0 ? base64Str.slice(commaIdx + 1) : base64Str;
+    const binary = atob(raw);
+    const len = binary.length;
+    const bytes = new Uint8Array(len);
+    for (let i = 0; i < len; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return { data: bytes, type };
+  } catch (err) {
+    console.warn('Unable to decode base64 image for docx:', err);
+    return null;
+  }
+}
 
 interface TeacherLoadReportScreenProps {
   appData: AppData;
@@ -257,6 +278,7 @@ export const TeacherLoadReportScreen: React.FC<TeacherLoadReportScreenProps> = (
       const deputyDirectorPosition = organizationSettings?.deputyDirectorPosition || 'รองผู้อำนวยการกลุ่มบริหารวิชาการ';
       const directorName = organizationSettings?.directorName || '......................................................';
       const directorPosition = organizationSettings?.directorPosition || `ผู้อำนวยการโรงเรียน${schoolName}`;
+      const logoInfo = getImageTypeAndData(organizationSettings?.logoUrl);
 
       const pageMarginDxa = 800; // ~14mm margin for max table space
       const pageLandscapeWidthDxa = 16838; // 297mm in DXA
@@ -267,14 +289,14 @@ export const TeacherLoadReportScreen: React.FC<TeacherLoadReportScreenProps> = (
       // 2. ที่ (3%)
       // 3. ชื่อ-สกุล (14%)
       // 4. ประจำชั้น (7%)
-      // 5. ลำดับวิชา (4%)
+      // 5. ลำดับ (4%)
       // 6. รหัสวิชา (7%)
-      // 7. ชื่อรายวิชา (22%)
-      // 8. คาบ/ห้อง (10%)
-      // 9. วัน-คาบที่สอน (10%)
+      // 7. ชื่อรายวิชา (17%) - narrowed
+      // 8. คาบ/ห้อง (9%)
+      // 9. วัน-คาบที่สอน (16%) - widened
       // 10. ระดับ (6%)
       // 11. สรุปคาบ (4%)
-      const colPercentages = [13, 3, 14, 7, 4, 7, 22, 10, 10, 6, 4];
+      const colPercentages = [13, 3, 14, 7, 4, 7, 17, 9, 16, 6, 4];
       const colWidths = colPercentages.map((pct, idx) => {
         if (idx === colPercentages.length - 1) {
           const sumPrev = colPercentages.slice(0, idx).reduce((sum, p) => sum + Math.round((p / 100) * usableWidthDxa), 0);
@@ -299,7 +321,7 @@ export const TeacherLoadReportScreen: React.FC<TeacherLoadReportScreenProps> = (
 
       const tableHeaderTitles = [
         'กลุ่มสาระ', 'ที่', 'ชื่อ-สกุล', 'ประจำชั้น',
-        'ลำดับวิชา', 'รหัสวิชา', 'ชื่อรายวิชา', 'คาบ/ห้อง', 'วัน-คาบที่สอน', 'ระดับ', 'สรุปคาบ'
+        'ลำดับ', 'รหัสวิชา', 'ชื่อรายวิชา', 'คาบ/ห้อง', 'วัน-คาบที่สอน', 'ระดับ', 'สรุปคาบ'
       ];
 
       const headerRow = new TableRow({
@@ -309,7 +331,7 @@ export const TeacherLoadReportScreen: React.FC<TeacherLoadReportScreenProps> = (
           shading: { fill: 'F1F5F9', type: ShadingType.CLEAR },
           children: [new Paragraph({
             alignment: AlignmentType.CENTER,
-            children: [new TextRun({ text: title, bold: true, size: 17, font: 'TH Sarabun New' })]
+            children: [new TextRun({ text: title, bold: true, size: 21, font: 'TH Sarabun New' })]
           })]
         }))
       });
@@ -338,7 +360,7 @@ export const TeacherLoadReportScreen: React.FC<TeacherLoadReportScreenProps> = (
               width: { size: colWidths[idx], type: WidthType.DXA },
               children: [new Paragraph({
                 alignment: idx === 2 || idx === 6 ? AlignmentType.LEFT : AlignmentType.CENTER,
-                children: [new TextRun({ text: cellText, size: 16, font: 'TH Sarabun New' })]
+                children: [new TextRun({ text: cellText, size: 20, font: 'TH Sarabun New' })]
               })]
             }))
           }));
@@ -363,7 +385,7 @@ export const TeacherLoadReportScreen: React.FC<TeacherLoadReportScreenProps> = (
               width: { size: colWidths[idx], type: WidthType.DXA },
               children: [new Paragraph({
                 alignment: idx === 2 ? AlignmentType.LEFT : (idx === 6 ? AlignmentType.CENTER : AlignmentType.CENTER),
-                children: [new TextRun({ text: cellText, size: 16, font: 'TH Sarabun New', italics: idx === 6 })]
+                children: [new TextRun({ text: cellText, size: 20, font: 'TH Sarabun New', italics: idx === 6 })]
               })]
             }))
           }));
@@ -385,7 +407,7 @@ export const TeacherLoadReportScreen: React.FC<TeacherLoadReportScreenProps> = (
                 children: [new TextRun({
                   text: `รวมคาบสอน (วิชาหลัก: ${row.totalMain}, กิจกรรม: ${row.totalActivity})`,
                   bold: true,
-                  size: 16,
+                  size: 20,
                   font: 'TH Sarabun New'
                 })]
               })]
@@ -398,7 +420,7 @@ export const TeacherLoadReportScreen: React.FC<TeacherLoadReportScreenProps> = (
                 children: [new TextRun({
                   text: String(row.grandTotal),
                   bold: true,
-                  size: 16,
+                  size: 20,
                   font: 'TH Sarabun New'
                 })]
               })]
@@ -406,6 +428,55 @@ export const TeacherLoadReportScreen: React.FC<TeacherLoadReportScreenProps> = (
           ]
         }));
       });
+
+      const headerCells: TableCell[] = [];
+      if (logoInfo) {
+        headerCells.push(new TableCell({
+          width: { size: 600, type: WidthType.DXA },
+          children: [
+            new Paragraph({
+              children: [
+                new ImageRun({
+                  data: logoInfo.data,
+                  transformation: { width: 34, height: 34 },
+                  type: logoInfo.type
+                })
+              ]
+            })
+          ]
+        }));
+      }
+
+      headerCells.push(new TableCell({
+        width: { size: logoInfo ? usableWidthDxa - 600 - Math.round(usableWidthDxa * 0.15) : Math.round(usableWidthDxa * 0.85), type: WidthType.DXA },
+        children: [
+          new Paragraph({
+            children: [
+              new TextRun({
+                text: `ตารางแนบท้ายประกอบคำสั่ง${schoolName} ที่ ${orderNumber} เรื่อง แต่งตั้งและมอบหมายให้ข้าราชการครูและลูกจ้างปฏิบัติหน้าที่สอน ภาคเรียนที่ ${semester} ปีการศึกษา ${academicYear}`,
+                bold: true,
+                size: 22,
+                font: 'TH Sarabun New'
+              })
+            ]
+          })
+        ]
+      }));
+
+      headerCells.push(new TableCell({
+        width: { size: Math.round(usableWidthDxa * 0.15), type: WidthType.DXA },
+        children: [
+          new Paragraph({
+            alignment: AlignmentType.RIGHT,
+            children: [
+              new TextRun({ text: 'หน้า ', size: 22, font: 'TH Sarabun New' }),
+              new TextRun({ children: [PageNumber.CURRENT], size: 22, font: 'TH Sarabun New' }),
+              new TextRun({ text: ' / ', size: 22, font: 'TH Sarabun New' }),
+              new TextRun({ children: [PageNumber.TOTAL_PAGES], size: 22, font: 'TH Sarabun New' })
+            ]
+          })
+        ]
+      }));
 
       const doc = new Document({
         sections: [{
@@ -430,37 +501,7 @@ export const TeacherLoadReportScreen: React.FC<TeacherLoadReportScreenProps> = (
                   },
                   rows: [
                     new TableRow({
-                      children: [
-                        new TableCell({
-                          width: { size: Math.round(usableWidthDxa * 0.85), type: WidthType.DXA },
-                          children: [
-                            new Paragraph({
-                              children: [
-                                new TextRun({
-                                  text: `ตารางแนบท้ายประกอบคำสั่ง${schoolName} ที่ ${orderNumber} เรื่อง แต่งตั้งและมอบหมายให้ข้าราชการครูและลูกจ้างปฏิบัติหน้าที่สอน ภาคเรียนที่ ${semester} ปีการศึกษา ${academicYear}`,
-                                  bold: true,
-                                  size: 18,
-                                  font: 'TH Sarabun New'
-                                })
-                              ]
-                            })
-                          ]
-                        }),
-                        new TableCell({
-                          width: { size: Math.round(usableWidthDxa * 0.15), type: WidthType.DXA },
-                          children: [
-                            new Paragraph({
-                              alignment: AlignmentType.RIGHT,
-                              children: [
-                                new TextRun({ text: 'หน้า ', size: 18, font: 'TH Sarabun New' }),
-                                new TextRun({ children: [PageNumber.CURRENT], size: 18, font: 'TH Sarabun New' }),
-                                new TextRun({ text: ' / ', size: 18, font: 'TH Sarabun New' }),
-                                new TextRun({ children: [PageNumber.TOTAL_PAGES], size: 18, font: 'TH Sarabun New' })
-                              ]
-                            })
-                          ]
-                        })
-                      ]
+                      children: headerCells
                     })
                   ]
                 })
@@ -488,19 +529,18 @@ export const TeacherLoadReportScreen: React.FC<TeacherLoadReportScreenProps> = (
                           children: [
                             new Paragraph({
                               alignment: AlignmentType.CENTER,
-                              children: [new TextRun({ text: '(ลงชื่อ)......................................................', size: 17, font: 'TH Sarabun New' })]
+                              children: [
+                                new TextRun({ text: '(ลงชื่อ)...................................................... ', size: 21, font: 'TH Sarabun New' }),
+                                new TextRun({ text: 'ผู้เห็นชอบ', bold: true, size: 21, font: 'TH Sarabun New' })
+                              ]
                             }),
                             new Paragraph({
                               alignment: AlignmentType.CENTER,
-                              children: [new TextRun({ text: `(${deputyDirectorName})`, size: 17, font: 'TH Sarabun New' })]
+                              children: [new TextRun({ text: `(${deputyDirectorName})`, size: 21, font: 'TH Sarabun New' })]
                             }),
                             new Paragraph({
                               alignment: AlignmentType.CENTER,
-                              children: [new TextRun({ text: deputyDirectorPosition, size: 17, font: 'TH Sarabun New' })]
-                            }),
-                            new Paragraph({
-                              alignment: AlignmentType.CENTER,
-                              children: [new TextRun({ text: 'ผู้เห็นชอบ', bold: true, size: 17, font: 'TH Sarabun New' })]
+                              children: [new TextRun({ text: deputyDirectorPosition, size: 21, font: 'TH Sarabun New' })]
                             })
                           ]
                         }),
@@ -509,19 +549,18 @@ export const TeacherLoadReportScreen: React.FC<TeacherLoadReportScreenProps> = (
                           children: [
                             new Paragraph({
                               alignment: AlignmentType.CENTER,
-                              children: [new TextRun({ text: '(ลงชื่อ)......................................................', size: 17, font: 'TH Sarabun New' })]
+                              children: [
+                                new TextRun({ text: '(ลงชื่อ)...................................................... ', size: 21, font: 'TH Sarabun New' }),
+                                new TextRun({ text: 'ผู้อนุมัติ', bold: true, size: 21, font: 'TH Sarabun New' })
+                              ]
                             }),
                             new Paragraph({
                               alignment: AlignmentType.CENTER,
-                              children: [new TextRun({ text: `(${directorName})`, size: 17, font: 'TH Sarabun New' })]
+                              children: [new TextRun({ text: `(${directorName})`, size: 21, font: 'TH Sarabun New' })]
                             }),
                             new Paragraph({
                               alignment: AlignmentType.CENTER,
-                              children: [new TextRun({ text: directorPosition, size: 17, font: 'TH Sarabun New' })]
-                            }),
-                            new Paragraph({
-                              alignment: AlignmentType.CENTER,
-                              children: [new TextRun({ text: 'ผู้อนุมัติ', bold: true, size: 17, font: 'TH Sarabun New' })]
+                              children: [new TextRun({ text: directorPosition, size: 21, font: 'TH Sarabun New' })]
                             })
                           ]
                         })
@@ -575,7 +614,7 @@ export const TeacherLoadReportScreen: React.FC<TeacherLoadReportScreenProps> = (
       const pageWidth = doc.internal.pageSize.getWidth(); // 297mm
       const pageHeight = doc.internal.pageSize.getHeight(); // 210mm
 
-      const head = [['กลุ่มสาระ', 'ที่', 'ชื่อ-สกุล', 'ประจำชั้น', 'ลำดับวิชา', 'รหัสวิชา', 'ชื่อรายวิชา', 'คาบ/ห้อง', 'วัน-คาบที่สอน', 'ระดับ', 'สรุปคาบ']];
+      const head = [['กลุ่มสาระ', 'ที่', 'ชื่อ-สกุล', 'ประจำชั้น', 'ลำดับ', 'รหัสวิชา', 'ชื่อรายวิชา', 'คาบ/ห้อง', 'วัน-คาบที่สอน', 'ระดับ', 'สรุปคาบ']];
       const body: any[] = [];
 
       reportData.forEach((row) => {
@@ -651,17 +690,17 @@ export const TeacherLoadReportScreen: React.FC<TeacherLoadReportScreenProps> = (
           valign: 'middle'
         },
         columnStyles: {
-          0: { cellWidth: 28, halign: 'center' },
-          1: { cellWidth: 10, halign: 'center' },
-          2: { cellWidth: 36, halign: 'left' },
+          0: { cellWidth: 26, halign: 'center' },
+          1: { cellWidth: 8, halign: 'center' },
+          2: { cellWidth: 34, halign: 'left' },
           3: { cellWidth: 20, halign: 'center' },
           4: { cellWidth: 12, halign: 'center' },
           5: { cellWidth: 16, halign: 'center' },
-          6: { cellWidth: 'auto', halign: 'left' },
-          7: { cellWidth: 26, halign: 'center' },
-          8: { cellWidth: 26, halign: 'center' },
-          9: { cellWidth: 18, halign: 'center' },
-          10: { cellWidth: 16, halign: 'center' }
+          6: { cellWidth: 46, halign: 'left' },
+          7: { cellWidth: 24, halign: 'center' },
+          8: { cellWidth: 42, halign: 'center' },
+          9: { cellWidth: 15, halign: 'center' },
+          10: { cellWidth: 14, halign: 'center' }
         },
         margin: { top: 23, bottom: 30, left: 12, right: 12 },
         didDrawPage: () => {
@@ -686,22 +725,17 @@ export const TeacherLoadReportScreen: React.FC<TeacherLoadReportScreenProps> = (
           doc.setFont('Sarabun', 'normal');
           doc.setFontSize(8.5);
 
-          // Left column: Deputy Director (Sign & Approval)
+          // Left column: Deputy Director (Sign & Approval on same line)
           const leftCenter = 75;
-          doc.text('(ลงชื่อ)......................................................', leftCenter, footerTopY, { align: 'center' });
-          doc.text(`(${deputyDirectorName})`, leftCenter, footerTopY + 4.5, { align: 'center' });
-          doc.text(deputyDirectorPosition, leftCenter, footerTopY + 9, { align: 'center' });
-          doc.setFont('Sarabun', 'bold');
-          doc.text('ผู้เห็นชอบ', leftCenter, footerTopY + 13.5, { align: 'center' });
+          doc.text('(ลงชื่อ)...................................................... ผู้เห็นชอบ', leftCenter, footerTopY, { align: 'center' });
+          doc.text(`(${deputyDirectorName})`, leftCenter, footerTopY + 5, { align: 'center' });
+          doc.text(deputyDirectorPosition, leftCenter, footerTopY + 10, { align: 'center' });
 
-          // Right column: Director (Sign & Approval)
+          // Right column: Director (Sign & Approval on same line)
           const rightCenter = 222;
-          doc.setFont('Sarabun', 'normal');
-          doc.text('(ลงชื่อ)......................................................', rightCenter, footerTopY, { align: 'center' });
-          doc.text(`(${directorName})`, rightCenter, footerTopY + 4.5, { align: 'center' });
-          doc.text(directorPosition, rightCenter, footerTopY + 9, { align: 'center' });
-          doc.setFont('Sarabun', 'bold');
-          doc.text('ผู้อนุมัติ', rightCenter, footerTopY + 13.5, { align: 'center' });
+          doc.text('(ลงชื่อ)...................................................... ผู้อนุมัติ', rightCenter, footerTopY, { align: 'center' });
+          doc.text(`(${directorName})`, rightCenter, footerTopY + 5, { align: 'center' });
+          doc.text(directorPosition, rightCenter, footerTopY + 10, { align: 'center' });
         }
       });
 

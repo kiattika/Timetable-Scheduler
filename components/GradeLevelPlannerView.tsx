@@ -6,6 +6,16 @@ import { DAYS_OF_WEEK_ORDERED, Icons } from '../constants';
 import { isParentGrade as checkIsParentGradeUtil, getParentGradeLevelId as getParentIdUtil } from './scheduleUtils';
 import Modal from './Modal';
 
+export const THAI_DAYS: Record<string, string> = {
+  'Monday': 'จันทร์',
+  'Tuesday': 'อังคาร',
+  'Wednesday': 'พุธ',
+  'Thursday': 'พฤหัสบดี',
+  'Friday': 'ศุกร์',
+  'Saturday': 'เสาร์',
+  'Sunday': 'อาทิตย์',
+};
+
 type TableView = 'daysAsCols' | 'periodsAsCols';
 
 // Extracted table rendering logic for use in batch printing
@@ -201,18 +211,32 @@ export const GradeLevelScheduleTable: React.FC<SingleScheduleTableProps & {
                   title={titleText}
                 >
                   {isPrint ? (
-                    <div className="flex flex-col items-center justify-center text-center overflow-hidden w-full h-full">
-                       <div className="font-bold text-[10px] leading-tight text-slate-900 truncate w-full px-0.5">
-                          {displayData?.subject?.subjectCode || displayData?.subject?.name}
+                    <div className="flex flex-col items-center justify-center text-center overflow-hidden w-full h-full py-0.5">
+                       {/* Line 1: Subject */}
+                       <div className="font-bold text-[8.5px] leading-tight text-slate-900 truncate w-full px-0.5">
+                          {displayData?.subject?.subjectCode || displayData?.subject?.name || '-'}
                        </div>
-                       {entry.cohort && (
-                          <div className="text-[9px] text-blue-600 font-medium truncate w-full px-0.5">({entry.cohort})</div>
-                       )}
-                       <div className="text-[9px] leading-tight text-slate-800 font-medium truncate w-full px-0.5">
-                          {teacherNames}
+                       {/* Line 2: Teacher #1 */}
+                       <div className="text-[7.5px] leading-tight text-slate-800 font-medium truncate w-full px-0.5">
+                          {displayData?.teachers && displayData.teachers.length > 0 ? displayData.teachers[0].name : '-'}
                        </div>
-                       <div className="text-[9px] leading-tight text-slate-800 font-medium truncate w-full px-0.5">
-                          {formatRoomShort(displayData?.physicalRoom)}
+                       {/* Line 3: Teacher #2 (or Teacher #2 + และทีม, or cohort/blank) */}
+                       <div className="text-[7.5px] leading-tight text-slate-800 font-medium truncate w-full px-0.5">
+                          {(() => {
+                            const teachers = displayData?.teachers || [];
+                            if (teachers.length === 2) {
+                              return teachers[1].name;
+                            } else if (teachers.length > 2) {
+                              return `${teachers[1].name} และทีม`;
+                            } else if (entry.cohort) {
+                              return `(${entry.cohort})`;
+                            }
+                            return '\u00A0';
+                          })()}
+                       </div>
+                       {/* Line 4: Room */}
+                       <div className="text-[7.5px] leading-tight text-slate-700 font-medium truncate w-full px-0.5">
+                          {formatRoomShort(displayData?.physicalRoom) || '\u00A0'}
                        </div>
                     </div>
                   ) : (
@@ -299,34 +323,40 @@ export const GradeLevelScheduleTable: React.FC<SingleScheduleTableProps & {
                     {period.label}
                   </th>
                 ))
-              : displayDays.map(day => ( 
-                  <th key={day} scope="col" className="px-2 py-2 text-center text-xs font-semibold text-slate-600 uppercase tracking-wider min-w-0" title={day}>
-                    {isPrint ? day : (
-                      <>
-                        <span className="print:hidden">{day.substring(0, 3)}</span>
-                        <span className="hidden print:inline">{day}</span>
-                      </>
-                    )}
-                  </th>
-                ))
+              : displayDays.map(day => {
+                  const thaiDay = THAI_DAYS[day] || day;
+                  return ( 
+                    <th key={day} scope="col" className="px-2 py-2 text-center text-xs font-semibold text-slate-600 uppercase tracking-wider min-w-0" title={day}>
+                      {isPrint ? <span className="text-sm font-bold text-slate-900">{thaiDay}</span> : (
+                        <>
+                          <span className="print:hidden">{thaiDay}</span>
+                          <span className="hidden print:inline text-sm font-bold">{thaiDay}</span>
+                        </>
+                      )}
+                    </th>
+                  );
+                })
               }
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-200">
           {tableView === 'daysAsCols' 
-            ? displayDays.map(day => (
+            ? displayDays.map(day => {
+                const thaiDay = THAI_DAYS[day] || day;
+                return (
                 <tr key={day}>
                   <td className="sticky left-0 bg-white px-2 py-2 text-xs font-semibold text-slate-700 text-center border-r border-slate-300 z-10" title={day}>
-                    {isPrint ? day : (
+                    {isPrint ? <span className="text-sm md:text-base font-bold text-slate-900">{thaiDay}</span> : (
                       <>
-                        <span className="print:hidden">{day.substring(0, 3)}</span>
-                        <span className="hidden print:inline">{day}</span>
+                        <span className="print:hidden">{thaiDay}</span>
+                        <span className="hidden print:inline text-sm md:text-base font-bold">{thaiDay}</span>
                       </>
                     )}
                   </td>
                   {periodSettings.map((_, periodIndex) => renderTableCellForBatch(day, periodIndex))}
                 </tr>
-              ))
+              );
+            })
             : periodSettings.map((period, periodIndex) => ( 
                 <tr key={`period-row-${periodIndex}`}>
                   <td className="sticky left-0 bg-white px-2 py-2 text-xs font-semibold text-slate-700 text-center border-r border-slate-300 z-10"

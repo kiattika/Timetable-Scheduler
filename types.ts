@@ -120,6 +120,7 @@ export interface OrganizationSettings {
   allowedDomain?: string; // โดเมนที่อนุญาต
   schoolAdminEmail?: string; // อีเมลแอดมินโรงเรียน
   orderNumber?: string; // เลขที่คำสั่ง เช่น "371/2569"
+  orderDate?: string; // วันที่ออกคำสั่ง เก็บเป็น string ISO เช่น "2026-08-27"
   department?: string; // กลุ่มบริหาร/กลุ่มงาน เช่น "กลุ่มบริหารวิชาการ"
   workGroupName?: string; // ชื่อกลุ่มงานเต็ม เช่น "กลุ่มงานวิชาการและหลักสูตร"
   proposerName?: string; // ชื่อผู้เสนอ (หัวหน้างานจัดตารางสอน)
@@ -293,6 +294,7 @@ export interface SlotAvailabilityInspectorModalProps {
 export type PrintItemScope = 'current' | 'all' | 'selected';
 export type PrintLayoutOption = '1_per_page' | '1x2_per_page' | '2x2_per_page' | '2x3_per_page' | '2x4_per_page';
 export type PrintOrientation = 'portrait' | 'landscape';
+export type PrintOutputFormat = 'print' | 'pdf';
 
 export interface PrintOptions {
   itemType: 'teacher' | 'gradeLevel' | 'classroom' | 'physicalRoom';
@@ -300,6 +302,7 @@ export interface PrintOptions {
   selectedItemIds: string[]; // IDs of teachers, grade levels, or classrooms to print
   layout: PrintLayoutOption;
   orientation: PrintOrientation;
+  outputFormat?: PrintOutputFormat;
 }
 
 // Props for PrintWithOptionsModal

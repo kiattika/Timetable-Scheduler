@@ -80,36 +80,45 @@ export const PrintLayout: React.FC<PrintLayoutProps> = ({ appData, printOptions,
       `}</style>
       
       {itemsToRender.map(item => {
-        let rightSideText = '';
+        let scheduleTypeTitle = 'ตารางสอน';
+        let line2Text = '';
         if (itemType === 'teacher') {
             const teacher = item as Teacher;
-            rightSideText = `ครูผู้สอน: ${teacher.name || 'N/A'}`;
+            scheduleTypeTitle = 'ตารางสอนรายบุคคล';
+            const codePrefix = teacher.teacherCode ? `${teacher.teacherCode} ` : '';
+            const deptSuffix = teacher.department ? ` (กลุ่มสาระฯ${teacher.department})` : '';
+            line2Text = `ครูผู้สอน: ${codePrefix}${teacher.name || 'N/A'}${deptSuffix}`;
         } else if (itemType === 'gradeLevel') {
             const grade = item as GradeLevel;
+            scheduleTypeTitle = 'ตารางเรียนประจำชั้น';
             let classInfo = grade.name || 'N/A';
             if (grade.homeroomPhysicalRoomId && !checkIsParentGradeUtil(grade.id, appData.gradeLevels)) {
                 const cl = appData.physicalRooms.find(c => c.id === grade.homeroomPhysicalRoomId);
                 if (cl?.name) {
-                    classInfo += ` (${cl.name})`;
+                    classInfo += ` (ห้อง ${cl.name})`;
                 }
             }
-            rightSideText = `ระดับชั้น/ห้อง: ${classInfo}`;
+            line2Text = `ระดับชั้น/ห้อง: ${classInfo}`;
         } else if (itemType === 'physicalRoom') {
             const room = item as PhysicalRoom;
-            rightSideText = `ห้องเรียน: ${room.name || 'N/A'}`;
+            scheduleTypeTitle = 'ตารางการใช้ห้องเรียน';
+            const roomCodeSuffix = room.code ? ` (${room.code})` : '';
+            line2Text = `ห้องเรียน: ${room.name || 'N/A'}${roomCodeSuffix}`;
         }
 
         return (
-          <div key={item.id} className="printed-item-container mb-10 pb-5" style={{ pageBreakInside: layout === '1x2_per_page' ? 'avoid' : 'auto', pageBreakAfter: layout === '1_per_page' ? 'always' : 'auto' }}>
-            <div className={`schedule-print-header-base ${itemType}-schedule-print-header border-b-2 border-black pb-1 mb-2.5 flex justify-between items-center`}>
-              <div className="flex flex-col items-start justify-center">
-                  {logoUrl && <img src={logoUrl} alt="School Logo" className="h-12 mb-1" />}
-                  <div className="text-lg font-bold">
-                      {orgName} <span className="font-normal mx-1">|</span> ภาคเรียนที่ {semester} ปีการศึกษา {academicYear}
-                  </div>
-              </div>
-              <div className="text-lg font-bold">
-                  {rightSideText}
+          <div key={item.id} className="printed-item-container mb-8 pb-4" style={{ pageBreakInside: layout === '1x2_per_page' ? 'avoid' : 'auto', pageBreakAfter: layout === '1_per_page' ? 'always' : 'auto' }}>
+            <div className={`schedule-print-header-base ${itemType}-schedule-print-header border-b-2 border-slate-900 pb-2 mb-2.5 flex items-center gap-3`}>
+              {logoUrl && (
+                <img src={logoUrl} alt="School Logo" className="h-14 w-14 object-contain shrink-0" />
+              )}
+              <div className="flex flex-col justify-center flex-1 min-w-0">
+                <div className="text-base font-bold text-slate-900 leading-tight">
+                  {orgName} <span className="font-normal mx-1">|</span> {scheduleTypeTitle} <span className="font-normal mx-1">|</span> ภาคเรียนที่ {semester} ปีการศึกษา {academicYear}
+                </div>
+                <div className="text-sm font-semibold text-slate-800 leading-tight mt-0.5">
+                  {line2Text}
+                </div>
               </div>
             </div>
             
@@ -119,16 +128,16 @@ export const PrintLayout: React.FC<PrintLayoutProps> = ({ appData, printOptions,
               {itemType === 'physicalRoom' && <RoomUsageScheduleTable {...commonTableProps} itemId={item.id} />}
             </div>
 
-            <div className="teacher-schedule-print-footer mt-8 mb-4 border-t border-dashed border-gray-300 pt-4 flex justify-between text-center" style={{ pageBreakInside: 'avoid' }}>
+            <div className="teacher-schedule-print-footer mt-6 mb-2 border-t border-dashed border-slate-300 pt-3 flex justify-between text-center text-xs" style={{ pageBreakInside: 'avoid' }}>
                 <div className="w-[45%] text-center px-4">
                     <div className="mb-1 leading-snug">ลงชื่อ ........................................................ ผู้เสนออนุมัติ</div>
                     <div className="mb-1 leading-snug">({academicDirectorName || '........................................................'})</div>
-                    <div className="leading-snug">{academicDirectorTitle}</div>
+                    <div className="leading-snug text-slate-700">{academicDirectorTitle}</div>
                 </div>
                 <div className="w-[45%] text-center px-4">
                     <div className="mb-1 leading-snug">ลงชื่อ ........................................................ ผู้อนุมัติ</div>
                     <div className="mb-1 leading-snug">({schoolDirectorName || '........................................................'})</div>
-                    <div className="leading-snug">{schoolDirectorTitle}</div>
+                    <div className="leading-snug text-slate-700">{schoolDirectorTitle}</div>
                 </div>
             </div>
           </div>

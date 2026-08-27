@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { PrintWithOptionsModalProps, PrintOptions, PrintItemScope, PrintLayoutOption, PrintOrientation, Identifiable, AppData } from '../types';
+import { PrintWithOptionsModalProps, PrintOptions, PrintItemScope, PrintLayoutOption, PrintOrientation, PrintOutputFormat, Identifiable, AppData } from '../types';
 import Modal from './Modal';
 import { Icons } from '../constants';
 
@@ -16,6 +16,7 @@ const PrintWithOptionsModal: React.FC<PrintWithOptionsModalProps> = ({
   const [scope, setScope] = useState<PrintItemScope>('current');
   const [layout, setLayout] = useState<PrintLayoutOption>('1_per_page');
   const [orientation, setOrientation] = useState<PrintOrientation>('landscape');
+  const [outputFormat, setOutputFormat] = useState<PrintOutputFormat>('print');
   const [selectedItems, setSelectedItems] = useState<string[]>([]);
 
   useEffect(() => {
@@ -39,9 +40,8 @@ const PrintWithOptionsModal: React.FC<PrintWithOptionsModalProps> = ({
       setSelectedItems(allItems.map(item => item.id));
     } else {
       // For 'selected', keep current selections or clear if switching from 'all'/'current'
-      // This logic might need adjustment based on desired UX for 'selected' scope
-      if (scope !== 'selected') { // If changing TO 'selected' from something else
-         setSelectedItems([]); // Start fresh for 'selected'
+      if (scope !== 'selected') {
+         setSelectedItems([]);
       }
     }
   };
@@ -54,7 +54,7 @@ const PrintWithOptionsModal: React.FC<PrintWithOptionsModalProps> = ({
 
   const handleSubmit = () => {
     if (selectedItems.length === 0 && (scope === 'selected' || (scope === 'current' && !currentItemId) )) {
-        alert(`Please select at least one ${itemType} to print.`);
+        alert(`กรุณาเลือกรายการที่ต้องการพิมพ์อย่างน้อย 1 รายการ`);
         return;
     }
     onConfirmPrint({
@@ -63,6 +63,7 @@ const PrintWithOptionsModal: React.FC<PrintWithOptionsModalProps> = ({
       selectedItemIds: scope === 'current' && currentItemId ? [currentItemId] : (scope === 'all' ? allItems.map(i => i.id) : selectedItems),
       layout,
       orientation,
+      outputFormat,
     });
     onClose();
   };
@@ -79,15 +80,46 @@ const PrintWithOptionsModal: React.FC<PrintWithOptionsModalProps> = ({
         default:
             return itemId;
     }
-  }
+  };
 
   const currentItemName = currentItemId ? getItemName(currentItemId) : 'N/A';
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title={`Print Options for ${itemType.replace(/([A-Z])/g, ' $1')}`} size="lg">
+    <Modal isOpen={isOpen} onClose={onClose} title={`ตัวเลือกการพิมพ์และส่งออกตารางสอน (${itemType === 'teacher' ? 'ครูผู้สอน' : itemType === 'gradeLevel' ? 'ระดับชั้น' : 'ห้องเรียน'})`} size="lg">
       <div className="space-y-6 p-1">
+        {/* Output Format Selector */}
         <div>
-          <label className="block text-sm font-medium text-slate-700 mb-1">Scope</label>
+          <label className="block text-sm font-semibold text-slate-800 mb-2">รูปแบบการส่งออก (Export Format)</label>
+          <div className="grid grid-cols-2 gap-3">
+            <button
+              type="button"
+              onClick={() => setOutputFormat('print')}
+              className={`flex items-center justify-center p-3 rounded-lg border text-sm font-medium transition-all ${
+                outputFormat === 'print'
+                  ? 'border-blue-600 bg-blue-50 text-blue-700 ring-2 ring-blue-500/20'
+                  : 'border-slate-200 hover:bg-slate-50 text-slate-700'
+              }`}
+            >
+              <Icons.Printer className="w-5 h-5 mr-2 text-blue-600" />
+              <span>พิมพ์ผ่านเบราว์เซอร์ (Print)</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setOutputFormat('pdf')}
+              className={`flex items-center justify-center p-3 rounded-lg border text-sm font-medium transition-all ${
+                outputFormat === 'pdf'
+                  ? 'border-red-600 bg-red-50 text-red-700 ring-2 ring-red-500/20'
+                  : 'border-slate-200 hover:bg-slate-50 text-slate-700'
+              }`}
+            >
+              <Icons.FileText className="w-5 h-5 mr-2 text-red-600" />
+              <span>ส่งออกไฟล์ PDF (Vector PDF)</span>
+            </button>
+          </div>
+        </div>
+
+        <div>
+          <label className="block text-sm font-semibold text-slate-800 mb-2">ขอบเขตข้อมูล (Scope)</label>
           <div className="space-y-2">
             <label className="flex items-center space-x-2 text-sm text-slate-700">
               <input
@@ -99,7 +131,7 @@ const PrintWithOptionsModal: React.FC<PrintWithOptionsModalProps> = ({
                 className="rounded-full border-slate-400 text-blue-600 focus:ring-blue-500"
                 disabled={!currentItemId}
               />
-              <span>Print Current {itemType}: {currentItemName}</span>
+              <span>เฉพาะรายการปัจจุบัน ({currentItemName})</span>
             </label>
             <label className="flex items-center space-x-2 text-sm text-slate-700">
               <input
@@ -110,7 +142,7 @@ const PrintWithOptionsModal: React.FC<PrintWithOptionsModalProps> = ({
                 onChange={() => handleScopeChange('selected')}
                 className="rounded-full border-slate-400 text-blue-600 focus:ring-blue-500"
               />
-              <span>Select specific {itemType}s to print</span>
+              <span>เลือกเฉพาะรายการที่ต้องการ ({selectedItems.length} รายการ)</span>
             </label>
             <label className="flex items-center space-x-2 text-sm text-slate-700">
               <input
@@ -121,14 +153,14 @@ const PrintWithOptionsModal: React.FC<PrintWithOptionsModalProps> = ({
                 onChange={() => handleScopeChange('all')}
                 className="rounded-full border-slate-400 text-blue-600 focus:ring-blue-500"
               />
-              <span>Print all {itemType}s ({allItems.length})</span>
+              <span>ทั้งหมด ({allItems.length} รายการ)</span>
             </label>
           </div>
         </div>
 
         {scope === 'selected' && (
           <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">Select {itemType}s:</label>
+            <label className="block text-sm font-medium text-slate-700 mb-1">เลือกรายการที่ต้องการพิมพ์:</label>
             <div className="max-h-60 overflow-y-auto border border-slate-200 rounded-md p-2 space-y-1 bg-slate-50">
               {allItems.length > 0 ? allItems.map(item => (
                 <label key={item.id} className="flex items-center space-x-2 text-sm text-slate-700 hover:bg-slate-100 p-1 rounded">
@@ -140,38 +172,38 @@ const PrintWithOptionsModal: React.FC<PrintWithOptionsModalProps> = ({
                   />
                   <span>{getItemName(item.id)}</span>
                 </label>
-              )) : <p className="text-xs text-slate-500">No {itemType}s available to select.</p>}
+              )) : <p className="text-xs text-slate-500">ไม่มีรายการให้เลือก</p>}
             </div>
           </div>
         )}
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
-            <label htmlFor="orientation" className="block text-sm font-medium text-slate-700 mb-1">Orientation</label>
+            <label htmlFor="orientation" className="block text-sm font-semibold text-slate-800 mb-1">การวางแนวกระดาษ (Orientation)</label>
             <select
               id="orientation"
               value={orientation}
               onChange={(e) => setOrientation(e.target.value as PrintOrientation)}
-              className="w-full p-2 border border-slate-300 rounded-md focus:ring-blue-500 focus:border-blue-500 shadow-sm"
+              className="w-full p-2 border border-slate-300 rounded-md focus:ring-blue-500 focus:border-blue-500 shadow-sm text-sm"
             >
-              <option value="portrait">Portrait</option>
-              <option value="landscape">Landscape</option>
+              <option value="landscape">แนวนอน (Landscape) - แนะนำ</option>
+              <option value="portrait">แนวตั้ง (Portrait)</option>
             </select>
           </div>
 
           <div>
-            <label htmlFor="layout" className="block text-sm font-medium text-slate-700 mb-1">Layout Grid Matrix</label>
+            <label htmlFor="layout" className="block text-sm font-semibold text-slate-800 mb-1">การจัดวางต่อหน้า (Layout Grid Matrix)</label>
             <select
               id="layout"
               value={layout}
               onChange={(e) => setLayout(e.target.value as PrintLayoutOption)}
-              className="w-full p-2 border border-slate-300 rounded-md focus:ring-blue-500 focus:border-blue-500 shadow-sm"
+              className="w-full p-2 border border-slate-300 rounded-md focus:ring-blue-500 focus:border-blue-500 shadow-sm text-sm"
             >
-              <option value="1_per_page">Single page (1 block)</option>
-              <option value="1x2_per_page">Vertical split (1x2 block)</option>
-              <option value="2x2_per_page">Four quadrants (2x2 blocks)</option>
-              <option value="2x3_per_page">Six blocks (2x3 blocks)</option>
-              <option value="2x4_per_page">Eight blocks (2x4 blocks)</option>
+              <option value="1_per_page">1 ตาราง / หน้า (เต็มหน้า A4)</option>
+              <option value="1x2_per_page">2 ตาราง / หน้า (บน-ล่าง)</option>
+              <option value="2x2_per_page">4 ตาราง / หน้า (4 ส่วน)</option>
+              <option value="2x3_per_page">6 ตาราง / หน้า (6 ส่วน)</option>
+              <option value="2x4_per_page">8 ตาราง / หน้า (8 ส่วน)</option>
             </select>
           </div>
         </div>
@@ -182,16 +214,27 @@ const PrintWithOptionsModal: React.FC<PrintWithOptionsModalProps> = ({
             onClick={onClose}
             className="px-4 py-2 text-sm font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-md border border-slate-300 transition-colors"
           >
-            Cancel
+            ยกเลิก
           </button>
           <button
             type="button"
             onClick={handleSubmit}
             disabled={scope === 'selected' && selectedItems.length === 0}
-            className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md shadow-sm transition-colors disabled:bg-slate-400 disabled:cursor-not-allowed flex items-center"
+            className={`px-4 py-2 text-sm font-medium text-white rounded-md shadow-sm transition-colors disabled:bg-slate-400 disabled:cursor-not-allowed flex items-center ${
+              outputFormat === 'pdf' ? 'bg-red-600 hover:bg-red-700' : 'bg-blue-600 hover:bg-blue-700'
+            }`}
           >
-            <Icons.Printer size={16} className="mr-2" />
-            Confirm Print
+            {outputFormat === 'pdf' ? (
+              <>
+                <Icons.FileText size={16} className="mr-2" />
+                ส่งออกไฟล์ PDF
+              </>
+            ) : (
+              <>
+                <Icons.Printer size={16} className="mr-2" />
+                พิมพ์ตารางสอน
+              </>
+            )}
           </button>
         </div>
       </div>
@@ -200,3 +243,4 @@ const PrintWithOptionsModal: React.FC<PrintWithOptionsModalProps> = ({
 };
 
 export default PrintWithOptionsModal;
+

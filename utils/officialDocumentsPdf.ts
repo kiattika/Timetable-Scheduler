@@ -3,6 +3,41 @@ import { OrganizationSettings } from '../types';
 import { SARABUN_REGULAR_BASE64, SARABUN_BOLD_BASE64 } from './sarabunFont';
 
 /**
+ * Formats ISO date string to Thai official date components.
+ */
+export const formatThaiDate = (dateStr?: string): { day: string; month: string; year: string } => {
+  const thaiMonths = [
+    'มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน',
+    'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'
+  ];
+  if (!dateStr || !dateStr.trim()) {
+    return { day: '.........', month: '...................', year: '.........' };
+  }
+  const parts = dateStr.split('-');
+  if (parts.length === 3) {
+    const y = parseInt(parts[0], 10);
+    const m = parseInt(parts[1], 10) - 1;
+    const d = parseInt(parts[2], 10);
+    if (!isNaN(y) && !isNaN(m) && !isNaN(d) && m >= 0 && m < 12) {
+      return {
+        day: String(d),
+        month: thaiMonths[m],
+        year: String(y + 543)
+      };
+    }
+  }
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) {
+    return { day: '.........', month: '...................', year: '.........' };
+  }
+  return {
+    day: String(d.getDate()),
+    month: thaiMonths[d.getMonth()],
+    year: String(d.getFullYear() + 543)
+  };
+};
+
+/**
  * Initializes jsPDF with Sarabun Thai font.
  */
 function createPdfDocument(orientation: 'portrait' | 'landscape' = 'portrait'): jsPDF {
@@ -89,6 +124,11 @@ export function generateOfficialMemoPdf(settings: OrganizationSettings | null): 
   currentY += 7;
 
   // ที่ และ วันที่
+  const thaiDate = formatThaiDate(settings?.orderDate);
+  const memoDateText = settings?.orderDate
+    ? `${thaiDate.day} ${thaiDate.month} ${thaiDate.year}`
+    : '........................................................';
+
   doc.setFont('Sarabun', 'bold');
   doc.text('ที่', leftMargin, currentY);
   doc.setFont('Sarabun', 'normal');
@@ -97,7 +137,7 @@ export function generateOfficialMemoPdf(settings: OrganizationSettings | null): 
   doc.setFont('Sarabun', 'bold');
   doc.text('วันที่', leftMargin + 80, currentY);
   doc.setFont('Sarabun', 'normal');
-  doc.text('........................................................', leftMargin + 92, currentY);
+  doc.text(memoDateText, leftMargin + 92, currentY);
   currentY += 7;
 
   // เรื่อง
@@ -273,13 +313,14 @@ export function generateSchoolOrderPdf(settings: OrganizationSettings | null): v
   currentY += (p2Lines.length * 6.2) + 4;
 
   // Paragraph 3
-  const p3Text = `${pIndent}ทั้งนี้ ตั้งแต่วันที่ ................... เป็นต้นไป`;
+  const p3Text = `${pIndent}ทั้งนี้ ตั้งแต่บัดนี้เป็นต้นไป`;
   doc.text(p3Text, leftMargin, currentY);
   currentY += 14;
 
   // --- 4. Date & Director Signature Block ---
+  const thaiDate = formatThaiDate(settings?.orderDate);
   const signColX = leftMargin + 70;
-  doc.text('สั่ง ณ วันที่ ......... เดือน ................... พ.ศ. ...........', signColX, currentY);
+  doc.text(`สั่ง ณ วันที่ ${thaiDate.day} เดือน ${thaiDate.month} พ.ศ. ${thaiDate.year}`, signColX, currentY);
   currentY += 18;
 
   doc.text('ลงชื่อ ........................................................', signColX + 15, currentY);
