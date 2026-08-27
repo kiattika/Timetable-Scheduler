@@ -754,47 +754,24 @@ const App: React.FC = () => {
   ].filter(Boolean);
 
   const isBootstrapAdmin = bootstrapAdminEmails.includes(userEmail);
-  const isSuperAdmin = (appData.authorizedAdmins || []).some(e => e.toLowerCase().trim() === userEmail) || isBootstrapAdmin;
-  const isAuthAdmin = isSuperAdmin;
   const hasExistingAdmins = (appData.users || []).some(u => u.role === 'admin' && u.email.toLowerCase().trim() !== userEmail);
 
   const handleActivateAdmin = async () => {
     if (!appData || !appData.currentUser) return;
     try {
-      const updatedUser: User = {
-        ...appData.currentUser,
-        role: 'admin'
-      };
-      const existingUsers = appData.users || [];
-      const userIndex = existingUsers.findIndex(u => u.email.toLowerCase().trim() === userEmail);
-      let updatedUsers = [...existingUsers];
-      if (userIndex >= 0) {
-        updatedUsers[userIndex] = updatedUser;
-      } else {
-        updatedUsers.push(updatedUser);
-      }
-
-      let updatedAuthorizedAdmins = [...(appData.authorizedAdmins || [])];
-      if (!updatedAuthorizedAdmins.map(e => e.toLowerCase().trim()).includes(userEmail)) {
-        updatedAuthorizedAdmins.push(appData.currentUser.email);
-      }
-
-      const updatedData: AppData = {
-        ...appData,
-        users: updatedUsers,
-        currentUser: updatedUser,
-        authorizedAdmins: updatedAuthorizedAdmins
-      };
-
-      setAppData(updatedData);
-      await saveAppData(updatedData, ORG_ID);
+      const { httpsCallable } = await import('firebase/functions');
+      const { functions, logout } = await import('./lib/firebase');
+      const bootstrapAdminFn = httpsCallable(functions, 'bootstrapAdmin');
+      const res: any = await bootstrapAdminFn();
+      alert((res?.data?.message || 'เปิดใช้งานสิทธิ์ผู้ดูแลระบบเริ่มต้นเรียบร้อยแล้ว') + '\n\nกรุณาออกจากระบบแล้วเข้าสู่ระบบใหม่อีกครั้ง เพื่อให้สิทธิ์ Firebase Token มีผลสมบูรณ์');
+      logout();
     } catch (err: any) {
-      console.error("Failed to activate admin rights:", err);
+      console.error("Failed to activate admin rights via Cloud Function:", err);
       alert("ไม่สามารถเปิดใช้งานสิทธิ์ได้: " + (err.message || err));
     }
   };
 
-  if (appData.currentUser.role === 'guest' && !isSuperAdmin && !isAuthAdmin) {
+  if (appData.currentUser.role === 'guest') {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-slate-50 p-6 text-center font-sans" id="waiting-approval-lander">
         <div className="max-w-md w-full bg-white rounded-2xl shadow-xl border border-slate-200 p-8 space-y-6">
@@ -809,9 +786,23 @@ const App: React.FC = () => {
               สถานะ: แขก / ผู้เยี่ยมชม (Guest)
             </p>
           </div>
-          <p className="text-slate-600 leading-relaxed text-sm">
-            บัญชีของคุณได้รับการลงทะเบียนในสิทธิ์ "ผู้เยี่ยมชม (Guest)" เรียบร้อยแล้ว กรุณาติดต่อผู้ดูแลระบบของโรงเรียนท่าน เพื่อทำการเลื่อนสิทธิ์/บทบาทและจัดการตารางสอนได้อย่างเป็นทางการ
-          </p>
+
+          {/* Legacy account migration notice */}
+          {appData.currentUser.legacyUnclaimedRole ? (
+            <div className="bg-amber-50 border border-amber-300 rounded-xl p-4 text-left space-y-2">
+              <div className="flex items-center gap-2 text-amber-800 font-bold text-sm">
+                <Icons.AlertTriangle size={18} className="text-amber-600 shrink-0" />
+                <span>จำเป็นต้องยืนยันสิทธิ์ใหม่อีกครั้ง</span>
+              </div>
+              <p className="text-xs text-amber-700 leading-relaxed">
+                บัญชีนี้ต้องได้รับการยืนยันสิทธิ์ใหม่โดยแอดมิน กรุณาติดต่อผู้ดูแลระบบให้ตั้งค่า role ผ่านหน้า "จัดการผู้ใช้งาน" อีกครั้งเพื่อยืนยันสิทธิ์อย่างเป็นทางการ <span className="font-semibold">(สิทธิ์เดิมในระบบก่อนปรับปรุง: {appData.currentUser.legacyUnclaimedRole})</span>
+              </p>
+            </div>
+          ) : (
+            <p className="text-slate-600 leading-relaxed text-sm">
+              บัญชีของคุณได้รับการลงทะเบียนในสิทธิ์ "ผู้เยี่ยมชม (Guest)" เรียบร้อยแล้ว กรุณาติดต่อผู้ดูแลระบบของโรงเรียนท่าน เพื่อทำการเลื่อนสิทธิ์/บทบาทและจัดการตารางสอนได้อย่างเป็นทางการ
+            </p>
+          )}
 
           {(!hasExistingAdmins || isBootstrapAdmin) && (
             <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-left space-y-3">
@@ -820,7 +811,7 @@ const App: React.FC = () => {
                 <span>เปิดใช้งานสิทธิ์ผู้ดูแลระบบเริ่มต้น (Admin)</span>
               </div>
               <p className="text-xs text-blue-600 leading-relaxed">
-                ระบบตรวจพบว่าคุณเป็นผู้ดูแลระบบสถาบัน หรือยังไม่มีผู้ดูแลระบบที่เปิดใช้งานในฐานข้อมูล คุณสามารถกดปุ่มด้านล่างเพื่อรับสิทธิ์ผู้ดูแลระบบทันที
+                ระบบตรวจพบว่าคุณเป็นผู้ดูแลระบบสถาบัน หรือยังไม่มีผู้ดูแลระบบที่เปิดใช้งานในฐานข้อมูล คุณสามารถกดปุ่มด้านล่างเพื่อรับสิทธิ์ผู้ดูแลระบบทันทีผ่าน Firebase Custom Claims
               </p>
               <button
                 onClick={handleActivateAdmin}
@@ -926,9 +917,7 @@ const App: React.FC = () => {
                     }
 
                     if (entityKey === 'adminSettings') {
-                        const isSuperAdmin = (appData.authorizedAdmins || []).includes(appData.currentUser?.email || '');
-                        const isAuthAdmin = (appData.authorizedAdmins || []).includes(appData.currentUser?.email || '');
-                        if (!isSuperAdmin && !isAuthAdmin) {
+                        if (appData.currentUser?.role !== 'admin') {
                             return null;
                         }
                     }

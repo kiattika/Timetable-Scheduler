@@ -128,6 +128,7 @@ export interface User extends Identifiable {
   role: UserRole;
   organizationId?: string;
   assignedDepartments?: string[];
+  legacyUnclaimedRole?: string; // Flag for legacy accounts needing admin role re-confirmation via Custom Claims
 }
 
 export type ActivityLogAction = 'Added' | 'Removed' | 'Updated' | 'Cleared' | 'Logged In' | 'Login Failed';

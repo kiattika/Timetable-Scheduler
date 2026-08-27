@@ -19,7 +19,7 @@ export const AdminSettingsScreen: React.FC<AdminSettingsScreenProps> = ({ appDat
   const authorizedAdmins = (appData.authorizedAdmins || []).map(e => e.toLowerCase().trim());
   const currentUserEmail = (appData.currentUser?.email || '').toLowerCase().trim();
   
-  const isAuthorizedAdmin = authorizedAdmins.includes(currentUserEmail) || appData.currentUser?.role === 'admin';
+  const isAuthorizedAdmin = appData.currentUser?.role === 'admin';
 
   if (!isAuthorizedAdmin) {
     return (

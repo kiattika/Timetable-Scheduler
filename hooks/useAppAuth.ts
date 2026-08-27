@@ -73,77 +73,43 @@ export const useAppAuth = (
             teachingMode: s.teachingMode || 'single'
           }));
 
-          const bootstrapAdminEmails = [
-            'kiattika@utd.ac.th',
-            'admin@utd.ac.th',
-            (mainParsedData.organizationSettings?.schoolAdminEmail || '').toLowerCase().trim()
-          ].filter(Boolean);
-
-          const isBootstrapAdmin = bootstrapAdminEmails.includes(userEmail);
-
-          const isAuthorizedAdmin = (mainParsedData.authorizedAdmins || []).some(
-            (adminEmail: string) => adminEmail.toLowerCase().trim() === userEmail
-          ) || userClaimRole === 'admin' || isBootstrapAdmin;
-
           const existingUsers: User[] = mainParsedData.users || [];
           const existingUser = existingUsers.find(u => u.email.toLowerCase().trim() === userEmail);
 
-          // Count existing active admins
-          const existingAdminsCount = existingUsers.filter(u => u.role === 'admin').length;
-
-          let resolvedRole: 'admin' | 'manager' | 'teacher' | 'assistant' | 'guest' = 'guest';
-
-          if (userClaimRole === 'admin' || isAuthorizedAdmin) {
-            resolvedRole = 'admin';
-          } else if (userClaimRole === 'manager') {
-            resolvedRole = 'manager';
-          } else if (userClaimRole === 'assistant') {
-            resolvedRole = 'assistant';
-          } else if (userClaimRole === 'teacher') {
-            resolvedRole = 'teacher';
-          } else if (existingUser && ['admin', 'manager', 'teacher', 'assistant'].includes(existingUser.role)) {
-            // Respect role already saved in Firestore database
-            resolvedRole = existingUser.role;
-          } else if (existingAdminsCount === 0 && userEmail.endsWith('@utd.ac.th')) {
-            // If no admins exist yet in the database, promote the first organization user to admin
-            resolvedRole = 'admin';
-          } else {
-            // Check if user is a teacher registered in the system
-            const isTeacher = (mainParsedData.teachers || []).some(
-              (t: Teacher) => t.email && t.email.toLowerCase().trim() === userEmail
-            );
-            if (isTeacher) {
-              resolvedRole = 'teacher';
-            }
-          }
+          // Resolve role exclusively from Firebase Auth Custom Claims (source of truth)
+          const resolvedRole: 'admin' | 'manager' | 'teacher' | 'assistant' | 'guest' =
+            (userClaimRole && ['admin', 'manager', 'teacher', 'assistant'].includes(userClaimRole))
+              ? (userClaimRole as any)
+              : 'guest';
 
           let appUser = existingUser;
           let newUsers = [...existingUsers];
-          let authStateChanged = false;
 
           if (!appUser) {
+            // First-time user registration: create record with 'guest' role only (no guessing)
             appUser = {
               id: firebaseUser.uid,
               name: firebaseUser.displayName || userEmail.split('@')[0],
               email: userEmail,
-              role: resolvedRole,
+              role: 'guest',
               organizationId: ORG_ID
             };
             newUsers.push(appUser);
-            authStateChanged = true;
-          } else if (appUser.role !== resolvedRole) {
-            appUser = { ...appUser, role: resolvedRole };
-            newUsers = newUsers.map(u => u.id === appUser!.id ? appUser! : u);
-            authStateChanged = true;
-          }
+            saveAppData({ ...mainParsedData, users: newUsers }, ORG_ID).catch(e => {
+              console.warn("New user registration notice:", e?.message || e);
+            });
+          } else {
+            // Existing user: resolve role from Custom Claims for in-memory UI display ONLY.
+            // NEVER write role or authorizedAdmins back to Firestore from the client!
+            const legacyRole = (!userClaimRole && existingUser.role && existingUser.role !== 'guest')
+              ? existingUser.role
+              : undefined;
 
-          // Maintain authorizedAdmins array
-          let updatedAuthorizedAdmins = Array.isArray(mainParsedData.authorizedAdmins) 
-            ? [...mainParsedData.authorizedAdmins] 
-            : [];
-          if (resolvedRole === 'admin' && !updatedAuthorizedAdmins.map((e: string) => e.toLowerCase().trim()).includes(userEmail)) {
-            updatedAuthorizedAdmins.push(userEmail);
-            authStateChanged = true;
+            appUser = {
+              ...appUser,
+              role: resolvedRole,
+              legacyUnclaimedRole: legacyRole
+            };
           }
 
           const finalScheduleEntries: ScheduleEntry[] = Array.isArray(currentScheduleEntries) && currentScheduleEntries.length > 0 
@@ -168,15 +134,8 @@ export const useAppAuth = (
             users: newUsers,
             activityLogs: finalActivityLogs,
             currentUser: appUser,
-            authorizedAdmins: updatedAuthorizedAdmins
+            authorizedAdmins: mainParsedData.authorizedAdmins || []
           };
-
-          const isNewUserRegistration = !existingUser && !!appUser;
-          if (authStateChanged && appUser && (appUser.role === 'admin' || appUser.role === 'manager' || isNewUserRegistration)) {
-            saveAppData(updatedData, ORG_ID).catch(e => {
-              console.warn("User sync notice:", e?.message || e);
-            });
-          }
 
           // Session Login Audit Logging (Record once per user per session)
           if (appUser && recordedLoginSessionRef.current !== userEmail) {
