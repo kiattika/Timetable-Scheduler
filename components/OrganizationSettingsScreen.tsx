@@ -4,6 +4,7 @@ import { OrganizationSettings, ScreenAccessProps, DayOfWeek, User } from '../typ
 import { Icons } from '../constants';
 import ConfirmationModal from './ConfirmationModal';
 import { fetchAppData, resetSemesterTimetable, ORG_ID } from '../api';
+import { generateOfficialMemoPdf, generateSchoolOrderPdf } from '../utils/officialDocumentsPdf';
 
 interface OrganizationSettingsScreenProps extends ScreenAccessProps {
   organizationSettings: OrganizationSettings | null;
@@ -19,6 +20,7 @@ const OrganizationSettingsScreen: React.FC<OrganizationSettingsScreenProps> = ({
 }) => {
   const [currentSettings, setCurrentSettings] = useState<Partial<OrganizationSettings>>({});
   const [logoPreview, setLogoPreview] = useState<string | null>(null);
+  const [emblemPreview, setEmblemPreview] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [isConfirmClearModalOpen, setIsConfirmClearModalOpen] = useState(false);
@@ -43,9 +45,18 @@ const OrganizationSettingsScreen: React.FC<OrganizationSettingsScreenProps> = ({
         operatingDays: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"] as DayOfWeek[],
         allowedDomain: '',
         schoolAdminEmail: '',
+        orderNumber: '',
+        department: 'กลุ่มบริหารวิชาการ',
+        workGroupName: 'กลุ่มงานวิชาการและหลักสูตร',
+        proposerName: '',
+        proposerPosition: 'หัวหน้างานจัดตารางสอน',
+        reviewerName: '',
+        reviewerPosition: 'หัวหน้ากลุ่มงานวิชาการและหลักสูตร',
+        legalBasisText: '',
       };
       setCurrentSettings({ ...defaultSettings, ...organizationSettings });
       setLogoPreview(organizationSettings.logoUrl || null);
+      setEmblemPreview(organizationSettings.emblemUrl || null);
     }
   }, [organizationSettings]);
 
@@ -78,7 +89,6 @@ const OrganizationSettingsScreen: React.FC<OrganizationSettingsScreenProps> = ({
       }
       reader.readAsDataURL(file);
     } else {
-        // If no file is selected (e.g., user cancels file dialog), revert to existing or clear
         setLogoPreview(organizationSettings?.logoUrl || null);
         setCurrentSettings(prev => ({...prev, logoUrl: organizationSettings?.logoUrl || undefined}));
     }
@@ -89,12 +99,49 @@ const OrganizationSettingsScreen: React.FC<OrganizationSettingsScreenProps> = ({
     setCurrentSettings(prev => ({ ...prev, logoUrl: undefined }));
     setSuccessMessage(null);
     setError(null);
-    // Clear the file input visually if possible (though programmatically is tricky and often not needed)
     const fileInput = document.getElementById('logoUrl') as HTMLInputElement;
     if (fileInput) {
         fileInput.value = "";
     }
-  }
+  };
+
+  const handleEmblemChange = (e: ChangeEvent<HTMLInputElement>) => {
+    setSuccessMessage(null);
+    setError(null);
+    const file = e.target.files?.[0];
+    if (file) {
+      if (file.size > 2 * 1024 * 1024) { // 2MB limit
+        setError("ไฟล์รูปครุฑต้องมีขนาดไม่เกิน 2MB");
+        setEmblemPreview(currentSettings.emblemUrl || null);
+        e.target.value = "";
+        return;
+      }
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setEmblemPreview(reader.result as string);
+        setCurrentSettings(prev => ({ ...prev, emblemUrl: reader.result as string }));
+      };
+      reader.onerror = () => {
+        setError("เกิดข้อผิดพลาดในการอ่านไฟล์รูปครุฑ");
+        setEmblemPreview(currentSettings.emblemUrl || null);
+      };
+      reader.readAsDataURL(file);
+    } else {
+      setEmblemPreview(organizationSettings?.emblemUrl || null);
+      setCurrentSettings(prev => ({ ...prev, emblemUrl: organizationSettings?.emblemUrl || undefined }));
+    }
+  };
+
+  const removeEmblem = () => {
+    setEmblemPreview(null);
+    setCurrentSettings(prev => ({ ...prev, emblemUrl: undefined }));
+    setSuccessMessage(null);
+    setError(null);
+    const fileInput = document.getElementById('emblemUrl') as HTMLInputElement;
+    if (fileInput) {
+      fileInput.value = "";
+    }
+  };
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -328,38 +375,74 @@ const OrganizationSettingsScreen: React.FC<OrganizationSettingsScreenProps> = ({
             </label>
         </div>
 
-        <div>
-          <label htmlFor="logoUrl" className="block text-sm font-medium text-slate-700 mb-1">
-            ตราประจำหน่วยงาน (Logo)
-          </label>
-          <input
-            type="file"
-            id="logoUrl"
-            name="logoUrl"
-            accept="image/png, image/jpeg, image/gif, image/svg+xml"
-            onChange={handleLogoChange}
-            className="w-full text-sm text-slate-500
-                       file:mr-4 file:py-2 file:px-4
-                       file:rounded-md file:border-0
-                       file:text-sm file:font-semibold
-                       file:bg-blue-50 file:text-blue-700
-                       hover:file:bg-blue-100"
-          />
-          {logoPreview && (
-            <div className="mt-3 relative inline-block">
-              <img src={logoPreview} alt="Logo Preview" className="h-24 w-auto max-w-xs border border-slate-300 rounded-md shadow-sm" />
-              <button 
-                type="button" 
-                onClick={removeLogo} 
-                className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-0.5 hover:bg-red-600 shadow-md"
-                aria-label="Remove logo"
-                title="ลบโลโก้"
-                >
-                <Icons.Close size={14} />
-              </button>
-            </div>
-          )}
-           <p className="text-xs text-slate-500 mt-1">ขนาดไฟล์ไม่เกิน 2MB (PNG, JPG, GIF, SVG)</p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label htmlFor="logoUrl" className="block text-sm font-medium text-slate-700 mb-1">
+              ตราประจำหน่วยงาน (Logo)
+            </label>
+            <input
+              type="file"
+              id="logoUrl"
+              name="logoUrl"
+              accept="image/png, image/jpeg, image/gif, image/svg+xml"
+              onChange={handleLogoChange}
+              className="w-full text-sm text-slate-500
+                         file:mr-4 file:py-2 file:px-4
+                         file:rounded-md file:border-0
+                         file:text-sm file:font-semibold
+                         file:bg-blue-50 file:text-blue-700
+                         hover:file:bg-blue-100"
+            />
+            {logoPreview && (
+              <div className="mt-3 relative inline-block">
+                <img src={logoPreview} alt="Logo Preview" className="h-24 w-auto max-w-xs border border-slate-300 rounded-md shadow-sm" />
+                <button 
+                  type="button" 
+                  onClick={removeLogo} 
+                  className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-0.5 hover:bg-red-600 shadow-md"
+                  aria-label="Remove logo"
+                  title="ลบโลโก้"
+                  >
+                  <Icons.Close size={14} />
+                </button>
+              </div>
+            )}
+            <p className="text-xs text-slate-500 mt-1">สำหรับหัวตาราง/หน้ารายงาน (PNG, JPG, SVG ไม่เกิน 2MB)</p>
+          </div>
+
+          <div>
+            <label htmlFor="emblemUrl" className="block text-sm font-medium text-slate-700 mb-1">
+              รูปครุฑ (ตราครุฑสำหรับเอกสารราชการ)
+            </label>
+            <input
+              type="file"
+              id="emblemUrl"
+              name="emblemUrl"
+              accept="image/png, image/jpeg, image/gif, image/svg+xml"
+              onChange={handleEmblemChange}
+              className="w-full text-sm text-slate-500
+                         file:mr-4 file:py-2 file:px-4
+                         file:rounded-md file:border-0
+                         file:text-sm file:font-semibold
+                         file:bg-indigo-50 file:text-indigo-700
+                         hover:file:bg-indigo-100"
+            />
+            {emblemPreview && (
+              <div className="mt-3 relative inline-block">
+                <img src={emblemPreview} alt="Garuda Emblem Preview" className="h-24 w-auto max-w-xs border border-slate-300 rounded-md shadow-sm" />
+                <button 
+                  type="button" 
+                  onClick={removeEmblem} 
+                  className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-0.5 hover:bg-red-600 shadow-md"
+                  aria-label="Remove emblem"
+                  title="ลบรูปครุฑ"
+                  >
+                  <Icons.Close size={14} />
+                </button>
+              </div>
+            )}
+            <p className="text-xs text-slate-500 mt-1">สำหรับบันทึกข้อความและคำสั่งราชการ (PNG, JPG, SVG ไม่เกิน 2MB)</p>
+          </div>
         </div>
 
         <div>
@@ -407,6 +490,144 @@ const OrganizationSettingsScreen: React.FC<OrganizationSettingsScreenProps> = ({
                 />
             </div>
         </div>
+
+        {/* --- ข้อมูลสำหรับเอกสารราชการและคำสั่ง --- */}
+        <fieldset className="border border-slate-200 p-6 rounded-xl bg-slate-50/50 space-y-4">
+            <legend className="text-lg font-semibold text-slate-800 px-3 flex items-center bg-white rounded-md border border-slate-200 shadow-sm py-1">
+                <Icons.FileText size={20} className="mr-2 text-blue-600" /> ข้อมูลสำหรับเอกสารราชการและคำสั่ง
+            </legend>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div>
+                    <label htmlFor="orderNumber" className="block text-sm font-medium text-slate-700 mb-1">
+                        เลขที่คำสั่ง
+                    </label>
+                    <input
+                        type="text"
+                        id="orderNumber"
+                        name="orderNumber"
+                        value={currentSettings.orderNumber || ''}
+                        onChange={handleInputChange}
+                        className="w-full p-2 border border-slate-300 rounded-md focus:ring-blue-500 focus:border-blue-500 shadow-sm"
+                        placeholder="เช่น 371/2569"
+                    />
+                </div>
+                <div>
+                    <label htmlFor="department" className="block text-sm font-medium text-slate-700 mb-1">
+                        กลุ่มบริหาร
+                    </label>
+                    <input
+                        type="text"
+                        id="department"
+                        name="department"
+                        value={currentSettings.department || ''}
+                        onChange={handleInputChange}
+                        className="w-full p-2 border border-slate-300 rounded-md focus:ring-blue-500 focus:border-blue-500 shadow-sm"
+                        placeholder="เช่น กลุ่มบริหารวิชาการ"
+                    />
+                </div>
+                <div>
+                    <label htmlFor="workGroupName" className="block text-sm font-medium text-slate-700 mb-1">
+                        ชื่อกลุ่มงาน
+                    </label>
+                    <input
+                        type="text"
+                        id="workGroupName"
+                        name="workGroupName"
+                        value={currentSettings.workGroupName || ''}
+                        onChange={handleInputChange}
+                        className="w-full p-2 border border-slate-300 rounded-md focus:ring-blue-500 focus:border-blue-500 shadow-sm"
+                        placeholder="เช่น กลุ่มงานวิชาการและหลักสูตร"
+                    />
+                </div>
+            </div>
+
+            {/* ผู้เสนอ (ผู้จัดทำ) */}
+            <div className="p-3 bg-white rounded-lg border border-slate-200">
+                <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">กลุ่มผู้เสนอ (ผู้จัดทำ)</h4>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                        <label htmlFor="proposerName" className="block text-xs font-medium text-slate-700 mb-1">
+                            ชื่อผู้เสนอ
+                        </label>
+                        <input
+                            type="text"
+                            id="proposerName"
+                            name="proposerName"
+                            value={currentSettings.proposerName || ''}
+                            onChange={handleInputChange}
+                            className="w-full p-2 text-sm border border-slate-300 rounded-md focus:ring-blue-500 focus:border-blue-500 shadow-sm"
+                            placeholder="เช่น นายวิชาญ สอนดี"
+                        />
+                    </div>
+                    <div>
+                        <label htmlFor="proposerPosition" className="block text-xs font-medium text-slate-700 mb-1">
+                            ตำแหน่งผู้เสนอ
+                        </label>
+                        <input
+                            type="text"
+                            id="proposerPosition"
+                            name="proposerPosition"
+                            value={currentSettings.proposerPosition || ''}
+                            onChange={handleInputChange}
+                            className="w-full p-2 text-sm border border-slate-300 rounded-md focus:ring-blue-500 focus:border-blue-500 shadow-sm"
+                            placeholder="เช่น หัวหน้างานจัดตารางสอน"
+                        />
+                    </div>
+                </div>
+            </div>
+
+            {/* ผู้ตรวจสอบ */}
+            <div className="p-3 bg-white rounded-lg border border-slate-200">
+                <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">กลุ่มผู้ตรวจสอบ</h4>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                        <label htmlFor="reviewerName" className="block text-xs font-medium text-slate-700 mb-1">
+                            ชื่อผู้ตรวจสอบ
+                        </label>
+                        <input
+                            type="text"
+                            id="reviewerName"
+                            name="reviewerName"
+                            value={currentSettings.reviewerName || ''}
+                            onChange={handleInputChange}
+                            className="w-full p-2 text-sm border border-slate-300 rounded-md focus:ring-blue-500 focus:border-blue-500 shadow-sm"
+                            placeholder="เช่น นางปราณี รักการสอน"
+                        />
+                    </div>
+                    <div>
+                        <label htmlFor="reviewerPosition" className="block text-xs font-medium text-slate-700 mb-1">
+                            ตำแหน่งผู้ตรวจสอบ
+                        </label>
+                        <input
+                            type="text"
+                            id="reviewerPosition"
+                            name="reviewerPosition"
+                            value={currentSettings.reviewerPosition || ''}
+                            onChange={handleInputChange}
+                            className="w-full p-2 text-sm border border-slate-300 rounded-md focus:ring-blue-500 focus:border-blue-500 shadow-sm"
+                            placeholder="เช่น หัวหน้ากลุ่มงานวิชาการและหลักสูตร"
+                        />
+                    </div>
+                </div>
+            </div>
+
+            {/* อำนาจตามกฎหมาย */}
+            <div>
+                <label htmlFor="legalBasisText" className="block text-sm font-medium text-slate-700 mb-1">
+                    อำนาจตามกฎหมาย (สาระสำคัญในคำสั่ง)
+                </label>
+                <textarea
+                    id="legalBasisText"
+                    name="legalBasisText"
+                    value={currentSettings.legalBasisText || ''}
+                    onChange={handleInputChange}
+                    rows={3}
+                    className="w-full p-2 text-sm border border-slate-300 rounded-md focus:ring-blue-500 focus:border-blue-500 shadow-sm"
+                    placeholder="เช่น อาศัยอำนาจตามความในมาตรา 39 (1) แห่งพระราชบัญญัติระเบียบบริหารราชการกระทรวงศึกษาธิการ พ.ศ. 2546 และที่แก้ไขเพิ่มเติม และมาตรา 27 (1) แห่งพระราชบัญญัติระเบียบข้าราชการครูและบุคลากรทางการศึกษา พ.ศ. 2547 และที่แก้ไขเพิ่มเติม"
+                />
+            </div>
+        </fieldset>
 
         <fieldset className="border border-slate-200 p-4 rounded-md min-w-0 w-full shrink">
             <legend className="text-md font-semibold text-slate-700 px-1 break-words max-w-full">วันจัดการเรียนการสอน</legend>
@@ -550,6 +771,53 @@ const OrganizationSettingsScreen: React.FC<OrganizationSettingsScreenProps> = ({
                <p className="text-xs text-slate-500 mt-2">รูปแบบวันที่ YYYY-MM-DD (เช่น 2026-07-25)</p>
            </div>
         </fieldset>
+
+        {/* --- พิมพ์เอกสารราชการ (บันทึกข้อความ / คำสั่ง) --- */}
+        <div className="border border-indigo-200 bg-gradient-to-r from-indigo-50/70 to-blue-50/70 p-6 rounded-xl shadow-sm">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div>
+              <h3 className="text-lg font-bold text-indigo-900 flex items-center gap-2">
+                <Icons.Printer size={22} className="text-indigo-600" />
+                พิมพ์เอกสารราชการ (บันทึกข้อความ / คำสั่งโรงเรียน)
+              </h3>
+              <p className="text-sm text-slate-600 mt-1">
+                สร้างและดาวน์โหลดเอกสารราชการ A4 แบบฟอร์มมาตรฐาน (ฟอนต์ Sarabun พร้อมตราครุฑ) ตามข้อมูลที่ตั้งค่าไว้
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-3">
+              <button
+                type="button"
+                onClick={() => generateOfficialMemoPdf(currentSettings as OrganizationSettings)}
+                className="inline-flex items-center gap-2 px-4 py-2.5 bg-white hover:bg-slate-50 text-indigo-700 font-medium rounded-lg border border-indigo-300 shadow-sm transition-all hover:shadow cursor-pointer"
+                title="พิมพ์บันทึกข้อความขออนุมัติคำสั่งสอน (A4 แนวตั้ง 4 ลำดับเซ็น)"
+              >
+                <Icons.FileText size={18} className="text-indigo-600" />
+                <span>พิมพ์บันทึกข้อความ (PDF)</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => generateSchoolOrderPdf(currentSettings as OrganizationSettings)}
+                className="inline-flex items-center gap-2 px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-medium rounded-lg shadow-sm transition-all hover:shadow cursor-pointer"
+                title="พิมพ์คำสั่งปฏิบัติหน้าที่สอน (A4 แนวตั้ง ลงนามโดย ผอ.)"
+              >
+                <Icons.FileText size={18} className="text-indigo-100" />
+                <span>พิมพ์คำสั่ง (PDF)</span>
+              </button>
+            </div>
+          </div>
+          
+          <div className="mt-4 pt-3 border-t border-indigo-100/80 grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs text-slate-500">
+            <div className="flex items-start gap-1.5">
+              <span className="text-indigo-600 font-bold">•</span>
+              <span><strong>บันทึกข้อความ:</strong> เอกสารขออนุมัติภายใน มีลำดับเซ็น 4 ตำแหน่ง (ผู้จัดทำ &gt; ผู้ตรวจ &gt; รอง ผอ. &gt; ผอ.)</span>
+            </div>
+            <div className="flex items-start gap-1.5">
+              <span className="text-indigo-600 font-bold">•</span>
+              <span><strong>คำสั่งโรงเรียน:</strong> เอกสารคำสั่งแต่งตั้งและมอบหมายหน้าที่สอน (ผอ. ลงนามคนเดียว)</span>
+            </div>
+          </div>
+        </div>
 
           <div className="sticky bottom-0 -mx-4 md:-mx-8 -mb-4 md:-mb-8 px-4 md:px-8 py-4 bg-white/90 backdrop-blur-md border-t border-slate-200 flex flex-col sm:flex-row justify-between items-center space-y-3 sm:space-y-0 sm:space-x-3 z-10">
            <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">

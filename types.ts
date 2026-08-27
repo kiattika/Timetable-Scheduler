@@ -102,6 +102,7 @@ export interface TeacherSubjectAssignment extends Identifiable {
 export interface OrganizationSettings {
   name: string; // ชื่อหน่วยงาน
   logoUrl?: string; // ตราประจำหน่วยงาน (base64 data URL)
+  emblemUrl?: string; // รูปครุฑ (base64 data URL สำหรับเอกสารราชการ)
   address?: string; // ที่อยู่
   email?: string; // อีเมล์
   phone?: string; // เบอร์โทรศัพท์
@@ -118,6 +119,14 @@ export interface OrganizationSettings {
   isLocked?: boolean; // ล็อคตารางเรียนประจำภาคเรียน
   allowedDomain?: string; // โดเมนที่อนุญาต
   schoolAdminEmail?: string; // อีเมลแอดมินโรงเรียน
+  orderNumber?: string; // เลขที่คำสั่ง เช่น "371/2569"
+  department?: string; // กลุ่มบริหาร/กลุ่มงาน เช่น "กลุ่มบริหารวิชาการ"
+  workGroupName?: string; // ชื่อกลุ่มงานเต็ม เช่น "กลุ่มงานวิชาการและหลักสูตร"
+  proposerName?: string; // ชื่อผู้เสนอ (หัวหน้างานจัดตารางสอน)
+  proposerPosition?: string; // ตำแหน่งผู้เสนอ เช่น "หัวหน้างานจัดตารางสอน"
+  reviewerName?: string; // ชื่อผู้ตรวจสอบ (หัวหน้ากลุ่มงานวิชาการ)
+  reviewerPosition?: string; // ตำแหน่งผู้ตรวจสอบ เช่น "หัวหน้ากลุ่มงานวิชาการและหลักสูตร"
+  legalBasisText?: string; // อำนาจตามกฎหมาย (ข้อความยาว)
 }
 
 export type UserRole = 'admin' | 'manager' | 'teacher' | 'assistant' | 'guest';

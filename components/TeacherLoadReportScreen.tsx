@@ -15,7 +15,10 @@ import {
   WidthType, 
   BorderStyle, 
   PageOrientation, 
-  ShadingType 
+  ShadingType,
+  Header,
+  Footer,
+  PageNumber
 } from 'docx';
 import { saveAs } from 'file-saver';
 import { jsPDF } from 'jspdf';
@@ -249,27 +252,29 @@ export const TeacherLoadReportScreen: React.FC<TeacherLoadReportScreenProps> = (
       const schoolName = organizationSettings?.name || '................................';
       const academicYear = organizationSettings?.academicYear || '.....';
       const semester = organizationSettings?.semester || '.....';
+      const orderNumber = organizationSettings?.orderNumber || `..... / ${academicYear}`;
+      const deputyDirectorName = organizationSettings?.deputyDirectorName || '......................................................';
+      const deputyDirectorPosition = organizationSettings?.deputyDirectorPosition || 'รองผู้อำนวยการกลุ่มบริหารวิชาการ';
+      const directorName = organizationSettings?.directorName || '......................................................';
+      const directorPosition = organizationSettings?.directorPosition || `ผู้อำนวยการโรงเรียน${schoolName}`;
 
-      const pageMarginDxa = 1000;
-      // Standard A4 Landscape width is 16,838 DXA (297mm).
-      // Usable width = 16,838 - 1,000 (left margin) - 1,000 (right margin) = 14,838 DXA.
-      const pageLandscapeWidthDxa = 16838;
+      const pageMarginDxa = 800; // ~14mm margin for max table space
+      const pageLandscapeWidthDxa = 16838; // 297mm in DXA
       const usableWidthDxa = pageLandscapeWidthDxa - (pageMarginDxa * 2);
 
-      // Proportional column percentages based on real content length:
-      // 1. กลุ่มสาระ (13%): Extended for long department names like "วิทยาศาสตร์และเทคโนโลยี(คอมพิวเตอร์)"
-      // 2. ที่ (3%): Short number 1-2 digits
-      // 3. ชื่อ-สกุล (12%): Full teacher name
-      // 4. อีเมล (12%): Full email address
-      // 5. ประจำชั้น (6%): Homeroom class (e.g. "ม.1/1")
-      // 6. ลำดับวิชา (4%): Short subject index
-      // 7. รหัสวิชา (6%): Subject code (e.g. "ว21101")
-      // 8. ชื่อรายวิชา (18%): Longest column for subject name & activity labels
-      // 9. คาบ/ห้อง (8%): Periods and room name
-      // 10. วัน-คาบที่สอน (8%): Day and period slots
-      // 11. ระดับ (6%): Grade level
-      // 12. สรุปคาบ (4%): Short period total
-      const colPercentages = [13, 3, 12, 12, 6, 4, 6, 18, 8, 8, 6, 4];
+      // 11 Proportional columns without email:
+      // 1. กลุ่มสาระ (13%)
+      // 2. ที่ (3%)
+      // 3. ชื่อ-สกุล (14%)
+      // 4. ประจำชั้น (7%)
+      // 5. ลำดับวิชา (4%)
+      // 6. รหัสวิชา (7%)
+      // 7. ชื่อรายวิชา (22%)
+      // 8. คาบ/ห้อง (10%)
+      // 9. วัน-คาบที่สอน (10%)
+      // 10. ระดับ (6%)
+      // 11. สรุปคาบ (4%)
+      const colPercentages = [13, 3, 14, 7, 4, 7, 22, 10, 10, 6, 4];
       const colWidths = colPercentages.map((pct, idx) => {
         if (idx === colPercentages.length - 1) {
           const sumPrev = colPercentages.slice(0, idx).reduce((sum, p) => sum + Math.round((p / 100) * usableWidthDxa), 0);
@@ -293,7 +298,7 @@ export const TeacherLoadReportScreen: React.FC<TeacherLoadReportScreenProps> = (
       };
 
       const tableHeaderTitles = [
-        'กลุ่มสาระ', 'ที่', 'ชื่อ-สกุล', 'อีเมล', 'ประจำชั้น',
+        'กลุ่มสาระ', 'ที่', 'ชื่อ-สกุล', 'ประจำชั้น',
         'ลำดับวิชา', 'รหัสวิชา', 'ชื่อรายวิชา', 'คาบ/ห้อง', 'วัน-คาบที่สอน', 'ระดับ', 'สรุปคาบ'
       ];
 
@@ -318,7 +323,6 @@ export const TeacherLoadReportScreen: React.FC<TeacherLoadReportScreenProps> = (
             isFirstOfTeacher ? row.department : '',
             isFirstOfTeacher ? String(row.no) : '',
             isFirstOfTeacher ? row.name : '',
-            isFirstOfTeacher ? row.email : '',
             isFirstOfTeacher ? row.homeroom : '',
             String(subjectIndex++),
             group.subject?.subjectCode || '-',
@@ -333,7 +337,7 @@ export const TeacherLoadReportScreen: React.FC<TeacherLoadReportScreenProps> = (
             children: cells.map((cellText, idx) => new TableCell({
               width: { size: colWidths[idx], type: WidthType.DXA },
               children: [new Paragraph({
-                alignment: idx === 2 || idx === 3 || idx === 7 ? AlignmentType.LEFT : AlignmentType.CENTER,
+                alignment: idx === 2 || idx === 6 ? AlignmentType.LEFT : AlignmentType.CENTER,
                 children: [new TextRun({ text: cellText, size: 16, font: 'TH Sarabun New' })]
               })]
             }))
@@ -345,7 +349,6 @@ export const TeacherLoadReportScreen: React.FC<TeacherLoadReportScreenProps> = (
             row.department,
             String(row.no),
             row.name,
-            row.email,
             row.homeroom,
             '',
             '-',
@@ -359,8 +362,8 @@ export const TeacherLoadReportScreen: React.FC<TeacherLoadReportScreenProps> = (
             children: emptyCells.map((cellText, idx) => new TableCell({
               width: { size: colWidths[idx], type: WidthType.DXA },
               children: [new Paragraph({
-                alignment: idx === 2 || idx === 3 ? AlignmentType.LEFT : (idx === 7 ? AlignmentType.CENTER : AlignmentType.CENTER),
-                children: [new TextRun({ text: cellText, size: 16, font: 'TH Sarabun New', italics: idx === 7 })]
+                alignment: idx === 2 ? AlignmentType.LEFT : (idx === 6 ? AlignmentType.CENTER : AlignmentType.CENTER),
+                children: [new TextRun({ text: cellText, size: 16, font: 'TH Sarabun New', italics: idx === 6 })]
               })]
             }))
           }));
@@ -369,13 +372,13 @@ export const TeacherLoadReportScreen: React.FC<TeacherLoadReportScreenProps> = (
           row.activitySubjects.forEach((g, i) => addDocxSubjectRow(g, true, row.mainSubjects.length === 0 && i === 0));
         }
 
-        // Summary row for teacher
-        const colSpan11Width = colWidths.slice(0, 11).reduce((sum, w) => sum + w, 0);
+        // Summary row for teacher (span across first 10 columns)
+        const colSpan10Width = colWidths.slice(0, 10).reduce((sum, w) => sum + w, 0);
         tableRows.push(new TableRow({
           children: [
             new TableCell({
-              columnSpan: 11,
-              width: { size: colSpan11Width, type: WidthType.DXA },
+              columnSpan: 10,
+              width: { size: colSpan10Width, type: WidthType.DXA },
               shading: { fill: 'F8FAFC', type: ShadingType.CLEAR },
               children: [new Paragraph({
                 alignment: AlignmentType.RIGHT,
@@ -389,7 +392,7 @@ export const TeacherLoadReportScreen: React.FC<TeacherLoadReportScreenProps> = (
             }),
             new TableCell({
               shading: { fill: 'F8FAFC', type: ShadingType.CLEAR },
-              width: { size: colWidths[11], type: WidthType.DXA },
+              width: { size: colWidths[10], type: WidthType.DXA },
               children: [new Paragraph({
                 alignment: AlignmentType.CENTER,
                 children: [new TextRun({
@@ -409,61 +412,139 @@ export const TeacherLoadReportScreen: React.FC<TeacherLoadReportScreenProps> = (
           properties: {
             page: {
               size: { orientation: PageOrientation.LANDSCAPE },
-              margin: { top: pageMarginDxa, bottom: pageMarginDxa, left: pageMarginDxa, right: pageMarginDxa }
+              margin: { top: 1200, bottom: 1800, left: pageMarginDxa, right: pageMarginDxa }
             }
           },
+          headers: {
+            default: new Header({
+              children: [
+                new Table({
+                  width: { size: 100, type: WidthType.PERCENTAGE },
+                  borders: {
+                    top: { style: BorderStyle.NONE },
+                    bottom: { style: BorderStyle.NONE },
+                    left: { style: BorderStyle.NONE },
+                    right: { style: BorderStyle.NONE },
+                    insideHorizontal: { style: BorderStyle.NONE },
+                    insideVertical: { style: BorderStyle.NONE }
+                  },
+                  rows: [
+                    new TableRow({
+                      children: [
+                        new TableCell({
+                          width: { size: Math.round(usableWidthDxa * 0.85), type: WidthType.DXA },
+                          children: [
+                            new Paragraph({
+                              children: [
+                                new TextRun({
+                                  text: `ตารางแนบท้ายประกอบคำสั่ง${schoolName} ที่ ${orderNumber} เรื่อง แต่งตั้งและมอบหมายให้ข้าราชการครูและลูกจ้างปฏิบัติหน้าที่สอน ภาคเรียนที่ ${semester} ปีการศึกษา ${academicYear}`,
+                                  bold: true,
+                                  size: 18,
+                                  font: 'TH Sarabun New'
+                                })
+                              ]
+                            })
+                          ]
+                        }),
+                        new TableCell({
+                          width: { size: Math.round(usableWidthDxa * 0.15), type: WidthType.DXA },
+                          children: [
+                            new Paragraph({
+                              alignment: AlignmentType.RIGHT,
+                              children: [
+                                new TextRun({ text: 'หน้า ', size: 18, font: 'TH Sarabun New' }),
+                                new TextRun({ children: [PageNumber.CURRENT], size: 18, font: 'TH Sarabun New' }),
+                                new TextRun({ text: ' / ', size: 18, font: 'TH Sarabun New' }),
+                                new TextRun({ children: [PageNumber.TOTAL_PAGES], size: 18, font: 'TH Sarabun New' })
+                              ]
+                            })
+                          ]
+                        })
+                      ]
+                    })
+                  ]
+                })
+              ]
+            })
+          },
+          footers: {
+            default: new Footer({
+              children: [
+                new Table({
+                  width: { size: 100, type: WidthType.PERCENTAGE },
+                  borders: {
+                    top: { style: BorderStyle.NONE },
+                    bottom: { style: BorderStyle.NONE },
+                    left: { style: BorderStyle.NONE },
+                    right: { style: BorderStyle.NONE },
+                    insideHorizontal: { style: BorderStyle.NONE },
+                    insideVertical: { style: BorderStyle.NONE }
+                  },
+                  rows: [
+                    new TableRow({
+                      children: [
+                        new TableCell({
+                          width: { size: Math.round(usableWidthDxa * 0.5), type: WidthType.DXA },
+                          children: [
+                            new Paragraph({
+                              alignment: AlignmentType.CENTER,
+                              children: [new TextRun({ text: '(ลงชื่อ)......................................................', size: 17, font: 'TH Sarabun New' })]
+                            }),
+                            new Paragraph({
+                              alignment: AlignmentType.CENTER,
+                              children: [new TextRun({ text: `(${deputyDirectorName})`, size: 17, font: 'TH Sarabun New' })]
+                            }),
+                            new Paragraph({
+                              alignment: AlignmentType.CENTER,
+                              children: [new TextRun({ text: deputyDirectorPosition, size: 17, font: 'TH Sarabun New' })]
+                            }),
+                            new Paragraph({
+                              alignment: AlignmentType.CENTER,
+                              children: [new TextRun({ text: 'ผู้เห็นชอบ', bold: true, size: 17, font: 'TH Sarabun New' })]
+                            })
+                          ]
+                        }),
+                        new TableCell({
+                          width: { size: Math.round(usableWidthDxa * 0.5), type: WidthType.DXA },
+                          children: [
+                            new Paragraph({
+                              alignment: AlignmentType.CENTER,
+                              children: [new TextRun({ text: '(ลงชื่อ)......................................................', size: 17, font: 'TH Sarabun New' })]
+                            }),
+                            new Paragraph({
+                              alignment: AlignmentType.CENTER,
+                              children: [new TextRun({ text: `(${directorName})`, size: 17, font: 'TH Sarabun New' })]
+                            }),
+                            new Paragraph({
+                              alignment: AlignmentType.CENTER,
+                              children: [new TextRun({ text: directorPosition, size: 17, font: 'TH Sarabun New' })]
+                            }),
+                            new Paragraph({
+                              alignment: AlignmentType.CENTER,
+                              children: [new TextRun({ text: 'ผู้อนุมัติ', bold: true, size: 17, font: 'TH Sarabun New' })]
+                            })
+                          ]
+                        })
+                      ]
+                    })
+                  ]
+                })
+              ]
+            })
+          },
           children: [
-            new Paragraph({
-              alignment: AlignmentType.CENTER,
-              children: [new TextRun({ text: `คำสั่งโรงเรียน${schoolName}`, bold: true, size: 28, font: 'TH Sarabun New' })]
-            }),
-            new Paragraph({
-              alignment: AlignmentType.CENTER,
-              children: [new TextRun({ text: `ที่ ..... /${academicYear}`, size: 24, font: 'TH Sarabun New' })]
-            }),
-            new Paragraph({
-              alignment: AlignmentType.CENTER,
-              children: [new TextRun({ text: `เรื่อง แต่งตั้งครูปฏิบัติหน้าที่การสอน ประจำภาคเรียนที่ ${semester} ปีการศึกษา ${academicYear}`, bold: true, size: 24, font: 'TH Sarabun New' })]
-            }),
-            new Paragraph({ text: '' }),
-            new Paragraph({
-              children: [new TextRun({
-                text: '        เพื่อให้การจัดการเรียนการสอนของโรงเรียนเป็นไปด้วยความเรียบร้อยและมีประสิทธิภาพ อาศัยอำนาจตามความในมาตรา ... จึงแต่งตั้งให้ข้าราชการครูปฏิบัติหน้าที่การสอน ดังรายละเอียดต่อไปนี้',
-                size: 24,
-                font: 'TH Sarabun New'
-              })]
-            }),
-            new Paragraph({ text: '' }),
             new Table({
               width: { size: 100, type: WidthType.PERCENTAGE },
               columnWidths: colWidths,
               borders: tableBorders,
               rows: tableRows
-            }),
-            new Paragraph({ text: '' }),
-            new Paragraph({
-              alignment: AlignmentType.RIGHT,
-              children: [new TextRun({ text: 'สั่ง ณ วันที่ ..... เดือน ..................... พ.ศ. .....        ', size: 24, font: 'TH Sarabun New' })]
-            }),
-            new Paragraph({ text: '' }),
-            new Paragraph({
-              alignment: AlignmentType.RIGHT,
-              children: [new TextRun({ text: 'ลงชื่อ .................................................                   ', size: 24, font: 'TH Sarabun New' })]
-            }),
-            new Paragraph({
-              alignment: AlignmentType.RIGHT,
-              children: [new TextRun({ text: `(${organizationSettings?.directorName || '........................................'})                  `, size: 24, font: 'TH Sarabun New' })]
-            }),
-            new Paragraph({
-              alignment: AlignmentType.RIGHT,
-              children: [new TextRun({ text: `${organizationSettings?.directorPosition || `ผู้อำนวยการโรงเรียน${schoolName}`}         `, size: 24, font: 'TH Sarabun New' })]
             })
           ]
         }]
       });
 
       const blob = await Packer.toBlob(doc);
-      saveAs(blob, 'คำสั่งปฏิบัติงานสอน.docx');
+      saveAs(blob, `ตารางแนบท้ายคำสั่งสอน_ภาค${semester}_${academicYear}.docx`);
     } catch (err: any) {
       console.error('Error exporting Word document:', err);
       alert('เกิดข้อผิดพลาดในการสร้างไฟล์ Word: ' + (err.message || ''));
@@ -478,6 +559,12 @@ export const TeacherLoadReportScreen: React.FC<TeacherLoadReportScreenProps> = (
       const schoolName = organizationSettings?.name || '................................';
       const academicYear = organizationSettings?.academicYear || '.....';
       const semester = organizationSettings?.semester || '.....';
+      const orderNumber = organizationSettings?.orderNumber || `..... / ${academicYear}`;
+      const deputyDirectorName = organizationSettings?.deputyDirectorName || '......................................................';
+      const deputyDirectorPosition = organizationSettings?.deputyDirectorPosition || 'รองผู้อำนวยการกลุ่มบริหารวิชาการ';
+      const directorName = organizationSettings?.directorName || '......................................................';
+      const directorPosition = organizationSettings?.directorPosition || `ผู้อำนวยการโรงเรียน${schoolName}`;
+      const logoUrl = organizationSettings?.logoUrl;
 
       const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
       doc.addFileToVFS('Sarabun-Regular.ttf', SARABUN_REGULAR_BASE64);
@@ -486,24 +573,9 @@ export const TeacherLoadReportScreen: React.FC<TeacherLoadReportScreenProps> = (
       doc.addFont('Sarabun-Bold.ttf', 'Sarabun', 'bold');
 
       const pageWidth = doc.internal.pageSize.getWidth(); // 297mm
+      const pageHeight = doc.internal.pageSize.getHeight(); // 210mm
 
-      doc.setFont('Sarabun', 'bold');
-      doc.setFontSize(14);
-      doc.text(`คำสั่งโรงเรียน${schoolName}`, pageWidth / 2, 14, { align: 'center' });
-
-      doc.setFont('Sarabun', 'normal');
-      doc.setFontSize(11);
-      doc.text(`ที่ ..... /${academicYear}`, pageWidth / 2, 20, { align: 'center' });
-
-      doc.setFont('Sarabun', 'bold');
-      doc.text(`เรื่อง แต่งตั้งครูปฏิบัติหน้าที่การสอน ประจำภาคเรียนที่ ${semester} ปีการศึกษา ${academicYear}`, pageWidth / 2, 26, { align: 'center' });
-
-      doc.setFont('Sarabun', 'normal');
-      doc.setFontSize(10);
-      const reasonText = '        เพื่อให้การจัดการเรียนการสอนของโรงเรียนเป็นไปด้วยความเรียบร้อยและมีประสิทธิภาพ อาศัยอำนาจตามความในมาตรา ... จึงแต่งตั้งให้ข้าราชการครูปฏิบัติหน้าที่การสอน ดังรายละเอียดต่อไปนี้';
-      doc.text(reasonText, 14, 33, { maxWidth: pageWidth - 28 });
-
-      const head = [['กลุ่มสาระ', 'ที่', 'ชื่อ-สกุล', 'อีเมล', 'ประจำชั้น', 'ลำดับวิชา', 'รหัสวิชา', 'ชื่อรายวิชา', 'คาบ/ห้อง', 'วัน-คาบที่สอน', 'ระดับ', 'สรุปคาบ']];
+      const head = [['กลุ่มสาระ', 'ที่', 'ชื่อ-สกุล', 'ประจำชั้น', 'ลำดับวิชา', 'รหัสวิชา', 'ชื่อรายวิชา', 'คาบ/ห้อง', 'วัน-คาบที่สอน', 'ระดับ', 'สรุปคาบ']];
       const body: any[] = [];
 
       reportData.forEach((row) => {
@@ -513,7 +585,6 @@ export const TeacherLoadReportScreen: React.FC<TeacherLoadReportScreenProps> = (
             isFirstOfTeacher ? row.department : '',
             isFirstOfTeacher ? String(row.no) : '',
             isFirstOfTeacher ? row.name : '',
-            isFirstOfTeacher ? row.email : '',
             isFirstOfTeacher ? row.homeroom : '',
             String(subjectIndex++),
             group.subject?.subjectCode || '-',
@@ -530,7 +601,6 @@ export const TeacherLoadReportScreen: React.FC<TeacherLoadReportScreenProps> = (
             row.department,
             String(row.no),
             row.name,
-            row.email,
             row.homeroom,
             '',
             '-',
@@ -545,11 +615,11 @@ export const TeacherLoadReportScreen: React.FC<TeacherLoadReportScreenProps> = (
           row.activitySubjects.forEach((g, i) => addPdfSubjectRow(g, true, row.mainSubjects.length === 0 && i === 0));
         }
 
-        // Summary row for teacher
+        // Summary row for teacher (colSpan 10)
         body.push([
           {
             content: `รวมคาบสอน (วิชาหลัก: ${row.totalMain}, กิจกรรม: ${row.totalActivity})`,
-            colSpan: 11,
+            colSpan: 10,
             styles: { halign: 'right', fontStyle: 'bold', fillColor: [248, 250, 252] }
           },
           {
@@ -560,7 +630,7 @@ export const TeacherLoadReportScreen: React.FC<TeacherLoadReportScreenProps> = (
       });
 
       autoTable(doc, {
-        startY: 38,
+        startY: 23,
         head: head,
         body: body,
         theme: 'grid',
@@ -581,38 +651,70 @@ export const TeacherLoadReportScreen: React.FC<TeacherLoadReportScreenProps> = (
           valign: 'middle'
         },
         columnStyles: {
-          0: { cellWidth: 26, halign: 'center' },
+          0: { cellWidth: 28, halign: 'center' },
           1: { cellWidth: 10, halign: 'center' },
-          2: { cellWidth: 34, halign: 'left' },
-          3: { cellWidth: 34, halign: 'left' },
-          4: { cellWidth: 20, halign: 'center' },
-          5: { cellWidth: 12, halign: 'center' },
-          6: { cellWidth: 16, halign: 'center' },
-          7: { cellWidth: 'auto', halign: 'left' },
-          8: { cellWidth: 24, halign: 'center' },
-          9: { cellWidth: 22, halign: 'center' },
-          10: { cellWidth: 16, halign: 'center' },
-          11: { cellWidth: 14, halign: 'center' }
+          2: { cellWidth: 36, halign: 'left' },
+          3: { cellWidth: 20, halign: 'center' },
+          4: { cellWidth: 12, halign: 'center' },
+          5: { cellWidth: 16, halign: 'center' },
+          6: { cellWidth: 'auto', halign: 'left' },
+          7: { cellWidth: 26, halign: 'center' },
+          8: { cellWidth: 26, halign: 'center' },
+          9: { cellWidth: 18, halign: 'center' },
+          10: { cellWidth: 16, halign: 'center' }
         },
-        margin: { left: 14, right: 14, bottom: 20 }
+        margin: { top: 23, bottom: 30, left: 12, right: 12 },
+        didDrawPage: () => {
+          // --- Draw Repeating Header on Every Page ---
+          let textStartX = 12;
+          if (logoUrl && logoUrl.startsWith('data:image')) {
+            try {
+              doc.addImage(logoUrl, 'PNG', 12, 5, 12, 12);
+              textStartX = 26;
+            } catch (err) {
+              console.warn('Unable to draw logo in PDF header:', err);
+            }
+          }
+
+          doc.setFont('Sarabun', 'bold');
+          doc.setFontSize(9.5);
+          const headerTitle = `ตารางแนบท้ายประกอบคำสั่ง${schoolName} ที่ ${orderNumber} เรื่อง แต่งตั้งและมอบหมายให้ข้าราชการครูและลูกจ้างปฏิบัติหน้าที่สอน ภาคเรียนที่ ${semester} ปีการศึกษา ${academicYear}`;
+          doc.text(headerTitle, textStartX, 12);
+
+          // --- Draw Repeating Footer on Every Page ---
+          const footerTopY = pageHeight - 24;
+          doc.setFont('Sarabun', 'normal');
+          doc.setFontSize(8.5);
+
+          // Left column: Deputy Director (Sign & Approval)
+          const leftCenter = 75;
+          doc.text('(ลงชื่อ)......................................................', leftCenter, footerTopY, { align: 'center' });
+          doc.text(`(${deputyDirectorName})`, leftCenter, footerTopY + 4.5, { align: 'center' });
+          doc.text(deputyDirectorPosition, leftCenter, footerTopY + 9, { align: 'center' });
+          doc.setFont('Sarabun', 'bold');
+          doc.text('ผู้เห็นชอบ', leftCenter, footerTopY + 13.5, { align: 'center' });
+
+          // Right column: Director (Sign & Approval)
+          const rightCenter = 222;
+          doc.setFont('Sarabun', 'normal');
+          doc.text('(ลงชื่อ)......................................................', rightCenter, footerTopY, { align: 'center' });
+          doc.text(`(${directorName})`, rightCenter, footerTopY + 4.5, { align: 'center' });
+          doc.text(directorPosition, rightCenter, footerTopY + 9, { align: 'center' });
+          doc.setFont('Sarabun', 'bold');
+          doc.text('ผู้อนุมัติ', rightCenter, footerTopY + 13.5, { align: 'center' });
+        }
       });
 
-      const finalY = (doc as any).lastAutoTable?.finalY || 100;
-      let signY = finalY + 12;
-      if (signY + 35 > doc.internal.pageSize.getHeight()) {
-        doc.addPage();
-        signY = 20;
+      // Second pass: Draw page numbers on all pages accurately (e.g. "หน้า 1 / 5")
+      const totalPages = (doc as any).getNumberOfPages ? (doc as any).getNumberOfPages() : (doc.internal.pages.length - 1);
+      for (let i = 1; i <= totalPages; i++) {
+        doc.setPage(i);
+        doc.setFont('Sarabun', 'normal');
+        doc.setFontSize(9);
+        doc.text(`หน้า ${i} / ${totalPages}`, pageWidth - 12, 12, { align: 'right' });
       }
 
-      const rightAlignX = pageWidth - 20;
-      doc.setFont('Sarabun', 'normal');
-      doc.setFontSize(10);
-      doc.text('สั่ง ณ วันที่ ..... เดือน ..................... พ.ศ. .....', rightAlignX, signY, { align: 'right' });
-      doc.text('ลงชื่อ .................................................', rightAlignX, signY + 12, { align: 'right' });
-      doc.text(`(${organizationSettings?.directorName || '........................................'})`, rightAlignX - 8, signY + 18, { align: 'right' });
-      doc.text(organizationSettings?.directorPosition || `ผู้อำนวยการโรงเรียน${schoolName}`, rightAlignX - 5, signY + 24, { align: 'right' });
-
-      doc.save('คำสั่งปฏิบัติงานสอน.pdf');
+      doc.save(`ตารางแนบท้ายคำสั่งสอน_ภาค${semester}_${academicYear}.pdf`);
     } catch (err: any) {
       console.error('Error exporting PDF:', err);
       alert('เกิดข้อผิดพลาดในการสร้างไฟล์ PDF: ' + (err.message || ''));
