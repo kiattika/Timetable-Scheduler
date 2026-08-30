@@ -131,7 +131,7 @@ const App: React.FC = () => {
   };
 
 
-  const { handleBackupData, handleRestoreData } = useBackupRestore(appData, setAppData as (data: AppData) => void, setRestoreFile, setShowRestoreConfirm);
+  const { handleBackupData, handleRestoreData, isBackingUp } = useBackupRestore(appData, setAppData as (data: AppData) => void, setRestoreFile, setShowRestoreConfirm);
 
   useEffect(() => {
     if (restoreFile) {
@@ -692,7 +692,8 @@ const App: React.FC = () => {
     className?: string;
     isFileInput?: boolean; 
     onFileChange?: (event: ChangeEvent<HTMLInputElement>) => void; 
-  }> = ({ viewName, label, icon: Icon, isActive, onClick, isSubItem, className, isFileInput, onFileChange }) => {
+    disabled?: boolean;
+  }> = ({ viewName, label, icon: Icon, isActive, onClick, isSubItem, className, isFileInput, onFileChange, disabled }) => {
     
     // Safety guard for undefined Icon
     const SafeIcon = Icon || Icons.DataManagement || (() => <div className="w-5 h-5" />);
@@ -715,10 +716,11 @@ const App: React.FC = () => {
     }
     return (
     <button
-      onClick={onClick}
+      onClick={disabled ? undefined : onClick}
+      disabled={disabled}
       className={`flex items-center w-full text-left px-3 py-2.5 rounded-md transition-colors duration-150 ease-in-out overflow-hidden
         ${isSubItem ? 'pl-5 text-sm' : 'text-base'}
-        ${isActive ? 'bg-blue-600 text-white shadow-md' : 'text-slate-600 hover:bg-slate-200 hover:text-slate-800'}
+        ${disabled ? 'opacity-60 cursor-not-allowed bg-slate-100 text-slate-400' : isActive ? 'bg-blue-600 text-white shadow-md' : 'text-slate-600 hover:bg-slate-200 hover:text-slate-800'}
         ${className || ''}`}
       aria-current={isActive ? "page" : undefined}
     >
@@ -973,9 +975,10 @@ const App: React.FC = () => {
                 <li>
                   <NavButton
                     viewName="backup"
-                    label="Backup Data (JSON)"
+                    label={isBackingUp ? "กำลังสำรองข้อมูล..." : "Backup Data (JSON)"}
                     icon={Icons.Backup}
                     onClick={handleBackupData}
+                    disabled={isBackingUp}
                   />
                 </li>
                 <li>

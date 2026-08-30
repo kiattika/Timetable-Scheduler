@@ -1,6 +1,6 @@
-import { ChangeEvent } from 'react';
+import { ChangeEvent, useState } from 'react';
 import { AppData } from '../types';
-import { pruneActivityLogs } from '../api';
+import { buildTimetableBackupPayload, triggerJsonDownload } from '../utils/backup';
 
 export const useBackupRestore = (
   appData: AppData | null, 
@@ -8,7 +8,9 @@ export const useBackupRestore = (
   setRestoreFile: (file: File | null) => void, 
   setShowRestoreConfirm: (show: boolean) => void
 ) => {
-  const handleBackupData = () => {
+  const [isBackingUp, setIsBackingUp] = useState(false);
+
+  const handleBackupData = async () => {
     if (appData?.currentUser?.role !== 'admin') {
       alert("เฉพาะผู้ดูแลระบบ (Admin) เท่านั้นที่สามารถสำรองข้อมูลได้");
       return;
@@ -19,83 +21,17 @@ export const useBackupRestore = (
     }
 
     try {
-      const orgSettings = appData.organizationSettings || null;
-      const schoolName = orgSettings?.name || "Uttaradit School";
-      const termYear = orgSettings?.academicYear 
-        ? `${orgSettings?.semester || '1'}_${orgSettings.academicYear}` 
-        : "1_2569";
-
-      const prunedLogs = pruneActivityLogs(appData.activityLogs || [], 7);
-
-      const backupData = {
-        backupVersion: 2,
-        timestamp: new Date().toISOString(),
-        schoolName: schoolName,
-        academicTerm: orgSettings?.academicYear ? `${orgSettings?.semester || '1'}/${orgSettings.academicYear}` : "1/2569",
-        summary: {
-          teachersCount: appData.teachers?.length || 0,
-          subjectsCount: appData.subjects?.length || 0,
-          gradeLevelsCount: appData.gradeLevels?.length || 0,
-          physicalRoomsCount: appData.physicalRooms?.length || 0,
-          departmentsCount: appData.departments?.length || 0,
-          resourceTypesCount: appData.resourceTypes?.length || 0,
-          periodSettingsCount: appData.periodSettings?.length || 0,
-          teacherSubjectAssignmentsCount: appData.teacherSubjectAssignments?.length || 0,
-          scheduleEntriesCount: appData.scheduleEntries?.length || 0,
-          usersCount: appData.users?.length || 0,
-        },
-        organizationSettings: orgSettings,
-        data: {
-          teachers: appData.teachers || [],
-          subjects: (appData.subjects || []).map(s => ({
-            ...s,
-            teachingMode: s.teachingMode || 'single',
-            allowClassroomSharing: !!s.allowClassroomSharing,
-            isBroadAssignment: !!s.isBroadAssignment,
-            isHomeroomAdvisorySubject: !!s.isHomeroomAdvisorySubject,
-            autoLinkToHomeroomTeachers: !!s.autoLinkToHomeroomTeachers,
-            applicableParentGradeLevelIds: s.applicableParentGradeLevelIds || []
-          })),
-          gradeLevels: appData.gradeLevels || [],
-          physicalRooms: appData.physicalRooms || [],
-          departments: appData.departments || [],
-          resourceTypes: appData.resourceTypes || [],
-          periodSettings: appData.periodSettings || [],
-          teacherSubjectAssignments: appData.teacherSubjectAssignments || [],
-          scheduleEntries: appData.scheduleEntries || [],
-          organizationSettings: orgSettings,
-          users: (appData.users || []).map(u => ({
-            id: u.id,
-            name: u.name,
-            email: u.email,
-            role: u.role,
-            assignedDepartments: u.assignedDepartments || [],
-            organizationId: u.organizationId || 'default'
-          })),
-          authorizedAdmins: appData.authorizedAdmins || [],
-          activityLogs: prunedLogs
-        }
-      };
-
-      const jsonString = JSON.stringify(backupData, null, 2);
-      const blob = new Blob([jsonString], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      
-      const now = new Date();
-      const formattedDate = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}`;
-      const safeSchoolName = schoolName.replace(/[^a-zA-Z0-9ก-๙]/g, '_').substring(0, 30);
-      const safeTerm = termYear.replace(/[^a-zA-Z0-9_]/g, '');
-
-      link.download = `timetable_backup_${safeSchoolName}_${safeTerm}_${formattedDate}.json`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
+      setIsBackingUp(true);
+      // Give UI a moment to show in-progress state
+      await new Promise(resolve => setTimeout(resolve, 50));
+      const { backupData, filename } = buildTimetableBackupPayload(appData);
+      triggerJsonDownload(backupData, filename);
+      alert("บันทึกข้อมูลสำรองเรียบร้อยแล้ว\nไฟล์ถูกบันทึกไว้ในโฟลเดอร์ดาวน์โหลดของเบราว์เซอร์ (Downloads)");
     } catch (error) {
       console.error("Backup failed:", error);
       alert("เกิดข้อผิดพลาดในการสำรองข้อมูล");
+    } finally {
+      setIsBackingUp(false);
     }
   };
 
@@ -143,5 +79,6 @@ export const useBackupRestore = (
     }
   };
 
-  return { handleBackupData, handleRestoreData };
+  return { handleBackupData, handleRestoreData, isBackingUp };
 };
+

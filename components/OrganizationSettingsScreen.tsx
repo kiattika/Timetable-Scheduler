@@ -2,8 +2,8 @@
 import React, { useState, useEffect, ChangeEvent, FormEvent } from 'react';
 import { OrganizationSettings, ScreenAccessProps, DayOfWeek, User } from '../types';
 import { Icons } from '../constants';
-import ConfirmationModal from './ConfirmationModal';
 import { fetchAppData, resetSemesterTimetable, ORG_ID } from '../api';
+import { buildTimetableBackupPayload, triggerJsonDownload } from '../utils/backup';
 import { generateOfficialMemoPdf, generateSchoolOrderPdf } from '../utils/officialDocumentsPdf';
 import { generateOfficialMemoDocx, generateSchoolOrderDocx } from '../utils/officialDocumentsDocx';
 
@@ -25,8 +25,11 @@ const OrganizationSettingsScreen: React.FC<OrganizationSettingsScreenProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [isConfirmClearModalOpen, setIsConfirmClearModalOpen] = useState(false);
+  const [hasDownloadedBackupForClear, setHasDownloadedBackupForClear] = useState(false);
+  const [isDownloadingBackupForClear, setIsDownloadingBackupForClear] = useState(false);
   const [isResetSemesterModalOpen, setIsResetSemesterModalOpen] = useState(false);
   const [hasDownloadedBackup, setHasDownloadedBackup] = useState(false);
+  const [isDownloadingBackup, setIsDownloadingBackup] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
   const [fetchedDomain, setFetchedDomain] = useState<string>('');
 
@@ -187,14 +190,42 @@ const OrganizationSettingsScreen: React.FC<OrganizationSettingsScreenProps> = ({
         alert('เฉพาะผู้จัดการเท่านั้นที่สามารถลบข้อมูลหน่วยงานได้');
         return;
     }
+    setHasDownloadedBackupForClear(false);
     setIsConfirmClearModalOpen(true);
   };
 
+  const handleCloseClearModal = () => {
+    setIsConfirmClearModalOpen(false);
+    setHasDownloadedBackupForClear(false);
+  };
+
+  const handleDownloadBackupForClear = async () => {
+    try {
+      setIsDownloadingBackupForClear(true);
+      const orgId = ORG_ID;
+      const appData = await fetchAppData(orgId);
+      const { backupData, filename } = buildTimetableBackupPayload(appData);
+      triggerJsonDownload(backupData, filename);
+      setHasDownloadedBackupForClear(true);
+      alert("บันทึกข้อมูลสำรองเรียบร้อยแล้ว\nไฟล์ถูกบันทึกไว้ในโฟลเดอร์ดาวน์โหลดของเบราว์เซอร์ (Downloads)");
+    } catch (err) {
+      console.error("Failed to download backup", err);
+      alert("เกิดข้อผิดพลาดในการดาวน์โหลดข้อมูลสำรอง");
+    } finally {
+      setIsDownloadingBackupForClear(false);
+    }
+  };
+
   const confirmClearAll = () => {
+    if (!hasDownloadedBackupForClear) {
+      alert("กรุณาดาวน์โหลดข้อมูลสำรองก่อนทำรายการ");
+      return;
+    }
     setOrganizationSettings(null); // This will trigger useEffect to set default fields
     setError(null);
     setSuccessMessage('ลบข้อมูลหน่วยงานทั้งหมดแล้ว และได้ตั้งค่าเริ่มต้นให้บางส่วน');
     setIsConfirmClearModalOpen(false);
+    setHasDownloadedBackupForClear(false);
   };
 
   const requestResetSemester = () => {
@@ -205,19 +236,18 @@ const OrganizationSettingsScreen: React.FC<OrganizationSettingsScreenProps> = ({
 
   const handleDownloadBackup = async () => {
     try {
+      setIsDownloadingBackup(true);
       const orgId = ORG_ID;
       const appData = await fetchAppData(orgId);
-      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(appData, null, 2));
-      const downloadAnchorNode = document.createElement('a');
-      downloadAnchorNode.setAttribute("href", dataStr);
-      downloadAnchorNode.setAttribute("download", `timetable_backup_${orgId}_${new Date().toISOString().split('T')[0]}.json`);
-      document.body.appendChild(downloadAnchorNode);
-      downloadAnchorNode.click();
-      downloadAnchorNode.remove();
+      const { backupData, filename } = buildTimetableBackupPayload(appData);
+      triggerJsonDownload(backupData, filename);
       setHasDownloadedBackup(true);
+      alert("บันทึกข้อมูลสำรองเรียบร้อยแล้ว\nไฟล์ถูกบันทึกไว้ในโฟลเดอร์ดาวน์โหลดของเบราว์เซอร์ (Downloads)");
     } catch (err) {
       console.error("Failed to download backup", err);
       alert("เกิดข้อผิดพลาดในการดาวน์โหลดข้อมูลสำรอง");
+    } finally {
+      setIsDownloadingBackup(false);
     }
   };
 
@@ -895,15 +925,90 @@ const OrganizationSettingsScreen: React.FC<OrganizationSettingsScreenProps> = ({
         </div>
       </form>
       
-      <ConfirmationModal
-        isOpen={isConfirmClearModalOpen}
-        onClose={() => setIsConfirmClearModalOpen(false)}
-        onConfirm={confirmClearAll}
-        title="ยืนยันการลบข้อมูลหน่วยงานทั้งหมด"
-        message="คุณแน่ใจหรือไม่ว่าต้องการลบข้อมูลหน่วยงานทั้งหมด? การดำเนินการนี้ไม่สามารถย้อนกลับได้ และจะคืนค่าเริ่มต้นบางส่วน"
-        confirmButtonText="ลบทั้งหมด"
-        icon={Icons.Warning}
-      />
+      {/* Clear All Organization Data Modal (Two-Step with Mandatory Backup) */}
+      {isConfirmClearModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
+          <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            <div className="p-6">
+              <div className="flex items-center gap-4 mb-4">
+                <div className="flex-shrink-0 w-12 h-12 bg-red-100 rounded-full flex items-center justify-center text-red-600">
+                  <Icons.Warning size={24} />
+                </div>
+                <div>
+                  <h3 className="text-xl font-bold text-slate-900">ยืนยันการลบข้อมูลหน่วยงานทั้งหมด</h3>
+                  <p className="text-sm text-slate-500">ขั้นตอนการล้างข้อมูลและการตั้งค่าหน่วยงาน</p>
+                </div>
+              </div>
+              
+              <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
+                <p className="text-sm text-red-800 font-medium">
+                  คำเตือน: คุณแน่ใจหรือไม่ว่าต้องการลบข้อมูลหน่วยงานทั้งหมด? การดำเนินการนี้ไม่สามารถย้อนกลับได้ และจะคืนค่าเริ่มต้นบางส่วน กรุณาสำรองข้อมูลปัจจุบันก่อนทำรายการ
+                </p>
+              </div>
+
+              <div className="space-y-4">
+                <div className="flex items-center justify-between p-3 border border-slate-200 rounded-lg">
+                  <div>
+                    <p className="text-sm font-medium text-slate-700">ขั้นที่ 1: สำรองข้อมูล</p>
+                    <p className="text-xs text-slate-500">ดาวน์โหลดข้อมูลทั้งหมดเก็บไว้ก่อน</p>
+                    {hasDownloadedBackupForClear && (
+                      <p className="text-xs text-emerald-600 font-medium mt-1">✓ บันทึกข้อมูลสำรองเรียบร้อยแล้ว</p>
+                    )}
+                  </div>
+                  <button 
+                    type="button"
+                    onClick={handleDownloadBackupForClear}
+                    disabled={isDownloadingBackupForClear}
+                    className={`px-4 py-2 text-sm font-medium rounded transition-colors flex items-center gap-2 ${
+                      isDownloadingBackupForClear
+                        ? 'bg-slate-200 text-slate-500 cursor-not-allowed'
+                        : hasDownloadedBackupForClear
+                          ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-300'
+                          : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                    }`}
+                  >
+                    {isDownloadingBackupForClear ? (
+                      <>
+                        <span className="inline-block animate-spin">⏳</span>
+                        <span>กำลังบันทึกข้อมูลสำรอง...</span>
+                      </>
+                    ) : hasDownloadedBackupForClear ? (
+                      <span>ดาวน์โหลดอีกครั้ง</span>
+                    ) : (
+                      <span>ดาวน์โหลดข้อมูลสำรอง</span>
+                    )}
+                  </button>
+                </div>
+
+                <div className={`flex items-center justify-between p-3 border rounded-lg transition-colors ${hasDownloadedBackupForClear ? 'border-red-200 bg-red-50' : 'border-slate-200 bg-slate-50 opacity-50'}`}>
+                  <div>
+                    <p className={`text-sm font-medium ${hasDownloadedBackupForClear ? 'text-red-700' : 'text-slate-500'}`}>ขั้นที่ 2: ยืนยันการลบข้อมูล</p>
+                    <p className="text-xs text-red-500/70">การกระทำนี้ย้อนกลับไม่ได้</p>
+                  </div>
+                  <button 
+                    type="button"
+                    onClick={confirmClearAll}
+                    disabled={!hasDownloadedBackupForClear}
+                    className={`px-4 py-2 text-sm font-medium rounded transition-colors ${hasDownloadedBackupForClear ? 'bg-red-600 hover:bg-red-700 text-white' : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`}
+                  >
+                    ลบข้อมูลทั้งหมด
+                  </button>
+                </div>
+              </div>
+            </div>
+            
+            <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex justify-end">
+              <button
+                type="button"
+                onClick={handleCloseClearModal}
+                className="px-4 py-2 text-sm font-medium text-slate-600 hover:text-slate-800 transition-colors"
+              >
+                ยกเลิก
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* New Semester Reset Modal */}
       {isResetSemesterModalOpen && (
@@ -931,12 +1036,32 @@ const OrganizationSettingsScreen: React.FC<OrganizationSettingsScreenProps> = ({
                   <div>
                     <p className="text-sm font-medium text-slate-700">ขั้นที่ 1: สำรองข้อมูล</p>
                     <p className="text-xs text-slate-500">ดาวน์โหลดข้อมูลทั้งหมดเก็บไว้ก่อน</p>
+                    {hasDownloadedBackup && (
+                      <p className="text-xs text-emerald-600 font-medium mt-1">✓ บันทึกข้อมูลสำรองเรียบร้อยแล้ว</p>
+                    )}
                   </div>
                   <button 
+                    type="button"
                     onClick={handleDownloadBackup}
-                    className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-medium rounded transition-colors"
+                    disabled={isDownloadingBackup}
+                    className={`px-4 py-2 text-sm font-medium rounded transition-colors flex items-center gap-2 ${
+                      isDownloadingBackup
+                        ? 'bg-slate-200 text-slate-500 cursor-not-allowed'
+                        : hasDownloadedBackup
+                          ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-300'
+                          : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                    }`}
                   >
-                    ดาวน์โหลดข้อมูลสำรอง
+                    {isDownloadingBackup ? (
+                      <>
+                        <span className="inline-block animate-spin">⏳</span>
+                        <span>กำลังบันทึกข้อมูลสำรอง...</span>
+                      </>
+                    ) : hasDownloadedBackup ? (
+                      <span>ดาวน์โหลดอีกครั้ง</span>
+                    ) : (
+                      <span>ดาวน์โหลดข้อมูลสำรอง</span>
+                    )}
                   </button>
                 </div>
 
