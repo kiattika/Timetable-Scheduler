@@ -78,7 +78,8 @@ export const buildTimetableBackupPayload = (appData: AppData): { backupData: Bac
       subjects: (appData.subjects || []).map(s => ({
         ...s,
         teachingMode: s.teachingMode || 'single',
-        allowClassroomSharing: !!s.allowClassroomSharing,
+        allowPhysicalRoomSharing: !!(s.allowPhysicalRoomSharing ?? s.allowClassroomSharing),
+        allowClassroomSharing: !!(s.allowPhysicalRoomSharing ?? s.allowClassroomSharing),
         isBroadAssignment: !!s.isBroadAssignment,
         isHomeroomAdvisorySubject: !!s.isHomeroomAdvisorySubject,
         autoLinkToHomeroomTeachers: !!s.autoLinkToHomeroomTeachers,

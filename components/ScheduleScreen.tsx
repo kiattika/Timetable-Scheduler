@@ -584,15 +584,10 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
                 }
             }
 
-            // PhysicalRoom Conflict Check (Bypassed for TEACHER_ONLY, STUDENT_ONLY, or Sharable subjects)
+            // PhysicalRoom Conflict Check (Bypassed for Sharable subjects)
             const isPlacingSharable = isSharable(placingSubject);
             const isEntrySharable = isSharable(entrySubject);
-            const bypassRoomCheck = (placingSubjectType === 'TEACHER_ONLY') || 
-                                    (entrySubjectType === 'TEACHER_ONLY') ||
-                                    (placingSubjectType === 'STUDENT_ONLY') ||
-                                    (entrySubjectType === 'STUDENT_ONLY') ||
-                                    isPlacingSharable || 
-                                    isEntrySharable;
+            const bypassRoomCheck = isPlacingSharable || isEntrySharable;
 
             if (!bypassRoomCheck && physicalRoomIdToCheck && entry.physicalRoomId === physicalRoomIdToCheck) {
                 const physicalRoomDetails = (physicalRooms || []).find(c => c.id === physicalRoomIdToCheck);

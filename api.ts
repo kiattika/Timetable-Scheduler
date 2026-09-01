@@ -181,7 +181,26 @@ export const fetchAppData = async (orgId: string = ORG_ID): Promise<AppData> => 
 
     if (docSnap && docSnap.exists()) {
       const parsedData = docSnap.data() as any;
-      const subjectsWithDefaults = (parsedData.subjects || []).map((s: Subject) => ({...s, teachingMode: s.teachingMode || 'single'}));
+      const subjectsWithDefaults = (parsedData.subjects || []).map((s: any) => {
+        let allowSharing = s.allowPhysicalRoomSharing;
+        if (allowSharing === undefined && s.allowClassroomSharing !== undefined) {
+          allowSharing = s.allowClassroomSharing;
+        }
+        // One-time migration: default to true for existing STUDENT_ONLY / TEACHER_ONLY subjects if previously unset
+        if (allowSharing === undefined || allowSharing === null) {
+          if (s.type === 'STUDENT_ONLY' || s.type === 'TEACHER_ONLY') {
+            allowSharing = true;
+          } else {
+            allowSharing = false;
+          }
+        }
+        return {
+          ...s,
+          teachingMode: s.teachingMode || 'single',
+          allowPhysicalRoomSharing: Boolean(allowSharing),
+          allowClassroomSharing: Boolean(allowSharing),
+        };
+      });
       
       // If subcollection was empty but main document has scheduleEntries, use main document
       const finalScheduleEntries: ScheduleEntry[] = Array.isArray(loadedScheduleEntries) && loadedScheduleEntries.length > 0 

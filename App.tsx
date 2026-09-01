@@ -179,15 +179,29 @@ const App: React.FC = () => {
                 departments: rawData.departments && rawData.departments.length > 0 ? rawData.departments : (appData.departments || [...DEFAULT_DEPARTMENTS]),
                 resourceTypes: rawData.resourceTypes && rawData.resourceTypes.length > 0 ? rawData.resourceTypes : (appData.resourceTypes || [...DEFAULT_RESOURCE_TYPES]),
                 teachers: Array.isArray(rawData.teachers) ? rawData.teachers : [],
-                subjects: Array.isArray(rawData.subjects) ? rawData.subjects.map((s: any) => ({
-                  ...s,
-                  teachingMode: s.teachingMode || 'single',
-                  allowClassroomSharing: !!s.allowClassroomSharing,
-                  isBroadAssignment: !!s.isBroadAssignment,
-                  isHomeroomAdvisorySubject: !!s.isHomeroomAdvisorySubject,
-                  autoLinkToHomeroomTeachers: !!s.autoLinkToHomeroomTeachers,
-                  applicableParentGradeLevelIds: s.applicableParentGradeLevelIds || []
-                })) : [],
+                subjects: Array.isArray(rawData.subjects) ? rawData.subjects.map((s: any) => {
+                  let allowSharing = s.allowPhysicalRoomSharing;
+                  if (allowSharing === undefined && s.allowClassroomSharing !== undefined) {
+                    allowSharing = s.allowClassroomSharing;
+                  }
+                  if (allowSharing === undefined || allowSharing === null) {
+                    if (s.type === 'STUDENT_ONLY' || s.type === 'TEACHER_ONLY') {
+                      allowSharing = true;
+                    } else {
+                      allowSharing = false;
+                    }
+                  }
+                  return {
+                    ...s,
+                    teachingMode: s.teachingMode || 'single',
+                    allowPhysicalRoomSharing: Boolean(allowSharing),
+                    allowClassroomSharing: Boolean(allowSharing),
+                    isBroadAssignment: !!s.isBroadAssignment,
+                    isHomeroomAdvisorySubject: !!s.isHomeroomAdvisorySubject,
+                    autoLinkToHomeroomTeachers: !!s.autoLinkToHomeroomTeachers,
+                    applicableParentGradeLevelIds: s.applicableParentGradeLevelIds || []
+                  };
+                }) : [],
                 gradeLevels: Array.isArray(rawData.gradeLevels) ? rawData.gradeLevels : [],
                 physicalRooms: Array.isArray(rawData.physicalRooms) ? rawData.physicalRooms : [],
                 scheduleEntries: Array.isArray(rawData.scheduleEntries) ? rawData.scheduleEntries : [],
@@ -280,7 +294,7 @@ const App: React.FC = () => {
           placeholder: "'single' or 'multiple'"
         },
         { name: 'schedulingPattern', label: 'Scheduling Pattern (e.g., 2/2/1)', type: 'text', placeholder: 'e.g., 2/1/1 or 2/2', required: false },
-        { name: 'allowClassroomSharing', label: 'Allow PhysicalRoom Sharing? (อนุญาตให้ใช้ห้องเรียนร่วมกับวิชาอื่นได้)', type: 'checkbox', required: false, placeholder: "'true' or 'false'" },
+        { name: 'allowPhysicalRoomSharing', label: 'อนุญาตให้ใช้ห้องร่วมกัน (ข้ามการตรวจสอบห้องชนกัน)', type: 'checkbox', required: false, placeholder: "'true' or 'false'" },
         { name: 'isBroadAssignment', label: 'Broad Assignment (สำหรับวิชาที่เรียนรวมกันทั้งระดับชั้น เช่น ลูกเสือ)', type: 'checkbox', required: false },
         { name: 'isHomeroomAdvisorySubject', label: 'Homeroom/Advisory Subject (วิชาโฮมรูม/แนะแนว)', type: 'checkbox', required: false },
         { name: 'autoLinkToHomeroomTeachers', label: 'Auto-link to Homeroom Teachers (เชื่อมโยงกับครูที่ปรึกษาอัตโนมัติ)', type: 'checkbox', required: false, disabled: (item: any) => !item?.isHomeroomAdvisorySubject },

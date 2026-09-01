@@ -35,7 +35,8 @@ export interface Subject extends Identifiable {
   periodsPerWeek?: number; // คาบเรียน (จำนวนคาบต่อสัปดาห์)
   teachingMode?: SubjectTeachingMode; // 'single' (default) or 'multiple'
   schedulingPattern?: string; // e.g., "2/1/1", "2/2", "1/1/1/1"
-  allowClassroomSharing?: boolean; // Added: Allows subject to share classroom with others
+  allowPhysicalRoomSharing?: boolean; // Added: Allows subject to share physical room with others
+  allowClassroomSharing?: boolean; // Legacy/alias: Allows subject to share classroom with others
   isBroadAssignment?: boolean; // Added: For subjects like Scouts that apply to all child grades of a parent
   isHomeroomAdvisorySubject?: boolean; // Added: For subjects like Homeroom period linked to homeroom teacher
   autoLinkToHomeroomTeachers?: boolean; // Added: If true and isHomeroomAdvisorySubject, auto-link to homeroom teachers

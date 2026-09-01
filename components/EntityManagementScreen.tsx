@@ -112,6 +112,8 @@ const EntityManagementScreen = <T extends Identifiable,>({
         (acc as any)[field.name] = 'single' as SubjectTeachingMode; 
       } else if (field.name === 'schedulingPattern' && entityType === 'subjects') {
         (acc as any)[field.name] = '';
+      } else if (field.name === 'allowPhysicalRoomSharing' && entityType === 'subjects') {
+        (acc as any)[field.name] = false; 
       } else if (field.name === 'allowClassroomSharing' && entityType === 'subjects') {
         (acc as any)[field.name] = false; 
       } else if (field.name === 'isHomeroomAdvisorySubject' && entityType === 'subjects') {
@@ -156,8 +158,11 @@ const EntityManagementScreen = <T extends Identifiable,>({
         if (!('schedulingPattern' in itemToEdit) || itemToEdit.schedulingPattern === undefined) {
             (itemToEdit as Partial<SubjectType>).schedulingPattern = '';
         }
+        if (!('allowPhysicalRoomSharing' in itemToEdit) || itemToEdit.allowPhysicalRoomSharing === undefined) {
+            (itemToEdit as Partial<SubjectType>).allowPhysicalRoomSharing = (itemToEdit as any).allowClassroomSharing ?? false;
+        }
         if (!('allowClassroomSharing' in itemToEdit) || itemToEdit.allowClassroomSharing === undefined) {
-            (itemToEdit as Partial<SubjectType>).allowClassroomSharing = false;
+            (itemToEdit as Partial<SubjectType>).allowClassroomSharing = (itemToEdit as any).allowPhysicalRoomSharing ?? false;
         }
         if (!('isHomeroomAdvisorySubject' in itemToEdit) || itemToEdit.isHomeroomAdvisorySubject === undefined) {
             (itemToEdit as Partial<SubjectType>).isHomeroomAdvisorySubject = false;
@@ -302,10 +307,6 @@ const EntityManagementScreen = <T extends Identifiable,>({
     if (!currentItem) return;
 
     let processedItem = { ...currentItem };
-    
-    if (entityType === 'subjects' && (processedItem as any).type === 'STUDENT_ONLY') {
-      (processedItem as any).allowPhysicalRoomSharing = true;
-    }
 
     // Sanitize applicableParentGradeLevelIds to ensure no sub-rooms leak into the data
     if (entityType === 'subjects' && Array.isArray((processedItem as any).applicableParentGradeLevelIds)) {
@@ -541,9 +542,6 @@ const EntityManagementScreen = <T extends Identifiable,>({
             ...prev,
             [name]: updatedVal,
           };
-          if (entityType === 'subjects' && (name === 'type' || name === 'subjectType') && value === 'STUDENT_ONLY') {
-            (next as any).allowPhysicalRoomSharing = true;
-          }
           return next as Partial<T>;
         });
       }
@@ -733,7 +731,7 @@ const EntityManagementScreen = <T extends Identifiable,>({
         return [
           s.name || '', s.subjectCode || '', s.periodsPerWeek ?? 1, s.department || '', s.color || '#3B82F6',
           s.teachingMode || 'single', s.schedulingPattern || '',
-          s.allowClassroomSharing ? 'ใช่' : 'ไม่ใช่',
+          (s.allowPhysicalRoomSharing ?? s.allowClassroomSharing) ? 'ใช่' : 'ไม่ใช่',
           s.isBroadAssignment ? 'ใช่' : 'ไม่ใช่',
           s.isHomeroomAdvisorySubject ? 'ใช่' : 'ไม่ใช่',
           s.autoLinkToHomeroomTeachers ? 'ใช่' : 'ไม่ใช่',

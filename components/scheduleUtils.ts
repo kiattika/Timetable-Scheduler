@@ -5,8 +5,8 @@ export const isSharable = (subject: any) => Boolean(
   subject?.allowPhysicalRoomSharing === 'true' || 
   subject?.allowPhysicalRoomSharing === 1 || 
   subject?.allowPhysicalRoomSharing === '1' || 
-  subject?.type === 'STUDENT_ONLY' || 
-  subject?.subjectType === 'STUDENT_ONLY' ||
+  subject?.allowClassroomSharing === true || 
+  subject?.allowClassroomSharing === 'true' || 
   (typeof subject?.name === 'string' && (subject.name.includes('พักกลางวัน') || subject.name.includes('กิจกรรมชุมนุม') || subject.name.includes('โฮมรูม'))) ||
   (typeof subject?.subjectCode === 'string' && (subject.subjectCode.toUpperCase() === 'HR' || subject.subjectCode.toUpperCase() === 'LUNCH'))
 );

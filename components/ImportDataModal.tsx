@@ -178,7 +178,7 @@ export const ImportDataModal: React.FC<ImportDataModalProps> = ({
       if (fn === 'periodsPerWeek' && (fh.includes('คาบ') || fh.includes('จำนวนคาบ') || fh === 'periods' || fh === 'periods per week')) return true;
       if (fn === 'teachingMode' && (fh.includes('รูปแบบการสอน') || fh === 'teaching mode' || fh === 'mode')) return true;
       if (fn === 'schedulingPattern' && (fh.includes('รูปแบบคาบ') || fh.includes('pattern') || fh === 'scheduling pattern')) return true;
-      if (fn === 'allowClassroomSharing' && (fh.includes('แชร์ห้อง') || fh.includes('ใช้ห้องร่วม') || fh === 'allow sharing')) return true;
+      if ((fn === 'allowPhysicalRoomSharing' || fn === 'allowClassroomSharing') && (fh.includes('แชร์ห้อง') || fh.includes('ใช้ห้องร่วม') || fh.includes('ข้ามการตรวจสอบห้อง') || fh === 'allow sharing' || fh === 'allow physicalroom sharing')) return true;
       if (fn === 'isBroadAssignment' && (fh.includes('เรียนรวม') || fh.includes('broad') || fh === 'broad assignment')) return true;
       if (fn === 'isHomeroomAdvisorySubject' && (fh.includes('โฮมรูม') || fh.includes('แนะแนว') || fh === 'homeroom subject')) return true;
       if (fn === 'autoLinkToHomeroomTeachers' && (fh.includes('ผูกกับครู') || fh.includes('auto link') || fh === 'auto link teachers')) return true;
