@@ -49,6 +49,51 @@ close the app when not actively testing.
 
 ---
 
+## ⚠️ CRITICAL #2 — admin/manager save was a blind full-document overwrite
+
+Discovered 2026-09-02. Confirmed data loss: a teacher and 3 of 4 subjects were
+silently erased during concurrent multi-role editing.
+
+`saveAppData` sent the ENTIRE local `appData` as `set(apps/{orgId}, ..., {merge:true})`.
+`merge:true` only merges top-level keys, so `{teachers:[...]}` REPLACES the whole
+array — a stale client wipes out other users' concurrent changes.
+
+**Fixed** (commit `d62bedf`):
+- New callable **`commitOrgChanges`** (deployed): client sends only its own
+  diff vs the last-synced baseline; server merges onto a fresh read by `id`,
+  with a `lastUpdateTime` precondition + bounded retry. Never writes
+  `users` / `authorizedAdmins`. `replace` mode for admin restore preserves the
+  user list.
+- `assistantUpdateEntity` / `registerCurrentUser` share the same
+  `optimisticDocUpdate` helper; no more near-duplicate inline retry loops.
+- `subjectCode` uniqueness now enforced server-side (both write paths) +
+  client-side form validation + Excel-import dedup.
+- `test/orgWrites/` — 33 pure + emulator cases incl. the acceptance scenario.
+
+**⚠️ NOT deployed: the client.** `commitOrgChanges` is inert until the web
+client is rebuilt and deployed — the old blind-overwrite `saveAppData` is still
+what production runs. **Keep concurrent multi-role editing paused until the
+client ships.**
+
+Client deploy: `npm run build` → your normal hosting/Cloud Run pipeline. Then
+smoke-test the acceptance scenario below.
+
+### Acceptance smoke test (after client deploy)
+1. Client A (assistant) adds a new subject via the app.
+2. Client B (admin/manager) — open in a second browser BEFORE step 1, make an
+   unrelated edit (add a teacher), let it autosave.
+3. Confirm A's subject is still present. Reverse the order and repeat.
+4. Two admins editing different fields concurrently — both edits survive.
+5. Two clients creating a subject with the same `subjectCode` ~simultaneously —
+   exactly one succeeds, the other gets a clear "รหัสวิชาซ้ำ" error, no dup lands.
+
+### Still broken, separately (not in scope of this fix)
+`resetSemesterTimetable` (api.ts) still uses a client `runTransaction`, which
+hangs on the ENTERPRISE database. Admin "reset for new semester" will time out.
+Needs the same non-transactional treatment.
+
+---
+
 ## 0. What changed
 
 | Area | Change |
