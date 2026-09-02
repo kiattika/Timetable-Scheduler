@@ -788,6 +788,13 @@ export const registerCurrentUser = functions.https.onCall(async (
 // of a silent 60s platform timeout with no user feedback.
 const ASSISTANT_UPDATE_DEADLINE_MS = 15000;
 
+// Per-instance circuit breaker. The production DB is ENTERPRISE edition with a
+// hard daily read cap; once it is spent, every read fails with RESOURCE_EXHAUSTED
+// for hours. When that happens, reject subsequent calls immediately (without
+// spending another read) instead of letting the client retry-loop pile on.
+const QUOTA_TRIP_MS = 60000;
+let quotaExhaustedUntil = 0;
+
 /**
  * Callable Function: assistantUpdateEntity
  * Department-scoped write channel for assistant-role users. The new Firestore
@@ -846,6 +853,14 @@ export const assistantUpdateEntity = functions.https.onCall(async (
   const orgId = (data?.orgId || DEFAULT_ORG_ID).replace(/[^a-zA-Z0-9_-]/g, '');
   if (claimOrgId && claimOrgId !== orgId) {
     throw new functions.https.HttpsError('permission-denied', 'Organization mismatch.');
+  }
+
+  if (Date.now() < quotaExhaustedUntil) {
+    finish('SHORT-CIRCUIT (quota tripped)');
+    throw new functions.https.HttpsError(
+      'resource-exhausted',
+      'The database has hit its daily read limit. Please try again later or contact an admin.'
+    );
   }
 
   const payload = data?.payload && typeof data.payload === 'object' ? { ...data.payload } : {};
@@ -967,6 +982,15 @@ export const assistantUpdateEntity = functions.https.onCall(async (
   try {
     outcome = await Promise.race([core(), deadline]);
   } catch (err: any) {
+    // code 8 = RESOURCE_EXHAUSTED — trip the breaker so we stop spending reads.
+    if (err?.code === 8) {
+      quotaExhaustedUntil = Date.now() + QUOTA_TRIP_MS;
+      finish('FAILED code=8 RESOURCE_EXHAUSTED — breaker tripped');
+      throw new functions.https.HttpsError(
+        'resource-exhausted',
+        'The database has hit its daily read limit. Please try again later or contact an admin.'
+      );
+    }
     finish(`FAILED code=${err?.code ?? '?'} ${err?.message || err}`);
     if (err instanceof functions.https.HttpsError) throw err;
     throw new functions.https.HttpsError('internal', err?.message || 'assistantUpdateEntity failed.');
