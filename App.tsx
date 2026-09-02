@@ -88,6 +88,11 @@ const App: React.FC = () => {
   }, [isDataLoaded, firebaseUser, appData?.currentUser?.id]);
 
   const lastSavedDataStr = useRef<string | null>(null);
+  // Guards against overlapping assistant syncs. Without this, every Firestore
+  // snapshot / keystroke re-fires persistAssistantChanges while a previous call
+  // is still in flight, producing a storm of concurrent assistantUpdateEntity
+  // calls that contend on the monolithic apps/{orgId} document.
+  const assistantSyncInFlight = useRef(false);
 
   useEffect(() => {
     if (isDataLoaded && appData) {
@@ -116,15 +121,32 @@ const App: React.FC = () => {
         return;
       }
 
-      const timeoutId = setTimeout(() => {
-        const prevSaved: AppData | null = (() => {
-          try { return lastSavedDataStr.current ? JSON.parse(lastSavedDataStr.current) as AppData : null; }
-          catch { return null; }
-        })();
-        const persist = isAssistant
-          ? persistAssistantChanges(prevSaved, appData, ORG_ID)
-          : saveAppData(appData, ORG_ID);
-        persist.then(() => {
+      const timeoutId = setTimeout(async () => {
+        if (isAssistant) {
+          // Only one assistant sync at a time — otherwise every snapshot/keystroke
+          // re-fires this while a call is still in flight.
+          if (assistantSyncInFlight.current) return;
+          assistantSyncInFlight.current = true;
+          const prevSaved: AppData | null = (() => {
+            try { return lastSavedDataStr.current ? JSON.parse(lastSavedDataStr.current) as AppData : null; }
+            catch { return null; }
+          })();
+          try {
+            await persistAssistantChanges(prevSaved, appData, ORG_ID);
+            lastSavedDataStr.current = currentDataStr;
+            assistantSyncInFlight.current = false;
+            // Edits made while the sync was running won't have re-triggered this
+            // effect usefully (guard was up) — nudge once to flush them.
+            setAppData(prev => (prev ? { ...prev } : prev));
+          } catch (error: any) {
+            // Do NOT auto-retry here: a persistent failure (e.g. edit outside the
+            // assistant's departments) would loop every 2s. The next real edit retries.
+            console.warn("Auto-save notice:", error?.message || error);
+            assistantSyncInFlight.current = false;
+          }
+          return;
+        }
+        saveAppData(appData, ORG_ID).then(() => {
           lastSavedDataStr.current = currentDataStr;
         }).catch(error => {
           console.warn("Auto-save notice:", error?.message || error);

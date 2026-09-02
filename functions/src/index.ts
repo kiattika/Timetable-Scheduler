@@ -1,7 +1,7 @@
 import * as functions from 'firebase-functions/v1';
 import { initializeApp, getApps, getApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
-import { getFirestore } from 'firebase-admin/firestore';
+import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import { MetricServiceClient } from '@google-cloud/monitoring';
 import { randomUUID } from 'crypto';
 
@@ -751,28 +751,42 @@ export const registerCurrentUser = functions.https.onCall(async (
     console.warn('registerCurrentUser claim notice:', e?.message || e);
   }
 
-  const result = await db.runTransaction(async (tx) => {
-    const snap = await tx.get(appDocRef);
-    if (!snap.exists) return { created: false, reason: 'no-app-doc' as const };
+  // NOTE: no runTransaction() — see assistantUpdateEntity. A plain read + atomic
+  // arrayUnion is enough here: the only race is two first-logins for the SAME
+  // account at the same instant, and arrayUnion de-dupes the identical records.
+  const snap = await appDocRef.get();
+  let result: { created: boolean; reason?: string; role?: string };
+  if (!snap.exists) {
+    result = { created: false, reason: 'no-app-doc' };
+  } else {
     const appData = snap.data() || {};
-    const users: any[] = Array.isArray(appData.users) ? [...appData.users] : [];
-    const idx = users.findIndex((u: any) => u.email?.toLowerCase().trim() === email);
-    if (idx >= 0) return { created: false, reason: 'already-registered' as const, role: users[idx].role };
-
-    users.push({
-      id: uid,
-      name: String(data?.name || tokenName || email.split('@')[0]).slice(0, 120),
-      email,
-      role: 'guest',
-      organizationId: orgId
-    });
-    tx.update(appDocRef, { users });
-    return { created: true as const, role: 'guest' as const };
-  });
+    const users: any[] = Array.isArray(appData.users) ? appData.users : [];
+    const found = users.find((u: any) => u.email?.toLowerCase().trim() === email);
+    if (found) {
+      result = { created: false, reason: 'already-registered', role: found.role };
+    } else {
+      await appDocRef.update({
+        users: FieldValue.arrayUnion({
+          id: uid,
+          name: String(data?.name || tokenName || email.split('@')[0]).slice(0, 120),
+          email,
+          role: 'guest',
+          organizationId: orgId
+        })
+      });
+      result = { created: true, role: 'guest' };
+    }
+  }
 
   console.log(`[AUDIT] registerCurrentUser '${email}': claim=${claimAction} ${JSON.stringify(result)}`);
   return { success: true, claimAction, ...result };
 });
+
+// Defensive internal deadline. The core operation below is now non-transactional
+// (a few fast doc reads/writes), so this should never fire in practice — it is a
+// backstop that converts any future hang into an immediate, clear error instead
+// of a silent 60s platform timeout with no user feedback.
+const ASSISTANT_UPDATE_DEADLINE_MS = 15000;
 
 /**
  * Callable Function: assistantUpdateEntity
@@ -781,11 +795,27 @@ export const registerCurrentUser = functions.https.onCall(async (
  * directly, so their edits to teachers / subjects / teacherSubjectAssignments /
  * scheduleEntries are routed here. The server-side department check below IS the
  * security boundary — the Admin SDK write bypasses Firestore Rules.
+ *
+ * IMPORTANT — no runTransaction():
+ * `apps/{orgId}` is a single monolithic document. Under the client autosave
+ * retry pattern, concurrent `runTransaction()` calls all serialize on that one
+ * document's lock; each `tx.get()` then blocks up to Firestore's ~60s lock
+ * timeout and the whole thing snowballs (see git history for the trace). So list
+ * mutations here use atomic, lock-free field transforms instead:
+ *   - create -> FieldValue.arrayUnion (idempotent on client retries)
+ *   - delete -> FieldValue.arrayRemove
+ *   - update -> optimistic read + `lastUpdateTime` precondition + bounded retry
+ * Fully contention-free writes are a Phase 2 concern (subcollection migration).
  */
 export const assistantUpdateEntity = functions.https.onCall(async (
   data: { type: AssistantEntityType; op: 'create' | 'update' | 'delete'; payload?: any; id?: string; orgId?: string },
   context: functions.https.CallableContext
 ) => {
+  const traceId = randomUUID().slice(0, 8);
+  const t0 = Date.now();
+  const finish = (outcome: string) =>
+    console.log(`[assistantUpdateEntity:${traceId}] ${outcome} — ${data?.op} ${data?.type} (${Date.now() - t0}ms)`);
+
   if (!context.auth) {
     throw new functions.https.HttpsError('unauthenticated', 'User must be authenticated.');
   }
@@ -827,70 +857,124 @@ export const assistantUpdateEntity = functions.https.onCall(async (
 
   const db = getDb();
   const appDocRef = db.doc(`apps/${orgId}`);
+  const subDocRef = type === 'scheduleEntries'
+    ? db.doc(`apps/${orgId}/scheduleEntries/${entityId}`)
+    : null;
 
-  const outcome = await db.runTransaction(async (tx) => {
-    const snap = await tx.get(appDocRef);
+  const listOf = (appDoc: Record<string, any>): any[] =>
+    Array.isArray(appDoc[type]) ? appDoc[type] : [];
+
+  // Department authorization against a plain (non-transactional, lock-free) read.
+  const authorize = (appDoc: Record<string, any>, existing: any, effectiveOp: 'create' | 'update' | 'delete') => {
+    if (!isAssistant) return;
+    if (assignedDepartments.length === 0) {
+      throw new functions.https.HttpsError('permission-denied', 'No departments assigned to this account.');
+    }
+    const covers = (depts: string[]) => depts.length > 0 && depts.every((d) => assignedDepartments.includes(d));
+    if (effectiveOp !== 'create') {
+      const currentDepts = resolveEntityDepartments(type, existing, appDoc);
+      if (!covers(currentDepts)) {
+        throw new functions.https.HttpsError(
+          'permission-denied',
+          `Entity belongs to a department outside your assignment (${currentDepts.join(', ') || 'unknown'}).`
+        );
+      }
+    }
+    if (effectiveOp !== 'delete') {
+      const nextDepts = resolveEntityDepartments(type, { ...existing, ...payload }, appDoc);
+      if (!covers(nextDepts)) {
+        throw new functions.https.HttpsError(
+          'permission-denied',
+          `Target department is outside your assignment (${nextDepts.join(', ') || 'unknown'}).`
+        );
+      }
+    }
+  };
+
+  const core = async (): Promise<{ entity: any }> => {
+    const snap = await appDocRef.get();
     if (!snap.exists) {
       throw new functions.https.HttpsError('not-found', `apps/${orgId} does not exist.`);
     }
     const appDoc = snap.data() || {};
-    const list: any[] = Array.isArray(appDoc[type]) ? [...appDoc[type]] : [];
-    const existing = list.find((e) => e.id === entityId);
+    const existing = listOf(appDoc).find((e) => e && e.id === entityId);
     if (op !== 'create' && !existing) {
       throw new functions.https.HttpsError('not-found', `${type}/${entityId} not found.`);
     }
+    // A client retry of a create that already landed becomes an idempotent update.
+    const effectiveOp: 'create' | 'update' | 'delete' =
+      op === 'create' && existing ? 'update' : op;
+    authorize(appDoc, existing, effectiveOp);
 
-    // Department authorization — enforced for assistant; elevated roles skip.
-    if (isAssistant) {
-      if (assignedDepartments.length === 0) {
-        throw new functions.https.HttpsError('permission-denied', 'No departments assigned to this account.');
-      }
-      const covers = (depts: string[]) => depts.length > 0 && depts.every((d) => assignedDepartments.includes(d));
+    if (effectiveOp === 'delete') {
+      await appDocRef.update({ [type]: FieldValue.arrayRemove(existing) });
+      if (subDocRef) await subDocRef.delete();
+      return { entity: null };
+    }
 
-      if (op !== 'create') {
-        const currentDepts = resolveEntityDepartments(type, existing, appDoc);
-        if (!covers(currentDepts)) {
-          throw new functions.https.HttpsError(
-            'permission-denied',
-            `Entity belongs to a department outside your assignment (${currentDepts.join(', ') || 'unknown'}).`
-          );
+    if (effectiveOp === 'create') {
+      // Atomic append — concurrent arrayUnion transforms do not lock or abort.
+      await appDocRef.update({ [type]: FieldValue.arrayUnion(payload) });
+      if (subDocRef) await subDocRef.set(payload, { merge: true });
+      return { entity: payload };
+    }
+
+    // effectiveOp === 'update' — optimistic concurrency, bounded retry, no lock.
+    let attemptSnap = snap;
+    let attemptDoc = appDoc;
+    let attemptExisting = existing;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const merged = { ...attemptExisting, ...payload };
+      const nextList = listOf(attemptDoc).map((e) => (e && e.id === entityId ? merged : e));
+      try {
+        await appDocRef.update({ [type]: nextList }, { lastUpdateTime: attemptSnap.updateTime });
+        if (subDocRef) await subDocRef.set(merged, { merge: true });
+        return { entity: merged };
+      } catch (err: any) {
+        // 9 = FAILED_PRECONDITION, 10 = ABORTED — doc changed under us; re-read and retry.
+        if ((err?.code === 9 || err?.code === 10) && attempt < 4) {
+          await new Promise((r) => setTimeout(r, 40 * (attempt + 1)));
+          attemptSnap = await appDocRef.get();
+          if (!attemptSnap.exists) {
+            throw new functions.https.HttpsError('not-found', `apps/${orgId} disappeared during update.`);
+          }
+          attemptDoc = attemptSnap.data() || {};
+          attemptExisting = listOf(attemptDoc).find((e) => e && e.id === entityId);
+          if (!attemptExisting) {
+            throw new functions.https.HttpsError('not-found', `${type}/${entityId} was removed during update.`);
+          }
+          authorize(attemptDoc, attemptExisting, 'update');
+          continue;
         }
-      }
-      if (op !== 'delete') {
-        const nextDepts = resolveEntityDepartments(type, { ...existing, ...payload }, appDoc);
-        if (!covers(nextDepts)) {
-          throw new functions.https.HttpsError(
-            'permission-denied',
-            `Target department is outside your assignment (${nextDepts.join(', ') || 'unknown'}).`
-          );
-        }
+        throw err;
       }
     }
+    throw new functions.https.HttpsError('aborted', 'Could not save due to concurrent edits — please try again.');
+  };
 
-    let nextList: any[];
-    if (op === 'delete') {
-      nextList = list.filter((e) => e.id !== entityId);
-    } else if (existing) {
-      nextList = list.map((e) => (e.id === entityId ? { ...e, ...payload } : e));
-    } else {
-      nextList = [...list, payload];
-    }
-    tx.update(appDocRef, { [type]: nextList });
-
-    // Keep the scheduleEntries subcollection consistent (Phase-1 dual storage).
-    if (type === 'scheduleEntries') {
-      const subRef = db.doc(`apps/${orgId}/scheduleEntries/${entityId}`);
-      if (op === 'delete') {
-        tx.delete(subRef);
-      } else {
-        tx.set(subRef, op === 'create' ? payload : { ...existing, ...payload }, { merge: true });
-      }
-    }
-
-    return { entity: op === 'delete' ? null : (nextList.find((e) => e.id === entityId) || payload) };
+  let timer: NodeJS.Timeout | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new functions.https.HttpsError(
+        'deadline-exceeded',
+        'Operation timed out — please try again or contact an admin.'
+      )),
+      ASSISTANT_UPDATE_DEADLINE_MS
+    );
   });
 
-  // Best-effort audit log (outside the transaction).
+  let outcome: { entity: any };
+  try {
+    outcome = await Promise.race([core(), deadline]);
+  } catch (err: any) {
+    finish(`FAILED code=${err?.code ?? '?'} ${err?.message || err}`);
+    if (err instanceof functions.https.HttpsError) throw err;
+    throw new functions.https.HttpsError('internal', err?.message || 'assistantUpdateEntity failed.');
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+
+  // Best-effort audit log.
   try {
     const logId = randomUUID();
     await db.doc(`apps/${orgId}/activityLogs/${logId}`).set({
@@ -902,10 +986,10 @@ export const assistantUpdateEntity = functions.https.onCall(async (
       details: `role=${role}`
     });
   } catch (e: any) {
-    console.warn('assistantUpdateEntity activity log notice:', e?.message || e);
+    console.warn(`[assistantUpdateEntity:${traceId}] activity log notice:`, e?.message || e);
   }
 
-  console.log(`[AUDIT] assistantUpdateEntity by '${email}' (${role}): ${op} ${type}/${entityId}`);
+  finish('SUCCESS');
   return { success: true, type, op, id: entityId, ...outcome };
 });
 
