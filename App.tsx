@@ -89,15 +89,15 @@ const App: React.FC = () => {
 
   const lastSavedDataStr = useRef<string | null>(null);
   // Guards against overlapping assistant syncs. Without this, every Firestore
-  // snapshot / keystroke re-fires persistAssistantChanges while a previous call
-  // is still in flight, producing a storm of concurrent assistantUpdateEntity
-  // calls that contend on the monolithic apps/{orgId} document.
-  const assistantSyncInFlight = useRef(false);
+  // snapshot / keystroke re-fires the sync while a previous call is still in
+  // flight, producing a storm of concurrent writes that contend on the monolithic
+  // apps/{orgId} document. Applies to BOTH write paths (assistant + admin/manager).
+  const syncInFlight = useRef(false);
 
   useEffect(() => {
     if (isDataLoaded && appData) {
       const currentDataStr = JSON.stringify(appData);
-      
+
       // On initial load, initialize ref without triggering a save
       if (lastSavedDataStr.current === null) {
         lastSavedDataStr.current = currentDataStr;
@@ -108,11 +108,10 @@ const App: React.FC = () => {
         return; // Skip if no actual data changes
       }
 
-      // Check if current user has permission to save modifications.
-      // admin / manager persist the full document via saveAppData().
-      // assistant edits are department-scoped and MUST route through the
-      // assistantUpdateEntity Cloud Function (the new Firestore Rules block
-      // assistants from writing apps/{orgId} directly).
+      // admin / manager   -> commitOrgChanges (diff-and-merge, optimistic concurrency)
+      // assistant         -> assistantUpdateEntity per changed entity
+      // Both send only THIS client's own change-set vs the last-synced baseline —
+      // never a blind full-document overwrite.
       const role = appData.currentUser?.role;
       const canBlobSave = role === 'admin' || role === 'manager';
       const isAssistant = role === 'assistant';
@@ -122,35 +121,32 @@ const App: React.FC = () => {
       }
 
       const timeoutId = setTimeout(async () => {
-        if (isAssistant) {
-          // Only one assistant sync at a time — otherwise every snapshot/keystroke
-          // re-fires this while a call is still in flight.
-          if (assistantSyncInFlight.current) return;
-          assistantSyncInFlight.current = true;
-          const prevSaved: AppData | null = (() => {
-            try { return lastSavedDataStr.current ? JSON.parse(lastSavedDataStr.current) as AppData : null; }
-            catch { return null; }
-          })();
-          try {
+        // Only one sync at a time — otherwise every snapshot/keystroke re-fires
+        // this while a call is still in flight.
+        if (syncInFlight.current) return;
+        syncInFlight.current = true;
+        const prevSaved: AppData | null = (() => {
+          try { return lastSavedDataStr.current ? JSON.parse(lastSavedDataStr.current) as AppData : null; }
+          catch { return null; }
+        })();
+        try {
+          if (isAssistant) {
             await persistAssistantChanges(prevSaved, appData, ORG_ID);
-            lastSavedDataStr.current = currentDataStr;
-            assistantSyncInFlight.current = false;
-            // Edits made while the sync was running won't have re-triggered this
-            // effect usefully (guard was up) — nudge once to flush them.
-            setAppData(prev => (prev ? { ...prev } : prev));
-          } catch (error: any) {
-            // Do NOT auto-retry here: a persistent failure (e.g. edit outside the
-            // assistant's departments) would loop every 2s. The next real edit retries.
-            console.warn("Auto-save notice:", error?.message || error);
-            assistantSyncInFlight.current = false;
+          } else {
+            await saveAppData(appData, ORG_ID, prevSaved);
           }
-          return;
-        }
-        saveAppData(appData, ORG_ID).then(() => {
           lastSavedDataStr.current = currentDataStr;
-        }).catch(error => {
+          syncInFlight.current = false;
+          // Edits made while the sync was running won't have re-triggered this
+          // effect usefully (guard was up) — nudge once to flush them.
+          setAppData(prev => (prev ? { ...prev } : prev));
+        } catch (error: any) {
+          // Do NOT auto-retry here: a persistent failure (permission, uniqueness,
+          // assignment-in-use) would loop every 2s. The next real edit retries.
           console.warn("Auto-save notice:", error?.message || error);
-        });
+          syncInFlight.current = false;
+        }
+        return;
       }, 2000);
       return () => clearTimeout(timeoutId);
     }
@@ -249,9 +245,10 @@ const App: React.FC = () => {
             };
 
             setAppData(newAppData);
-            
-            // Persist immediately to Firestore
-            await saveAppData(newAppData, ORG_ID);
+
+            // Persist immediately — full replace (admin restore-from-backup).
+            await saveAppData(newAppData, ORG_ID, null, { replace: true });
+            lastSavedDataStr.current = JSON.stringify(newAppData);
           }
           
           setShowRestoreConfirm(false);

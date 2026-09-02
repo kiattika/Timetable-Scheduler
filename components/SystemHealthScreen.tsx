@@ -244,7 +244,10 @@ export const SystemHealthScreen: React.FC<SystemHealthScreenProps> = ({
           activityLogs: cleanedLogs,
         };
         setAppData(updatedAppData);
-        await saveAppData(updatedAppData, orgId);
+        // Baseline = pre-prune appData: activity-log pruning is a subcollection
+        // operation (handled above / by the cleanup function), so this resolves to
+        // a no-op rather than re-uploading the whole document.
+        await saveAppData(updatedAppData, orgId, appData);
       }
 
       setPurgeStatus('ล้าง Log และบันทึกข้อผิดพลาดที่เก่ากว่า 7 วันเรียบร้อยแล้ว');

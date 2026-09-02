@@ -246,6 +246,22 @@ const EntityManagementScreen = <T extends Identifiable,>({
     
     if (entityType === 'subjects') {
       const subjectItem = currentItem as Partial<SubjectType>;
+
+      // subjectCode must be unique (case-insensitive, trimmed). Checked against the
+      // FULL subject list (appData.subjects), not the filtered `items` prop. This is
+      // fast client feedback; the server (commitOrgChanges / assistantUpdateEntity)
+      // enforces it authoritatively against a fresh read.
+      const code = (subjectItem.subjectCode || '').trim().toLowerCase();
+      if (code) {
+        const clash = (appData?.subjects || []).find(
+          s => s.id !== editingId && (s.subjectCode || '').trim().toLowerCase() === code
+        );
+        if (clash) {
+          setFormError(`รหัสวิชา "${subjectItem.subjectCode}" ถูกใช้โดยวิชา "${clash.name}" อยู่แล้ว (subjectCode ต้องไม่ซ้ำ)`);
+          return false;
+        }
+      }
+
       let periodsPerWeekNum: number | undefined = undefined;
 
       if (subjectItem.periodsPerWeek !== undefined && String(subjectItem.periodsPerWeek).trim() !== '') {

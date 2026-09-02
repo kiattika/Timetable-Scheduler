@@ -412,9 +412,17 @@ export const ImportDataModal: React.FC<ImportDataModalProps> = ({
         }
         case 'subjects': {
           const sItem = finalNewItem as Subject;
-          if (sItem.subjectCode && appData.subjects.some(s => s.subjectCode?.toLowerCase() === sItem.subjectCode?.toLowerCase())) {
+          const codeNorm = sItem.subjectCode?.trim().toLowerCase();
+          // subjectCode must be unique — check existing data AND earlier rows in THIS import.
+          if (codeNorm && (
+            appData.subjects.some(s => s.subjectCode?.trim().toLowerCase() === codeNorm) ||
+            newItemsToPush.some((s: any) => s.subjectCode?.trim().toLowerCase() === codeNorm)
+          )) {
             isDuplicate = true;
-          } else if (appData.subjects.some(s => s.name.toLowerCase() === sItem.name.toLowerCase())) {
+          } else if (
+            appData.subjects.some(s => s.name.toLowerCase() === sItem.name.toLowerCase()) ||
+            newItemsToPush.some((s: any) => (s.name || '').toLowerCase() === sItem.name.toLowerCase())
+          ) {
             isDuplicate = true;
           }
           break;

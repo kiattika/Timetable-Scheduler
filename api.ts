@@ -3,6 +3,9 @@ import { DEFAULT_PERIOD_SETTINGS, PREDEFINED_SUBJECT_COLORS } from './constants'
 import { db, auth, functions } from './lib/firebase';
 import { doc, getDoc, setDoc, deleteDoc, collection, getDocs, writeBatch, query, orderBy, limit, deleteField, runTransaction } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
+import { computeOrgChanges, diffById, ORG_ARRAY_FIELDS, cleanUndefined as cleanUndefinedShared } from './lib/orgChangesClient';
+
+export { computeOrgChanges, diffById, ORG_ARRAY_FIELDS };
 
 export const ORG_ID = import.meta.env.VITE_ORG_ID || 'utd';
 
@@ -242,182 +245,62 @@ export const fetchAppData = async (orgId: string = ORG_ID): Promise<AppData> => 
   return defaultInitialData;
 };
 
-const cleanUndefined = (obj: any): any => {
-  if (obj === undefined) return null;
-  if (obj === null) return null;
-  if (Array.isArray(obj)) {
-    return obj.map(cleanUndefined);
+const cleanUndefined = cleanUndefinedShared;
+
+const surfaceSaveError = (error: any) => {
+  const msg: string = error?.message || '';
+  const code: string = error?.code || '';
+  if (msg.includes('409_CONFLICT_ASSIGNMENT_IN_USE') || code === 'functions/failed-precondition') {
+    alert("ไม่สามารถลบลิงค์มอบหมายงานได้ (Action Blocked)\n\nรายวิชานี้ของรายชื่อครูดังกล่าว ถูกจัดวางลงบนตารางเรียน (Timetable Grid) ไปเรียบร้อยแล้ว หากต้องการลบลิงค์นี้ กรุณาไปลบคาบเรียนของวิชานี้ออกจากตารางสอนของห้องดังกล่าวให้หมดก่อน จึงจะกลับมาทำรายการลบลิงค์นี้ได้");
+  } else if (code === 'functions/already-exists' || msg.includes('subjectCode') || msg.includes('รหัสวิชา')) {
+    alert(`ไม่สามารถบันทึกได้: ${msg || 'รหัสวิชาซ้ำกับที่มีอยู่แล้ว'}`);
+  } else if (code === 'functions/aborted' || msg.includes('concurrent edits') || msg.includes('พร้อมกัน')) {
+    alert("⚠️ มีผู้ใช้อื่นกำลังแก้ไขข้อมูลพร้อมกัน\n\nระบบไม่ได้บันทึกการเปลี่ยนแปลงล่าสุดของคุณ กรุณาลองแก้ไขและบันทึกใหม่อีกครั้ง");
+  } else if (code === 'functions/resource-exhausted' || msg.includes('daily read limit')) {
+    alert("ฐานข้อมูลใช้โควตาการอ่านประจำวันหมดแล้ว กรุณาลองใหม่ภายหลัง หรือติดต่อผู้ดูแลระบบ");
+  } else if (msg.includes('lock or unlock') || msg.includes('ล็อก/ปลดล็อก')) {
+    alert("403 Forbidden: เฉพาะแอดมินเท่านั้นที่มีสิทธิ์ล็อกหรือปลดล็อกตารางเรียน");
+  } else if (code === 'functions/permission-denied' || msg.includes('permission')) {
+    const signedIn = !!auth.currentUser;
+    alert(signedIn
+      ? "❌ คุณไม่มีสิทธิ์บันทึกข้อมูลส่วนนี้ (Permission Denied)"
+      : "❌ ยังไม่ได้เข้าสู่ระบบ กรุณาเข้าสู่ระบบด้วย Google (@utd.ac.th) ก่อนบันทึกข้อมูล");
+  } else {
+    console.error("commitOrgChanges error:", error);
   }
-  if (typeof obj === 'object') {
-    const cleaned: any = {};
-    for (const key of Object.keys(obj)) {
-      const val = obj[key];
-      if (val !== undefined) {
-        cleaned[key] = cleanUndefined(val);
-      }
-    }
-    return cleaned;
-  }
-  return obj;
 };
 
-export const saveAppData = async (data: AppData, orgId: string = ORG_ID): Promise<void> => {
+/**
+ * Persist admin/manager edits to apps/{orgId}. Sends only this client's own
+ * change-set (diffed against `baseline`) to the commitOrgChanges Cloud Function,
+ * which merges it onto a fresh server read with optimistic concurrency — no more
+ * blind full-document overwrite / lost updates.
+ *
+ * @param baseline last-synced AppData snapshot (from App's lastSavedDataStr). When
+ *   omitted, a safe upsert-only sync runs (no deletes).
+ * @param opts.replace  admin restore-from-backup: replace all managed content.
+ */
+export const saveAppData = async (
+  data: AppData,
+  orgId: string = ORG_ID,
+  baseline: AppData | null = null,
+  opts: { replace?: boolean } = {},
+): Promise<void> => {
+  const commitFn = httpsCallable(functions, 'commitOrgChanges');
+
   try {
-    const docRef = doc(db, 'apps', orgId);
-    
-    const { scheduleEntries = [], activityLogs = [], currentUser, ...mainDocContent } = data;
-
-    // Save complete dataset in main doc as well for instant single-document persistence
-    const mainDocToSave = {
-      ...mainDocContent,
-      organizationId: orgId,
-      scheduleEntries: scheduleEntries,
-      activityLogs: (activityLogs || []).slice(0, 50)
-    };
-    const cleanedMainDoc = cleanUndefined(mainDocToSave);
-
-    // 1. Save main doc (teachers, subjects, assignments, settings, scheduleEntries, etc.)
-    try {
-      await runTransaction(db, async (transaction) => {
-        const docSnap = await transaction.get(docRef);
-        if (docSnap.exists()) {
-          const serverData = docSnap.data() as AppData;
-          
-          // Check if the isLocked setting itself has changed
-          const oldLocked = !!serverData.organizationSettings?.isLocked;
-          const newLocked = !!data.organizationSettings?.isLocked;
-          if (oldLocked !== newLocked) {
-            if (currentUser?.role !== 'admin') {
-              throw new Error("403_FORBIDDEN_ADMIN_ONLY");
-            }
-          }
-
-          const serverAssignments = serverData.teacherSubjectAssignments || [];
-          const newAssignments = data.teacherSubjectAssignments || [];
-          const removedAssignments = serverAssignments.filter((oldA: any) => !newAssignments.some((newA: any) => newA.id === oldA.id));
-          for (const removed of removedAssignments) {
-            const hasDependency = (scheduleEntries || []).some((entry: any) => 
-              entry.subjectId === removed.subjectId && 
-              entry.teacherIds?.includes(removed.teacherId) &&
-              entry.gradeLevelId === removed.gradeLevelId
-            );
-            if (hasDependency) {
-              throw new Error("409_CONFLICT_ASSIGNMENT_IN_USE");
-            }
-          }
-        }
-        
-        transaction.set(docRef, cleanedMainDoc, { merge: true });
-      });
-    } catch (txErr: any) {
-      if (txErr.message === "403_FORBIDDEN_ADMIN_ONLY" || txErr.message === "409_CONFLICT_ASSIGNMENT_IN_USE") {
-        throw txErr;
-      }
-      // If transaction encountered an issue, fallback to setDoc
-      await setDoc(docRef, cleanedMainDoc, { merge: true });
+    if (opts.replace) {
+      const { currentUser, ...rest } = data;
+      await commitFn({ orgId, replace: cleanUndefined({ ...rest, organizationId: orgId }) });
+      return;
     }
 
-    // 2. Synchronize scheduleEntries subcollection (apps/{orgId}/scheduleEntries/{entryId}) in background
-    if (Array.isArray(scheduleEntries)) {
-      try {
-        const scheduleEntriesColRef = collection(db, 'apps', orgId, 'scheduleEntries');
-        const currentScheduleSnap = await getDocs(scheduleEntriesColRef);
-        const existingDocIds = new Set(currentScheduleSnap.docs.map(d => d.id));
-        const newEntryIds = new Set(scheduleEntries.map(e => e.id));
-
-        // Batch in chunks of 400 (Firestore limit is 500 ops per batch)
-        const batches: any[] = [];
-        let currentBatch = writeBatch(db);
-        let opCount = 0;
-
-        const pushBatch = () => {
-          batches.push(currentBatch);
-          currentBatch = writeBatch(db);
-          opCount = 0;
-        };
-
-        // Upsert current entries
-        for (const entry of scheduleEntries) {
-          if (!entry.id) continue;
-          const entryDocRef = doc(db, 'apps', orgId, 'scheduleEntries', entry.id);
-          currentBatch.set(entryDocRef, cleanUndefined(entry), { merge: true });
-          opCount++;
-          if (opCount >= 400) pushBatch();
-        }
-
-        // Delete removed entries
-        for (const existingId of existingDocIds) {
-          if (!newEntryIds.has(existingId)) {
-            const entryDocRef = doc(db, 'apps', orgId, 'scheduleEntries', existingId);
-            currentBatch.delete(entryDocRef);
-            opCount++;
-            if (opCount >= 400) pushBatch();
-          }
-        }
-
-        if (opCount > 0) {
-          batches.push(currentBatch);
-        }
-
-        for (const b of batches) {
-          await b.commit();
-        }
-      } catch (subErr: any) {
-        console.warn("Subcollection scheduleEntries sync bypassed (Main doc safely saved):", subErr?.message || subErr);
-      }
-    }
-
-    // 3. Save new activityLogs into subcollection (apps/{orgId}/activityLogs/{logId})
-    if (Array.isArray(activityLogs) && activityLogs.length > 0) {
-      try {
-        const latestLogs = activityLogs.slice(0, 10);
-        for (const log of latestLogs) {
-          if (!log.id) continue;
-          const logDocRef = doc(db, 'apps', orgId, 'activityLogs', log.id);
-          await setDoc(logDocRef, cleanUndefined(log), { merge: true });
-        }
-      } catch (logErr: any) {
-        console.warn("Subcollection activityLogs sync bypassed (Main doc safely saved):", logErr?.message || logErr);
-      }
-    }
-
+    const { changes, newActivityLogs, hasChanges } = computeOrgChanges(baseline, data);
+    if (!hasChanges) return;
+    await commitFn({ orgId, changes: cleanUndefined(changes), newActivityLogs });
   } catch (error: any) {
-    if (error.message === "403_FORBIDDEN_ADMIN_ONLY") {
-      alert("403 Forbidden: เฉพาะแอดมินหลักประจำโรงเรียนเท่านั้นที่มีสิทธิ์ล็อกหรือปลดล็อกตารางเรียน (Authorized School Admin Only)");
-    } else if (error.message === "403_FORBIDDEN_LOCKED") {
-      alert("ไม่สามารถแก้ไขได้ เนื่องจากตารางเรียนประจำภาคเรียนนี้ถูกล็อกโดยฝ่ายวิชาการแล้ว");
-    } else if (error.message === "RACE_CONDITION_CONFLICT") {
-      alert("🚨 Conflict Detected: Another user has already updated this schedule block. Your changes will be reverted to match the server.");
-    } else if (error.message === "409_CONFLICT_ASSIGNMENT_IN_USE") {
-      alert("ไม่สามารถลบลิงค์มอบหมายงานได้ (Action Blocked)\n\nรายวิชานี้ของรายชื่อครูดังกล่าว ถูกจัดวางลงบนตารางเรียน (Timetable Grid) ไปเรียบร้อยแล้ว หากต้องการลบลิงค์นี้ กรุณาไปลบคาบเรียนของวิชานี้ออกจากตารางสอนของห้องดังกล่าวให้หมดก่อน จึงจะกลับมาทำรายการลบลิงค์นี้ได้");
-    } else if (error.message?.includes("Missing or insufficient permissions") || error.code === "permission-denied") {
-      const isUserSignedIn = !!auth.currentUser;
-      if (!isUserSignedIn) {
-        alert(
-          "❌ ไม่สามารถบันทึกข้อมูลได้: ยังไม่ได้เข้าสู่ระบบ\n\n" +
-          "กรุณากดปุ่ม 'เข้าสู่ระบบด้วย Google (@utd.ac.th)' เพื่อรับสิทธิ์การเขียนและบันทึกข้อมูลลงฐานข้อมูล Firebase"
-        );
-      } else {
-        alert(
-          "❌ พบข้อผิดพลาดด้านสิทธิ์การใช้งาน Firestore (Permission Denied)\n\n" +
-          "กรุณาไปที่ Firebase Console (https://console.firebase.google.com) ของโปรเจกต์คุณ -> เลือก Firestore Database -> แถบ Rules\n" +
-          "และตั้งค่ากฏเป็น:\n\n" +
-          "rules_version = '2';\n" +
-          "service cloud.firestore {\n" +
-          "  match /databases/{database}/documents {\n" +
-          "    match /{document=**} {\n" +
-          "      allow read, write: if true;\n" +
-          "    }\n" +
-          "  }\n" +
-          "}"
-        );
-      }
-      console.error("Firestore Rules error:", error);
-      throw error;
-    } else {
-      console.error(`Error saving data to Firestore API for org ${orgId}:`, error);
-      throw error;
-    }
+    surfaceSaveError(error);
+    throw error;
   }
 };
 
@@ -563,12 +446,26 @@ export const persistAssistantChanges = async (
       }
     }
 
-    for (const [id] of beforeById) {
-      if (!afterById.has(id)) {
-        try {
-          await callAssistantUpdate(key, 'delete', { id }, orgId);
-        } catch (err: any) {
-          errors.push(`${key}/${id} (delete): ${err?.message || err}`);
+    // Deletes — with defensive guards. The entity screens always operate on the
+    // FULL appData arrays (department filtering is render-only), so a spurious
+    // delete should be impossible; these guards are belt-and-suspenders against a
+    // transient partially-loaded / empty local array being misread as "delete all".
+    const removedIds = [...beforeById.keys()].filter(id => !afterById.has(id));
+    if (removedIds.length > 0) {
+      const wholeArrayVanished = after.length === 0 && before.length > 0;
+      const implausibleMassDelete = removedIds.length > Math.max(3, Math.floor(before.length * 0.34));
+      if (wholeArrayVanished || implausibleMassDelete) {
+        console.warn(
+          `[persistAssistantChanges] SKIPPING ${removedIds.length} '${key}' delete(s) — ` +
+          `looks like a transient state, not an intentional delete (before=${before.length}, after=${after.length}).`
+        );
+      } else {
+        for (const id of removedIds) {
+          try {
+            await callAssistantUpdate(key, 'delete', { id }, orgId);
+          } catch (err: any) {
+            errors.push(`${key}/${id} (delete): ${err?.message || err}`);
+          }
         }
       }
     }

@@ -4,6 +4,16 @@ import { getAuth } from 'firebase-admin/auth';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import { MetricServiceClient } from '@google-cloud/monitoring';
 import { randomUUID } from 'crypto';
+import {
+  applyOrgChanges,
+  applyOrgReplace,
+  optimisticDocUpdate,
+  sanitizeOrgChanges,
+  sanitizeActivityLogs,
+  mapOrgErrorCode,
+  OrgChangeError,
+  type CallerRole,
+} from './orgWrites';
 
 if (!getApps().length) {
   initializeApp();
@@ -782,18 +792,26 @@ export const registerCurrentUser = functions.https.onCall(async (
   return { success: true, claimAction, ...result };
 });
 
-// Defensive internal deadline. The core operation below is now non-transactional
-// (a few fast doc reads/writes), so this should never fire in practice — it is a
-// backstop that converts any future hang into an immediate, clear error instead
-// of a silent 60s platform timeout with no user feedback.
+// Defensive internal deadline. The write paths below are non-transactional (a few
+// fast doc reads/writes), so this should never fire in practice — it is a backstop
+// that converts any future hang into an immediate, clear error instead of a silent
+// 60s platform timeout with no user feedback.
 const ASSISTANT_UPDATE_DEADLINE_MS = 15000;
+const ORG_COMMIT_DEADLINE_MS = 25000; // higher: may legitimately retry a few conflicts
 
-// Per-instance circuit breaker. The production DB is ENTERPRISE edition with a
-// hard daily read cap; once it is spent, every read fails with RESOURCE_EXHAUSTED
-// for hours. When that happens, reject subsequent calls immediately (without
-// spending another read) instead of letting the client retry-loop pile on.
+// Per-instance circuit breaker, shared by the org write functions. The production
+// DB is ENTERPRISE edition with a hard daily read cap; once it is spent, every
+// read fails with RESOURCE_EXHAUSTED for hours. When that happens, reject
+// subsequent calls immediately (without spending another read) instead of letting
+// the client retry-loop pile on.
 const QUOTA_TRIP_MS = 60000;
 let quotaExhaustedUntil = 0;
+const quotaTripped = () => Date.now() < quotaExhaustedUntil;
+const tripQuota = () => { quotaExhaustedUntil = Date.now() + QUOTA_TRIP_MS; };
+const QUOTA_ERROR = () => new functions.https.HttpsError(
+  'resource-exhausted',
+  'The database has hit its daily read limit. Please try again later or contact an admin.',
+);
 
 /**
  * Callable Function: assistantUpdateEntity
@@ -855,12 +873,9 @@ export const assistantUpdateEntity = functions.https.onCall(async (
     throw new functions.https.HttpsError('permission-denied', 'Organization mismatch.');
   }
 
-  if (Date.now() < quotaExhaustedUntil) {
+  if (quotaTripped()) {
     finish('SHORT-CIRCUIT (quota tripped)');
-    throw new functions.https.HttpsError(
-      'resource-exhausted',
-      'The database has hit its daily read limit. Please try again later or contact an admin.'
-    );
+    throw QUOTA_ERROR();
   }
 
   const payload = data?.payload && typeof data.payload === 'object' ? { ...data.payload } : {};
@@ -906,6 +921,24 @@ export const assistantUpdateEntity = functions.https.onCall(async (
     }
   };
 
+  // subjectCode must be unique across subjects (case-insensitive, trimmed),
+  // checked against a FRESH read — the client's local copy is not authoritative.
+  const assertSubjectCodeUnique = (docData: Record<string, any>, subject: any, id: string) => {
+    if (type !== 'subjects') return;
+    const code = typeof subject?.subjectCode === 'string' ? subject.subjectCode.trim().toLowerCase() : '';
+    if (!code) return;
+    const list: any[] = Array.isArray(docData.subjects) ? docData.subjects : [];
+    const clash = list.find(
+      (s) => s && s.id !== id && typeof s.subjectCode === 'string' && s.subjectCode.trim().toLowerCase() === code,
+    );
+    if (clash) {
+      throw new functions.https.HttpsError(
+        'already-exists',
+        `รหัสวิชา "${subject.subjectCode}" ถูกใช้โดยวิชา "${clash.name || clash.id}" อยู่แล้ว (subjectCode must be unique).`,
+      );
+    }
+  };
+
   const core = async (): Promise<{ entity: any }> => {
     const snap = await appDocRef.get();
     if (!snap.exists) {
@@ -928,43 +961,34 @@ export const assistantUpdateEntity = functions.https.onCall(async (
     }
 
     if (effectiveOp === 'create') {
+      assertSubjectCodeUnique(appDoc, payload, entityId);
       // Atomic append — concurrent arrayUnion transforms do not lock or abort.
       await appDocRef.update({ [type]: FieldValue.arrayUnion(payload) });
       if (subDocRef) await subDocRef.set(payload, { merge: true });
       return { entity: payload };
     }
 
-    // effectiveOp === 'update' — optimistic concurrency, bounded retry, no lock.
-    let attemptSnap = snap;
-    let attemptDoc = appDoc;
-    let attemptExisting = existing;
-    for (let attempt = 0; attempt < 5; attempt++) {
-      const merged = { ...attemptExisting, ...payload };
-      const nextList = listOf(attemptDoc).map((e) => (e && e.id === entityId ? merged : e));
-      try {
-        await appDocRef.update({ [type]: nextList }, { lastUpdateTime: attemptSnap.updateTime });
-        if (subDocRef) await subDocRef.set(merged, { merge: true });
-        return { entity: merged };
-      } catch (err: any) {
-        // 9 = FAILED_PRECONDITION, 10 = ABORTED — doc changed under us; re-read and retry.
-        if ((err?.code === 9 || err?.code === 10) && attempt < 4) {
-          await new Promise((r) => setTimeout(r, 40 * (attempt + 1)));
-          attemptSnap = await appDocRef.get();
-          if (!attemptSnap.exists) {
-            throw new functions.https.HttpsError('not-found', `apps/${orgId} disappeared during update.`);
-          }
-          attemptDoc = attemptSnap.data() || {};
-          attemptExisting = listOf(attemptDoc).find((e) => e && e.id === entityId);
-          if (!attemptExisting) {
-            throw new functions.https.HttpsError('not-found', `${type}/${entityId} was removed during update.`);
-          }
-          authorize(attemptDoc, attemptExisting, 'update');
-          continue;
+    // effectiveOp === 'update' — optimistic concurrency via the shared helper.
+    return await optimisticDocUpdate<{ entity: any }>(
+      appDocRef,
+      (s) => {
+        const doc = s.data() || {};
+        const cur = listOf(doc).find((e: any) => e && e.id === entityId);
+        if (!cur) {
+          throw new functions.https.HttpsError('not-found', `${type}/${entityId} was removed during update.`);
         }
-        throw err;
-      }
-    }
-    throw new functions.https.HttpsError('aborted', 'Could not save due to concurrent edits — please try again.');
+        authorize(doc, cur, 'update');
+        const merged = { ...cur, ...payload };
+        assertSubjectCodeUnique(doc, merged, entityId);
+        const nextList = listOf(doc).map((e: any) => (e && e.id === entityId ? merged : e));
+        return {
+          updates: { [type]: nextList },
+          after: subDocRef ? async () => { await subDocRef.set(merged, { merge: true }); } : undefined,
+          result: { entity: merged },
+        };
+      },
+      { maxAttempts: 5, label: `assistantUpdateEntity:${traceId}`, log: (m) => console.log(m) },
+    );
   };
 
   let timer: NodeJS.Timeout | undefined;
@@ -984,15 +1008,13 @@ export const assistantUpdateEntity = functions.https.onCall(async (
   } catch (err: any) {
     // code 8 = RESOURCE_EXHAUSTED — trip the breaker so we stop spending reads.
     if (err?.code === 8) {
-      quotaExhaustedUntil = Date.now() + QUOTA_TRIP_MS;
+      tripQuota();
       finish('FAILED code=8 RESOURCE_EXHAUSTED — breaker tripped');
-      throw new functions.https.HttpsError(
-        'resource-exhausted',
-        'The database has hit its daily read limit. Please try again later or contact an admin.'
-      );
+      throw QUOTA_ERROR();
     }
     finish(`FAILED code=${err?.code ?? '?'} ${err?.message || err}`);
     if (err instanceof functions.https.HttpsError) throw err;
+    if (err instanceof OrgChangeError) throw new functions.https.HttpsError(mapOrgErrorCode(err.code) as any, err.message);
     throw new functions.https.HttpsError('internal', err?.message || 'assistantUpdateEntity failed.');
   } finally {
     if (timer) clearTimeout(timer);
@@ -1015,6 +1037,114 @@ export const assistantUpdateEntity = functions.https.onCall(async (
 
   finish('SUCCESS');
   return { success: true, type, op, id: entityId, ...outcome };
+});
+
+/**
+ * Callable Function: commitOrgChanges
+ * Concurrency-safe admin/manager write path for the monolithic `apps/{orgId}`
+ * document. Replaces the old blind full-document overwrite (`saveAppData`), which
+ * silently clobbered other users' concurrent edits.
+ *
+ * The client sends only the adds/updates/deletes it actually made (diffed against
+ * its last-synced baseline). The server merges those onto a FRESH read, by `id`
+ * for array fields, and writes with a `lastUpdateTime` precondition + bounded
+ * retry-on-conflict. Never touches `users` / `authorizedAdmins` (owned by
+ * setUserRole / registerCurrentUser).
+ *
+ * data: { orgId?, changes?: OrgChanges, newActivityLogs?: ActivityLog[],
+ *         replace?: fullAppData }  // `replace` = admin restore-from-backup
+ */
+export const commitOrgChanges = functions.https.onCall(async (
+  data: { orgId?: string; changes?: any; newActivityLogs?: any; replace?: any },
+  context: functions.https.CallableContext
+) => {
+  const traceId = randomUUID().slice(0, 8);
+  const t0 = Date.now();
+  const finish = (outcome: string) =>
+    console.log(`[commitOrgChanges:${traceId}] ${outcome} (${Date.now() - t0}ms)`);
+
+  if (!context.auth) {
+    throw new functions.https.HttpsError('unauthenticated', 'User must be authenticated.');
+  }
+  const email = context.auth.token.email?.toLowerCase().trim();
+  const role = typeof context.auth.token.role === 'string' ? context.auth.token.role : 'guest';
+  const claimOrgId = context.auth.token.orgId;
+
+  if (!email?.endsWith(DOMAIN)) {
+    throw new functions.https.HttpsError('permission-denied', `Access restricted to ${DOMAIN} domain.`);
+  }
+  if (role !== 'admin' && role !== 'manager') {
+    throw new functions.https.HttpsError('permission-denied', 'Requires manager role or higher.');
+  }
+  const callerRole = role as CallerRole;
+
+  const orgId = (data?.orgId || DEFAULT_ORG_ID).replace(/[^a-zA-Z0-9_-]/g, '');
+  if (claimOrgId && claimOrgId !== orgId) {
+    throw new functions.https.HttpsError('permission-denied', 'Organization mismatch.');
+  }
+
+  if (quotaTripped()) {
+    finish('SHORT-CIRCUIT (quota tripped)');
+    throw QUOTA_ERROR();
+  }
+
+  const db = getDb();
+  const appDocRef = db.doc(`apps/${orgId}`);
+  const log = (m: string) => console.log(`[commitOrgChanges:${traceId}] ${m}`);
+
+  let timer: NodeJS.Timeout | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new functions.https.HttpsError('deadline-exceeded', 'Save timed out — please try again.')),
+      ORG_COMMIT_DEADLINE_MS
+    );
+  });
+
+  const runReplace = async () => {
+    if (callerRole !== 'admin') {
+      throw new functions.https.HttpsError('permission-denied', 'Only an admin can restore/replace all data.');
+    }
+    log('mode=replace (restore)');
+    const res = await applyOrgReplace(db, appDocRef, data.replace || {}, { log });
+    return { success: true, mode: 'replace', ...res };
+  };
+
+  const runMerge = async () => {
+    const changes = sanitizeOrgChanges(data?.changes);
+    const activityLogs = sanitizeActivityLogs(data?.newActivityLogs);
+    const fieldCount = Object.keys(changes).length;
+    if (fieldCount === 0 && activityLogs.length === 0) {
+      log('no-op (empty changeset)');
+      return { success: true, mode: 'merge', summary: {}, attempts: 0, conflicts: 0 };
+    }
+    log(`mode=merge fields=[${Object.keys(changes).join(',')}] activityLogs=${activityLogs.length}`);
+    const res = await applyOrgChanges(db, appDocRef, changes, callerRole, { log, activityLogs });
+    return { success: true, mode: 'merge', ...res };
+  };
+
+  try {
+    const result = await Promise.race([data?.replace ? runReplace() : runMerge(), deadline]);
+    finish(`SUCCESS ${JSON.stringify((result as any).summary ?? {})} attempts=${(result as any).attempts ?? '?'}`);
+    return result;
+  } catch (err: any) {
+    if (err?.code === 8) {
+      tripQuota();
+      finish('FAILED code=8 RESOURCE_EXHAUSTED — breaker tripped');
+      throw QUOTA_ERROR();
+    }
+    if (err instanceof functions.https.HttpsError) {
+      finish(`FAILED ${err.code} ${err.message}`);
+      throw err;
+    }
+    if (err instanceof OrgChangeError) {
+      finish(`FAILED OrgChangeError:${err.code} ${err.message}`);
+      throw new functions.https.HttpsError(mapOrgErrorCode(err.code) as any, err.message);
+    }
+    finish(`FAILED ${err?.code ?? '?'} ${err?.message || err}`);
+    throw new functions.https.HttpsError('internal', err?.message || 'commitOrgChanges failed.');
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 });
 
 
