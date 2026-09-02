@@ -1,4 +1,27 @@
 rules_version = '2';
+
+// =============================================================================
+// Timetable Scheduler — Firestore Security Rules
+// Phase 1: real role / department-based authorization for WRITES.
+//
+// READ model  : any authenticated @utd.ac.th account (incl. guest / teacher) may
+//               read apps/{appId} and its subcollections. This keeps the
+//               read-only viewer and first-login onboarding working. Tightening
+//               reads to belongsToOrg() is deferred together with the
+//               isUtdDomain() → multi-tenant cleanup (out of scope for Phase 1).
+//
+// WRITE model : gated on the caller's `role` custom claim AND an `orgId` claim
+//               matching the document id. Assistants have NO direct write access
+//               — their department-scoped edits are routed through the
+//               assistantUpdateEntity Cloud Function (Admin SDK). New-user
+//               registration is routed through registerCurrentUser.
+//
+// PREREQUISITE: every existing account must be backfilled with `orgId` (and
+//               `assignedDepartments`) claims via backfillUserClaims BEFORE this
+//               file is deployed, or admin/manager accounts lose write access
+//               until their next claim refresh.
+// =============================================================================
+
 service cloud.firestore {
   match /databases/{database}/documents {
 
@@ -12,30 +35,76 @@ service cloud.firestore {
         && request.auth.token.email.matches('.*@utd[.]ac[.]th$');
     }
 
-    function isAdmin() {
-      return isUtdDomain() && (request.auth.token.role == 'admin');
+    function role() {
+      return request.auth != null ? request.auth.token.role : null;
+    }
+
+    // Caller is a domain account whose org claim matches this document.
+    function belongsToOrg(appId) {
+      return isUtdDomain() && request.auth.token.orgId == appId;
+    }
+
+    function isAdmin(appId)   { return belongsToOrg(appId) && role() == 'admin'; }
+    function isManager(appId) { return belongsToOrg(appId) && (role() == 'admin' || role() == 'manager'); }
+    function isElevated(appId) { return isManager(appId); }
+
+    // Identity / permission fields of apps/{appId} that ONLY Cloud Functions
+    // (setUserRole / bootstrapAdmin / registerCurrentUser, via the Admin SDK)
+    // may write. A non-admin manager write that changes any of these is denied.
+    // A deny-list (rather than a write whitelist) is used deliberately: the live
+    // document carries legacy top-level fields, and an unlisted-but-changed field
+    // must not lock every manager out of saving. Tightening to an explicit
+    // whitelist is a Phase 2 follow-up once integration tests pin the shape.
+    function protectedAppKeys() {
+      return ['users', 'authorizedAdmins'];
+    }
+
+    function affectedKeys() {
+      return request.resource.data.diff(resource.data).affectedKeys();
     }
 
     match /apps/{appId} {
       allow read: if isUtdDomain();
-      allow write: if isUtdDomain();
 
+      // Admin: unrestricted write. Manager: any field EXCEPT users /
+      // authorizedAdmins. Assistant / teacher / guest: no direct write.
+      allow create: if isAdmin(appId);
+      allow update: if isAdmin(appId)
+        || (isManager(appId) && !affectedKeys().hasAny(protectedAppKeys()));
+      allow delete: if isAdmin(appId);
+
+      // -----------------------------------------------------------------------
+      // scheduleEntries subcollection (mirror of apps/{appId}.scheduleEntries).
+      // Written directly only by elevated roles' saveAppData(); assistant edits
+      // arrive via assistantUpdateEntity (Admin SDK, bypasses these rules).
+      // -----------------------------------------------------------------------
       match /scheduleEntries/{entryId} {
         allow read: if isUtdDomain();
-        allow write: if isUtdDomain();
+        allow write: if isElevated(appId);
       }
 
+      // -----------------------------------------------------------------------
+      // activityLogs subcollection. Any domain account may append a log entry
+      // (client-side logActivity); only admins may mutate or remove them.
+      // -----------------------------------------------------------------------
       match /activityLogs/{logId} {
         allow read: if isUtdDomain();
         allow create: if isUtdDomain();
-        allow update, delete: if isAdmin();
+        allow update, delete: if isAdmin(appId);
       }
 
+      // -----------------------------------------------------------------------
+      // errors subcollection. Error reporting must not depend on custom claims
+      // (it runs from the global error boundary), so any authenticated caller
+      // may create. Read/mutate unchanged from the previous ruleset.
+      // -----------------------------------------------------------------------
       match /errors/{errorId} {
         allow read: if isUtdDomain();
         allow create: if isAuthenticated();
-        allow update, delete: if isAdmin();
+        allow update, delete: if isAdmin(appId);
       }
     }
+    // Any collection not matched above (incl. future apps/{appId} subcollections)
+    // is denied by default — Firestore grants nothing unless an allow matches.
   }
 }

@@ -24,7 +24,7 @@ import { TeacherScheduleTable } from './components/TeacherScheduleView';
 import { RoomUsageScheduleTable } from './components/RoomUsageView';
 
 import { Icons, APP_TITLE, PREDEFINED_SUBJECT_COLORS, DEFAULT_PERIOD_SETTINGS } from './constants';
-import { fetchAppData, saveAppData, getSampleAppData, DEFAULT_DEPARTMENTS, DEFAULT_RESOURCE_TYPES, ORG_ID, pruneActivityLogs } from './api'; 
+import { fetchAppData, saveAppData, persistAssistantChanges, getSampleAppData, DEFAULT_DEPARTMENTS, DEFAULT_RESOURCE_TYPES, ORG_ID, pruneActivityLogs } from './api';
 import { isParentGrade as checkIsParentGradeUtil, getParentGradeLevelId, getChildGradeLevelIds, isChildOf } from './components/scheduleUtils';
 import { useAppAuth } from './hooks/useAppAuth';
 import { useBackupRestore } from './hooks/useBackupRestore';
@@ -103,16 +103,28 @@ const App: React.FC = () => {
         return; // Skip if no actual data changes
       }
 
-      // Check if current user has permission to save modifications
+      // Check if current user has permission to save modifications.
+      // admin / manager persist the full document via saveAppData().
+      // assistant edits are department-scoped and MUST route through the
+      // assistantUpdateEntity Cloud Function (the new Firestore Rules block
+      // assistants from writing apps/{orgId} directly).
       const role = appData.currentUser?.role;
-      const canSave = role === 'admin' || role === 'manager' || role === 'assistant';
-      if (!canSave) {
+      const canBlobSave = role === 'admin' || role === 'manager';
+      const isAssistant = role === 'assistant';
+      if (!canBlobSave && !isAssistant) {
         lastSavedDataStr.current = currentDataStr;
         return;
       }
 
       const timeoutId = setTimeout(() => {
-        saveAppData(appData, ORG_ID).then(() => {
+        const prevSaved: AppData | null = (() => {
+          try { return lastSavedDataStr.current ? JSON.parse(lastSavedDataStr.current) as AppData : null; }
+          catch { return null; }
+        })();
+        const persist = isAssistant
+          ? persistAssistantChanges(prevSaved, appData, ORG_ID)
+          : saveAppData(appData, ORG_ID);
+        persist.then(() => {
           lastSavedDataStr.current = currentDataStr;
         }).catch(error => {
           console.warn("Auto-save notice:", error?.message || error);

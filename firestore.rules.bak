@@ -1,0 +1,41 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isUtdDomain() {
+      return isAuthenticated()
+        && request.auth.token.email != null
+        && request.auth.token.email.matches('.*@utd[.]ac[.]th$');
+    }
+
+    function isAdmin() {
+      return isUtdDomain() && (request.auth.token.role == 'admin');
+    }
+
+    match /apps/{appId} {
+      allow read: if isUtdDomain();
+      allow write: if isUtdDomain();
+
+      match /scheduleEntries/{entryId} {
+        allow read: if isUtdDomain();
+        allow write: if isUtdDomain();
+      }
+
+      match /activityLogs/{logId} {
+        allow read: if isUtdDomain();
+        allow create: if isUtdDomain();
+        allow update, delete: if isAdmin();
+      }
+
+      match /errors/{errorId} {
+        allow read: if isUtdDomain();
+        allow create: if isAuthenticated();
+        allow update, delete: if isAdmin();
+      }
+    }
+  }
+}

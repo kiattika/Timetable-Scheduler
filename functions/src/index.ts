@@ -12,6 +12,23 @@ if (!getApps().length) {
 const DEFAULT_ORG_ID = process.env.VITE_ORG_ID || 'utd';
 const BOOTSTRAP_ADMIN_EMAIL = (process.env.BOOTSTRAP_ADMIN_EMAIL || 'admin@utd.ac.th').toLowerCase().trim();
 
+/**
+ * Firestore database ID.
+ * The live application data lives in the NON-DEFAULT database. All Admin SDK
+ * access in this file must target it explicitly via getDb(); a bare
+ * getFirestore() would silently read/write the unused "(default)" database.
+ * Override with FIRESTORE_DATABASE_ID for the emulator or a different project.
+ */
+const FIRESTORE_DATABASE_ID =
+  process.env.FIRESTORE_DATABASE_ID || 'ai-studio-ddf61d33-4a5f-4aed-a5a9-5bc34b3c98da';
+
+const getDb = () => getFirestore(FIRESTORE_DATABASE_ID);
+
+const DOMAIN = '@utd.ac.th';
+const ELEVATED_ROLES = ['admin', 'manager'];
+const ASSISTANT_ENTITY_TYPES = ['teachers', 'subjects', 'teacherSubjectAssignments', 'scheduleEntries'] as const;
+type AssistantEntityType = typeof ASSISTANT_ENTITY_TYPES[number];
+
 // In-memory rate limiting map for login log attempts (prevents spam DoS)
 const loginRateLimitMap = new Map<string, { count: number; resetTime: number }>();
 const RATE_LIMIT_WINDOW_MS = 60 * 1000; // 1 minute
@@ -94,13 +111,19 @@ export const setUserRole = functions.https.onCall(async (
     }
     
     // 2. Set Firebase Auth custom claims
+    // Firestore Rules authorize on request.auth.token.{role,orgId,assignedDepartments},
+    // so all three must be present on every managed account.
+    const claimDepartments = role === 'assistant' && Array.isArray(assignedDepartments)
+      ? assignedDepartments.filter((d): d is string => typeof d === 'string' && d.trim().length > 0)
+      : [];
     await auth.setCustomUserClaims(userRecord.uid, {
       role,
-      orgId
+      orgId,
+      assignedDepartments: claimDepartments
     });
 
     // 3. Update Firestore document record (both users array and authorizedAdmins array)
-    const db = getFirestore();
+    const db = getDb();
     const appDocRef = db.doc(`apps/${orgId}`);
     const appSnap = await appDocRef.get();
 
@@ -197,11 +220,12 @@ export const bootstrapAdmin = functions.https.onCall(async (_data: any, context:
     const auth = getAuth();
     await auth.setCustomUserClaims(context.auth.uid, {
       role: 'admin',
-      orgId: DEFAULT_ORG_ID
+      orgId: DEFAULT_ORG_ID,
+      assignedDepartments: []
     });
 
     // Also ensure bootstrap admin is in authorizedAdmins and users in Firestore
-    const db = getFirestore();
+    const db = getDb();
     const appDocRef = db.doc(`apps/${DEFAULT_ORG_ID}`);
     const appSnap = await appDocRef.get();
     if (appSnap.exists) {
@@ -302,7 +326,7 @@ export const logLoginAttempt = functions.https.onCall(async (
   };
 
   try {
-    const db = getFirestore();
+    const db = getDb();
     const logDocRef = db.doc(`apps/${orgId}/activityLogs/${logId}`);
     await logDocRef.set(logEntry);
 
@@ -330,7 +354,7 @@ export const logLoginAttempt = functions.https.onCall(async (
  */
 export const cleanupOldActivityLogs = functions.pubsub.schedule('every 24 hours').onRun(async () => {
   const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
-  const db = getFirestore();
+  const db = getDb();
 
   try {
     let totalPurged = 0;
@@ -533,6 +557,356 @@ export const getFirestoreUsageStats = functions.https.onCall(async (data: { days
       errorMessage
     );
   }
+});
+
+
+/* ============================================================================
+ * PHASE 1 — Role / Department-based authorization support
+ * ==========================================================================*/
+
+const isElevatedRole = (role?: unknown): boolean =>
+  typeof role === 'string' && ELEVATED_ROLES.includes(role);
+
+/**
+ * Resolve the department name(s) an entity belongs to, from the current app doc.
+ * Returns [] when the department cannot be determined (caller must treat that as
+ * "deny" for assistant-scoped writes).
+ */
+function resolveEntityDepartments(type: AssistantEntityType, entity: any, appDoc: Record<string, any>): string[] {
+  const teachers: any[] = Array.isArray(appDoc.teachers) ? appDoc.teachers : [];
+  const subjects: any[] = Array.isArray(appDoc.subjects) ? appDoc.subjects : [];
+  const assignments: any[] = Array.isArray(appDoc.teacherSubjectAssignments) ? appDoc.teacherSubjectAssignments : [];
+  const deptOfTeacher = (teacherId: string): string[] => {
+    const t = teachers.find((x) => x.id === teacherId);
+    return t?.department ? [String(t.department)] : [];
+  };
+
+  switch (type) {
+    case 'teachers':
+      return entity?.department ? [String(entity.department)] : [];
+    case 'subjects': {
+      if (entity?.department) return [String(entity.department)];
+      const depts = new Set<string>();
+      for (const a of assignments.filter((a) => a.subjectId === entity?.id)) {
+        deptOfTeacher(a.teacherId).forEach((d) => depts.add(d));
+      }
+      return [...depts];
+    }
+    case 'teacherSubjectAssignments':
+      return entity?.teacherId ? deptOfTeacher(entity.teacherId) : [];
+    case 'scheduleEntries': {
+      const depts = new Set<string>();
+      const subj = subjects.find((s) => s.id === entity?.subjectId);
+      if (subj?.department) depts.add(String(subj.department));
+      for (const tid of Array.isArray(entity?.teacherIds) ? entity.teacherIds : []) {
+        deptOfTeacher(tid).forEach((d) => depts.add(d));
+      }
+      return [...depts];
+    }
+    default:
+      return [];
+  }
+}
+
+/**
+ * Callable Function: backfillUserClaims
+ * One-time, idempotent migration. Ensures EVERY existing Firebase Auth user has
+ * `orgId` and `assignedDepartments` custom claims alongside their existing `role`.
+ * MUST be run (and verified) before deploying Firestore Rules that authorize on
+ * `orgId`, otherwise every not-yet-migrated account is locked out.
+ * Admin-only. Pass { dryRun: true } to preview without writing.
+ */
+export const backfillUserClaims = functions
+  .runWith({ timeoutSeconds: 540, memory: '512MB' })
+  .https.onCall(async (
+    data: { orgId?: string; dryRun?: boolean },
+    context: functions.https.CallableContext
+  ) => {
+    if (!context.auth) {
+      throw new functions.https.HttpsError('unauthenticated', 'User must be authenticated.');
+    }
+    const callerEmail = context.auth.token.email?.toLowerCase().trim();
+    const callerRole = context.auth.token.role;
+    const isCallerAdmin = callerRole === 'admin' || callerEmail === BOOTSTRAP_ADMIN_EMAIL || callerEmail === 'kiattika@utd.ac.th';
+    if (!callerEmail?.endsWith(DOMAIN)) {
+      throw new functions.https.HttpsError('permission-denied', `Access restricted to ${DOMAIN} domain.`);
+    }
+    if (!isCallerAdmin) {
+      throw new functions.https.HttpsError('permission-denied', 'Only administrators can run the claims backfill.');
+    }
+
+    const orgId = (data?.orgId || DEFAULT_ORG_ID).replace(/[^a-zA-Z0-9_-]/g, '');
+    const dryRun = data?.dryRun === true;
+    const auth = getAuth();
+    const db = getDb();
+
+    // Department assignments currently recorded in the app document's users array.
+    const appSnap = await db.doc(`apps/${orgId}`).get();
+    const appUsers: any[] = appSnap.exists && Array.isArray(appSnap.data()?.users) ? appSnap.data()!.users : [];
+    const deptByEmail = new Map<string, string[]>();
+    for (const u of appUsers) {
+      const email = u?.email?.toLowerCase?.().trim();
+      if (email && Array.isArray(u.assignedDepartments)) {
+        deptByEmail.set(email, u.assignedDepartments.filter((d: any) => typeof d === 'string' && d.trim()));
+      }
+    }
+
+    let total = 0;
+    let updated = 0;
+    let alreadyCompliant = 0;
+    const updatedEmails: string[] = [];
+    let pageToken: string | undefined;
+
+    do {
+      const page = await auth.listUsers(1000, pageToken);
+      for (const user of page.users) {
+        total++;
+        const claims: Record<string, any> = user.customClaims || {};
+        const email = user.email?.toLowerCase().trim() || '';
+        const desiredRole = typeof claims.role === 'string' ? claims.role : 'guest';
+        const desiredDepartments = desiredRole === 'assistant'
+          ? (deptByEmail.get(email) || (Array.isArray(claims.assignedDepartments) ? claims.assignedDepartments : []))
+          : [];
+
+        const needsOrgId = claims.orgId !== orgId;
+        const needsRole = typeof claims.role !== 'string';
+        const needsDepartments =
+          JSON.stringify(claims.assignedDepartments ?? null) !== JSON.stringify(desiredDepartments);
+
+        if (!needsOrgId && !needsRole && !needsDepartments) {
+          alreadyCompliant++;
+          continue;
+        }
+
+        updatedEmails.push(email || user.uid);
+        if (!dryRun) {
+          await auth.setCustomUserClaims(user.uid, {
+            ...claims,
+            role: desiredRole,
+            orgId,
+            assignedDepartments: desiredDepartments
+          });
+        }
+        updated++;
+      }
+      pageToken = page.pageToken;
+    } while (pageToken);
+
+    console.log(`[MIGRATION] backfillUserClaims by '${callerEmail}' dryRun=${dryRun}: total=${total} updated=${updated} alreadyCompliant=${alreadyCompliant}`);
+
+    return {
+      success: true,
+      dryRun,
+      orgId,
+      totalUsers: total,
+      updatedCount: updated,
+      alreadyCompliant,
+      updatedEmails
+    };
+  });
+
+/**
+ * Callable Function: registerCurrentUser
+ * First-login self-registration. Adds the caller to apps/{orgId}.users with role
+ * 'guest' when absent. Replaces the previous client-side saveAppData() call in
+ * useAppAuth, which the new Firestore Rules block for non-manager roles.
+ */
+export const registerCurrentUser = functions.https.onCall(async (
+  data: { orgId?: string; name?: string },
+  context: functions.https.CallableContext
+) => {
+  if (!context.auth) {
+    throw new functions.https.HttpsError('unauthenticated', 'User must be authenticated.');
+  }
+  const email = context.auth.token.email?.toLowerCase().trim();
+  if (!email?.endsWith(DOMAIN)) {
+    throw new functions.https.HttpsError('permission-denied', `Access restricted to ${DOMAIN} domain.`);
+  }
+
+  const orgId = (data?.orgId || DEFAULT_ORG_ID).replace(/[^a-zA-Z0-9_-]/g, '');
+  const uid = context.auth.uid;
+  const tokenName = context.auth.token.name;
+  const db = getDb();
+  const appDocRef = db.doc(`apps/${orgId}`);
+
+  // Baseline self-claim: grant a brand-new account { role: 'guest', orgId } so the
+  // new Firestore Rules (which authorize reads on orgId) let them load the app in
+  // read-only mode. Never downgrade or overwrite an account that already has a
+  // role claim — only setUserRole / bootstrapAdmin manage those.
+  let claimAction: 'granted-guest' | 'unchanged' = 'unchanged';
+  try {
+    const auth = getAuth();
+    const record = await auth.getUser(uid);
+    const claims: Record<string, any> = record.customClaims || {};
+    if (typeof claims.role !== 'string' || claims.orgId !== orgId) {
+      await auth.setCustomUserClaims(uid, {
+        ...claims,
+        role: typeof claims.role === 'string' ? claims.role : 'guest',
+        orgId,
+        assignedDepartments: Array.isArray(claims.assignedDepartments) ? claims.assignedDepartments : []
+      });
+      claimAction = 'granted-guest';
+    }
+  } catch (e: any) {
+    console.warn('registerCurrentUser claim notice:', e?.message || e);
+  }
+
+  const result = await db.runTransaction(async (tx) => {
+    const snap = await tx.get(appDocRef);
+    if (!snap.exists) return { created: false, reason: 'no-app-doc' as const };
+    const appData = snap.data() || {};
+    const users: any[] = Array.isArray(appData.users) ? [...appData.users] : [];
+    const idx = users.findIndex((u: any) => u.email?.toLowerCase().trim() === email);
+    if (idx >= 0) return { created: false, reason: 'already-registered' as const, role: users[idx].role };
+
+    users.push({
+      id: uid,
+      name: String(data?.name || tokenName || email.split('@')[0]).slice(0, 120),
+      email,
+      role: 'guest',
+      organizationId: orgId
+    });
+    tx.update(appDocRef, { users });
+    return { created: true as const, role: 'guest' as const };
+  });
+
+  console.log(`[AUDIT] registerCurrentUser '${email}': claim=${claimAction} ${JSON.stringify(result)}`);
+  return { success: true, claimAction, ...result };
+});
+
+/**
+ * Callable Function: assistantUpdateEntity
+ * Department-scoped write channel for assistant-role users. The new Firestore
+ * Rules block assistants from writing apps/{appId} (and its subcollections)
+ * directly, so their edits to teachers / subjects / teacherSubjectAssignments /
+ * scheduleEntries are routed here. The server-side department check below IS the
+ * security boundary — the Admin SDK write bypasses Firestore Rules.
+ */
+export const assistantUpdateEntity = functions.https.onCall(async (
+  data: { type: AssistantEntityType; op: 'create' | 'update' | 'delete'; payload?: any; id?: string; orgId?: string },
+  context: functions.https.CallableContext
+) => {
+  if (!context.auth) {
+    throw new functions.https.HttpsError('unauthenticated', 'User must be authenticated.');
+  }
+  const email = context.auth.token.email?.toLowerCase().trim();
+  const role = typeof context.auth.token.role === 'string' ? context.auth.token.role : 'guest';
+  const claimOrgId = context.auth.token.orgId;
+  const assignedDepartments: string[] = Array.isArray(context.auth.token.assignedDepartments)
+    ? (context.auth.token.assignedDepartments as any[]).filter((d) => typeof d === 'string')
+    : [];
+
+  if (!email?.endsWith(DOMAIN)) {
+    throw new functions.https.HttpsError('permission-denied', `Access restricted to ${DOMAIN} domain.`);
+  }
+  const isAssistant = role === 'assistant';
+  if (!isAssistant && !isElevatedRole(role)) {
+    throw new functions.https.HttpsError('permission-denied', 'Requires assistant role or higher.');
+  }
+
+  const type = data?.type;
+  const op = data?.op;
+  if (!ASSISTANT_ENTITY_TYPES.includes(type)) {
+    throw new functions.https.HttpsError('invalid-argument', `Unsupported entity type: ${type}`);
+  }
+  if (!['create', 'update', 'delete'].includes(op as string)) {
+    throw new functions.https.HttpsError('invalid-argument', `Unsupported op: ${op}`);
+  }
+
+  const orgId = (data?.orgId || DEFAULT_ORG_ID).replace(/[^a-zA-Z0-9_-]/g, '');
+  if (claimOrgId && claimOrgId !== orgId) {
+    throw new functions.https.HttpsError('permission-denied', 'Organization mismatch.');
+  }
+
+  const payload = data?.payload && typeof data.payload === 'object' ? { ...data.payload } : {};
+  const entityId = op === 'create' ? (payload.id || randomUUID()) : (data?.id || payload.id);
+  if (op !== 'create' && !entityId) {
+    throw new functions.https.HttpsError('invalid-argument', 'id is required for update/delete.');
+  }
+  payload.id = entityId;
+
+  const db = getDb();
+  const appDocRef = db.doc(`apps/${orgId}`);
+
+  const outcome = await db.runTransaction(async (tx) => {
+    const snap = await tx.get(appDocRef);
+    if (!snap.exists) {
+      throw new functions.https.HttpsError('not-found', `apps/${orgId} does not exist.`);
+    }
+    const appDoc = snap.data() || {};
+    const list: any[] = Array.isArray(appDoc[type]) ? [...appDoc[type]] : [];
+    const existing = list.find((e) => e.id === entityId);
+    if (op !== 'create' && !existing) {
+      throw new functions.https.HttpsError('not-found', `${type}/${entityId} not found.`);
+    }
+
+    // Department authorization — enforced for assistant; elevated roles skip.
+    if (isAssistant) {
+      if (assignedDepartments.length === 0) {
+        throw new functions.https.HttpsError('permission-denied', 'No departments assigned to this account.');
+      }
+      const covers = (depts: string[]) => depts.length > 0 && depts.every((d) => assignedDepartments.includes(d));
+
+      if (op !== 'create') {
+        const currentDepts = resolveEntityDepartments(type, existing, appDoc);
+        if (!covers(currentDepts)) {
+          throw new functions.https.HttpsError(
+            'permission-denied',
+            `Entity belongs to a department outside your assignment (${currentDepts.join(', ') || 'unknown'}).`
+          );
+        }
+      }
+      if (op !== 'delete') {
+        const nextDepts = resolveEntityDepartments(type, { ...existing, ...payload }, appDoc);
+        if (!covers(nextDepts)) {
+          throw new functions.https.HttpsError(
+            'permission-denied',
+            `Target department is outside your assignment (${nextDepts.join(', ') || 'unknown'}).`
+          );
+        }
+      }
+    }
+
+    let nextList: any[];
+    if (op === 'delete') {
+      nextList = list.filter((e) => e.id !== entityId);
+    } else if (existing) {
+      nextList = list.map((e) => (e.id === entityId ? { ...e, ...payload } : e));
+    } else {
+      nextList = [...list, payload];
+    }
+    tx.update(appDocRef, { [type]: nextList });
+
+    // Keep the scheduleEntries subcollection consistent (Phase-1 dual storage).
+    if (type === 'scheduleEntries') {
+      const subRef = db.doc(`apps/${orgId}/scheduleEntries/${entityId}`);
+      if (op === 'delete') {
+        tx.delete(subRef);
+      } else {
+        tx.set(subRef, op === 'create' ? payload : { ...existing, ...payload }, { merge: true });
+      }
+    }
+
+    return { entity: op === 'delete' ? null : (nextList.find((e) => e.id === entityId) || payload) };
+  });
+
+  // Best-effort audit log (outside the transaction).
+  try {
+    const logId = randomUUID();
+    await db.doc(`apps/${orgId}/activityLogs/${logId}`).set({
+      id: logId,
+      timestamp: new Date().toISOString(),
+      action: op === 'create' ? 'Added' : op === 'delete' ? 'Removed' : 'Updated',
+      description: `${op} ${type} (${entityId}) via assistant channel`,
+      user: email,
+      details: `role=${role}`
+    });
+  } catch (e: any) {
+    console.warn('assistantUpdateEntity activity log notice:', e?.message || e);
+  }
+
+  console.log(`[AUDIT] assistantUpdateEntity by '${email}' (${role}): ${op} ${type}/${entityId}`);
+  return { success: true, type, op, id: entityId, ...outcome };
 });
 
 

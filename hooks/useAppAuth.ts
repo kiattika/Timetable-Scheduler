@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { fetchAppData, saveAppData, safeUpsert, DEFAULT_DEPARTMENTS, DEFAULT_RESOURCE_TYPES, ORG_ID } from '../api';
+import { fetchAppData, registerCurrentUser, safeUpsert, DEFAULT_DEPARTMENTS, DEFAULT_RESOURCE_TYPES, ORG_ID } from '../api';
 import { AppData, User, ScheduleEntry, ActivityLog, Teacher } from '../types';
 import { db } from '../lib/firebase';
 import { doc, collection, onSnapshot, query, orderBy, limit } from 'firebase/firestore';
@@ -95,7 +95,9 @@ export const useAppAuth = (
               organizationId: ORG_ID
             };
             newUsers.push(appUser);
-            saveAppData({ ...mainParsedData, users: newUsers }, ORG_ID).catch(e => {
+            // Persist the new user record via Cloud Function — the new Firestore
+            // Rules block brand-new guests from writing apps/{orgId} directly.
+            registerCurrentUser(ORG_ID, appUser.name).catch(e => {
               console.warn("New user registration notice:", e?.message || e);
             });
           } else {

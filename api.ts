@@ -1,7 +1,8 @@
 import { AppData, Subject, PeriodSetting, User, ScheduleEntry, GradeLevel, Teacher, TeacherSubjectAssignment, PhysicalRoom, OrganizationSettings, FormField, DayOfWeek, ActivityLog } from './types';
 import { DEFAULT_PERIOD_SETTINGS, PREDEFINED_SUBJECT_COLORS } from './constants';
-import { db, auth } from './lib/firebase';
+import { db, auth, functions } from './lib/firebase';
 import { doc, getDoc, setDoc, deleteDoc, collection, getDocs, writeBatch, query, orderBy, limit, deleteField, runTransaction } from 'firebase/firestore';
+import { httpsCallable } from 'firebase/functions';
 
 export const ORG_ID = import.meta.env.VITE_ORG_ID || 'utd';
 
@@ -487,6 +488,94 @@ export const resetSemesterTimetable = async (orgId: string = ORG_ID, currentUser
       console.error("Error resetting semester timetable:", error);
       throw error;
     }
+  }
+};
+
+/**
+ * First-login self-registration via Cloud Function.
+ * Replaces the previous client-side saveAppData() write in useAppAuth — the new
+ * Firestore Rules block non-manager roles (including brand-new guests) from
+ * writing apps/{orgId} directly.
+ */
+export const registerCurrentUser = async (orgId: string = ORG_ID, name?: string): Promise<void> => {
+  try {
+    const fn = httpsCallable(functions, 'registerCurrentUser');
+    await fn({ orgId, name });
+  } catch (err: any) {
+    console.warn('registerCurrentUser notice:', err?.message || err);
+  }
+};
+
+/**
+ * Entity types an assistant-role user may edit, scoped to their assigned
+ * departments. Under the new Firestore Rules assistants cannot write apps/{orgId}
+ * (or its subcollections) directly, so these edits are routed through the
+ * assistantUpdateEntity Cloud Function, which enforces the department check
+ * server-side.
+ */
+export const ASSISTANT_SYNC_KEYS = ['teachers', 'subjects', 'teacherSubjectAssignments', 'scheduleEntries'] as const;
+export type AssistantEntityKey = typeof ASSISTANT_SYNC_KEYS[number];
+
+const callAssistantUpdate = async (
+  type: AssistantEntityKey,
+  op: 'create' | 'update' | 'delete',
+  entity: any,
+  orgId: string
+): Promise<void> => {
+  const fn = httpsCallable(functions, 'assistantUpdateEntity');
+  await fn({ type, op, id: entity?.id, payload: entity, orgId });
+};
+
+/**
+ * Diff the department-scoped entity arrays between the previously-persisted state
+ * and the current in-memory state, and route each add / change / removal through
+ * the assistantUpdateEntity Cloud Function. Called by the App autosave effect for
+ * assistant-role users in place of saveAppData().
+ *
+ * Errors from individual entity calls (e.g. an edit outside the assistant's
+ * departments) are collected and re-thrown so the caller can surface them without
+ * losing the other successful writes.
+ */
+export const persistAssistantChanges = async (
+  prev: AppData | null,
+  next: AppData | null,
+  orgId: string = ORG_ID
+): Promise<void> => {
+  if (!next) return;
+  const errors: string[] = [];
+
+  for (const key of ASSISTANT_SYNC_KEYS) {
+    const before: any[] = Array.isArray((prev as any)?.[key]) ? (prev as any)[key] : [];
+    const after: any[] = Array.isArray((next as any)?.[key]) ? (next as any)[key] : [];
+    const beforeById = new Map(before.filter(e => e && e.id).map(e => [e.id, e]));
+    const afterById = new Map(after.filter(e => e && e.id).map(e => [e.id, e]));
+
+    for (const [id, entity] of afterById) {
+      const prior = beforeById.get(id);
+      try {
+        if (!prior) {
+          await callAssistantUpdate(key, 'create', entity, orgId);
+        } else if (JSON.stringify(prior) !== JSON.stringify(entity)) {
+          await callAssistantUpdate(key, 'update', entity, orgId);
+        }
+      } catch (err: any) {
+        errors.push(`${key}/${id}: ${err?.message || err}`);
+      }
+    }
+
+    for (const [id] of beforeById) {
+      if (!afterById.has(id)) {
+        try {
+          await callAssistantUpdate(key, 'delete', { id }, orgId);
+        } catch (err: any) {
+          errors.push(`${key}/${id} (delete): ${err?.message || err}`);
+        }
+      }
+    }
+  }
+
+  if (errors.length > 0) {
+    throw new Error(`Assistant sync completed with errors:\n${errors.join('\n')}`);
   }
 };
 
