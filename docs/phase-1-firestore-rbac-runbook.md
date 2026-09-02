@@ -4,8 +4,48 @@ Branch: `phase-1-firestore-rbac`
 Firebase project: `kiattisak-project-001` (alias `timetable`)
 Firestore database: `ai-studio-ddf61d33-4a5f-4aed-a5a9-5bc34b3c98da` (**non-default** — always pass it explicitly)
 
-This branch contains **code + emulator tests only**. Nothing here has been deployed.
+This branch contains **code + emulator tests only** for the rules work. The
+`assistantUpdateEntity` / `registerCurrentUser` functions HAVE been deployed
+(commit `ea29517`) to fix a production hang — see the critical issue below.
 Follow the steps below **in order**. Do not reorder or skip.
+
+---
+
+## ⚠️ CRITICAL — production database is ENTERPRISE edition with a hard read cap
+
+Discovered 2026-09-02 while fixing an `assistantUpdateEntity` hang.
+
+`ai-studio-ddf61d33-4a5f-4aed-a5a9-5bc34b3c98da` is a **Firestore ENTERPRISE
+edition** database with a **"free tier database" daily read quota that billing
+cannot lift** (`firebase firestore:databases:get` → `Edition: ENTERPRISE`; the
+quota error literally says *"This database cannot exceed free quota limits even
+when a billing instrument is enabled"*). Once the daily read units are spent,
+**every** Firestore read across the whole app fails with `RESOURCE_EXHAUSTED`.
+
+Two consequences already fixed in code (commit `ea29517`, deployed):
+
+1. **`db.runTransaction()` against this DB hangs ~20-70s on `tx.get()`** under any
+   concurrency (plain `.get()`/`.update()` are fine). `assistantUpdateEntity` and
+   `registerCurrentUser` were rewritten to use atomic `FieldValue.arrayUnion` /
+   `arrayRemove` and optimistic `lastUpdateTime` preconditions — no transactions.
+   A 15s `Promise.race` deadline turns any future stall into a fast, clear error.
+2. **Client autosave retry storm** (`App.tsx`) amplified the read burn — an
+   `assistantSyncInFlight` guard now serialises assistant syncs. **Needs a client
+   redeploy** to take effect.
+
+**Still open — infrastructure decision required (NOT a code fix):**
+the data must move off this Enterprise free-tier DB, or the app will keep hitting
+the daily cap under normal load. The project's `(default)` database is **STANDARD**
+edition (normal pay-as-you-go quotas, full transaction support) and unused. Moving
+there (or to a new STANDARD named DB) means updating, together:
+- `firebase.json` → `firestore[0].database`
+- `FIRESTORE_DATABASE_ID` in `functions/src/index.ts`
+- `VITE_FIREBASE_DATABASE_ID` in the client build/deploy env
+- copy `apps/utd` + `apps/utd/scheduleEntries` + `apps/utd/activityLogs` across
+- re-run the Phase 1 claims backfill note is unaffected (claims are per-project)
+
+Until then: the quota resets daily (~00:00 America/Los_Angeles). Ask testers to
+close the app when not actively testing.
 
 ---
 
