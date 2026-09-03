@@ -1,38 +1,39 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Icons, APP_TITLE } from '../constants';
-import { googleSignIn, takeRedirectSignInError } from '../lib/firebase';
+import { googleSignIn } from '../lib/firebase';
 import { User as FirebaseUser } from 'firebase/auth';
 
 interface LoginScreenProps {
-  onLoginSuccess?: (user: FirebaseUser, token: string | null) => void; // legacy (redirect flow completes via onAuthStateChanged)
+  onLoginSuccess?: (user: FirebaseUser, token: string | null) => void;
   onLoginFailure?: (error: string) => void;
 }
 
-const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginFailure }) => {
+const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess, onLoginFailure }) => {
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-
-  // Surface an error from a redirect sign-in that failed after navigating away.
-  useEffect(() => {
-    const e = takeRedirectSignInError();
-    if (e) setError(e);
-  }, []);
 
   const handleGoogleLogin = async () => {
     setError(null);
     setIsLoading(true);
     try {
-      // Full-page redirect to Google. On success the browser navigates away and
-      // this component unmounts; the app re-loads, completeRedirectSignIn() +
-      // onAuthStateChanged take over. `isLoading` stays true until navigation.
-      await googleSignIn();
+      const result = await googleSignIn(); // Google popup
+      if (result) {
+        // Push the user into React immediately; onAuthStateChanged also fires and
+        // is the source of truth, but this avoids any propagation-timing gap.
+        onLoginSuccess?.(result.user, result.accessToken);
+      }
     } catch (err: any) {
-      // Only reached if the redirect could not even start.
-      console.error('Login failed:', err);
-      const errorMessage = err.message || 'Failed to start Google sign-in.';
-      setError(errorMessage);
-      if (onLoginFailure) onLoginFailure(errorMessage);
+      const code = err?.code || '';
+      if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
+        // User dismissed the popup — no error banner.
+      } else {
+        console.error('Login failed:', err);
+        const errorMessage = err.message || 'Failed to sign in with Google.';
+        setError(errorMessage);
+        if (onLoginFailure) onLoginFailure(errorMessage);
+      }
+    } finally {
       setIsLoading(false);
     }
   };

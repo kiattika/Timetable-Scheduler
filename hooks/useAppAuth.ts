@@ -53,27 +53,19 @@ export const useAppAuth = (
         }
 
         // Force-refresh the ID token so the Firestore SDK's credentials provider
-        // has a current token BEFORE we open listeners. After a signInWithRedirect
-        // return, auth.currentUser is restored before the token reaches Firestore;
-        // a listener that attaches in that window fails permission-denied and
-        // (unlike a getDoc) does NOT auto-retry. The retry wrapper below is the
-        // real backstop; this just narrows the window.
+        // has a current token BEFORE we open listeners. Just after a sign-in
+        // completes, auth.currentUser can be set before the token has propagated
+        // to Firestore; a listener that attaches in that window fails
+        // permission-denied and (unlike a getDoc) does NOT auto-retry. The retry
+        // wrapper below is the real backstop; this just narrows the window.
         let userClaimRole: string | null = null;
         try {
           const idTokenResult = await firebaseUser.getIdTokenResult(true);
           if (idTokenResult?.claims?.role) {
             userClaimRole = String(idTokenResult.claims.role);
           }
-          // --- TEMPORARY auth diagnostic (remove once the redirect race is confirmed) ---
-          const c: any = idTokenResult?.claims || {};
-          console.log(
-            `[auth-diag] listeners about to open — uid=${auth.currentUser?.uid} ` +
-            `email=${auth.currentUser?.email} tokenLen=${(idTokenResult?.token || '').length} ` +
-            `claims: role=${c.role ?? '∅'} orgId=${c.orgId ?? '∅'} email=${c.email ?? '∅'} ` +
-            `email_verified=${c.email_verified ?? '∅'}`
-          );
         } catch (claimErr) {
-          console.warn("[auth-diag] Could not read custom claims / refresh token:", claimErr);
+          console.warn("Could not read custom claims / refresh token:", claimErr);
         }
 
         let currentScheduleEntries: ScheduleEntry[] = [];
@@ -108,7 +100,7 @@ export const useAppAuth = (
             unsub = onSnapshot(
               build() as any,
               (snap: any) => {
-                if (attempts > 0) console.log(`[auth-diag] ${label}: recovered after ${attempts} retr${attempts === 1 ? 'y' : 'ies'}`);
+                if (attempts > 0) console.info(`[auth] ${label}: recovered after ${attempts} retr${attempts === 1 ? 'y' : 'ies'}`);
                 attempts = 0;
                 setDataLoadError(null);
                 onSnap(snap);
@@ -118,10 +110,10 @@ export const useAppAuth = (
                 if (code === 'permission-denied' && attempts < PERM_RETRY_MAX && isMounted) {
                   attempts += 1;
                   const delay = Math.min(1000 * Math.pow(1.8, attempts - 1), 8000);
-                  console.warn(`[auth-diag] ${label}: permission-denied — retry ${attempts}/${PERM_RETRY_MAX} in ${Math.round(delay)}ms (auth token not propagated yet)`);
+                  console.warn(`[auth] ${label}: permission-denied — retry ${attempts}/${PERM_RETRY_MAX} in ${Math.round(delay)}ms (auth token likely not propagated to Firestore yet)`);
                   timer = setTimeout(() => { void attach(); }, delay);
                 } else if (code === 'permission-denied') {
-                  console.error(`[auth-diag] ${label}: gave up after ${attempts} retries.`);
+                  console.error(`[auth] ${label}: gave up after ${attempts} permission-denied retries.`);
                   if (label === 'main-doc' && isMounted) setDataLoadError('permission-denied');
                 } else {
                   // Non-permission error — do NOT retry (would mask a real bug).

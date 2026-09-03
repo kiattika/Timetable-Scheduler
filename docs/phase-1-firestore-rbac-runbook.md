@@ -208,6 +208,46 @@ Verify (fresh incognito, ≥2 roles): sign in → console shows either no permis
 errors, or `permission-denied — retry N` then `recovered after N retries` within
 a few seconds → app reaches the main UI on its own.
 
+### C-followup-3 — the redirect flow is unusable here (storage partitioning) → back to popup
+`signInWithRedirect` failed intermittently across Firefox/Chrome with, from
+`kiattisak-project-001.firebaseapp.com/__/auth/handler`:
+> "Unable to process request due to missing initial state … signInWithRedirect in
+> a storage-partitioned browser environment."
+Firebase's redirect flow uses a cross-origin iframe to the `firebaseapp.com`
+authDomain whose `sessionStorage` is unreachable when the browser partitions
+third-party storage (Firefox 109+, Safari 16.1+, **Chrome M115+**). Retrying can't
+fix it — it's a hard storage-access block.
+- **Option 1** (custom authDomain) needs **Firebase Hosting** — this app is on AI
+  Studio, so it's not available. Options 3/4 need reverse-proxy control of the
+  app's own domain — not exposed by AI Studio. → Firebase's own guidance leaves
+  **Option 2 (`signInWithPopup`)**.
+- The pre-`bd64f38` code already called `signInWithPopup` **directly** (no custom
+  `window.open`/`.closed` polling anywhere in the app — verified). The "re-login
+  loop" that motivated the switch to redirect was **misdiagnosed**: it was the
+  post-sign-in `permission-denied` on the listeners (now fixed by the retry in
+  C-followup-2), *not* the COOP `.closed` warning, which is cosmetic — the SDK
+  completes the flow via the iframe result regardless, and the app sets no
+  `COOP: same-origin` header so `window.opener` postMessage works.
+- `signInWithPopup` opens a real **top-level** popup window (first-party storage to
+  `firebaseapp.com`), so it is **not** affected by storage partitioning.
+**Fix (`lib/firebase.ts` + `LoginScreen.tsx`):** revert `googleSignIn()` to
+`signInWithPopup`; in-memory single-flight guard (`signInInProgress`);
+`auth/popup-closed-by-user` / `auth/cancelled-popup-request` treated as a user
+action (no error banner). The C-followup-2 retry listeners + the `da8cc53`
+propagation fix + `5a5315b` session reset are all kept — complementary.
+Removed: `signInWithRedirect` / `getRedirectResult` / `completeRedirectSignIn` /
+`takeRedirectSignInError` — no competing sign-in path left.
+**Known tradeoff:** popup blockers. If a browser blocks it, `auth/popup-blocked`
+is shown; the user allows popups and retries.
+**If this still fails intermittently:** the fallback is Option 5 (Google Identity
+Services `id_token` → `GoogleAuthProvider.credential` → `signInWithCredential`),
+which bypasses the `firebaseapp.com` helper entirely — not implemented yet
+because popup is Firebase's sanctioned workaround and should be sufficient.
+
+Verify (fresh incognito, **Firefox AND Chrome**, ≥2 accounts, 5+ attempts each):
+one popup per click → app reaches the main UI without a manual refresh, no
+"missing initial state" error.
+
 ---
 
 ## ⚠️ CRITICAL #3 — every save re-sent (almost) every entity ("spurious updates")
