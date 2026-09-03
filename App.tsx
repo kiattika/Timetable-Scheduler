@@ -87,7 +87,7 @@ const App: React.FC = () => {
   const sessionUidRef = useRef<string | null | undefined>(undefined);
 
   const {
-    isAuthChecking, googleAccessToken, firebaseUser,
+    isAuthChecking, googleAccessToken, firebaseUser, dataLoadError,
     handleLoginSuccess, handleLogout
   } = useAppAuth(
     appData,
@@ -836,6 +836,29 @@ const App: React.FC = () => {
     'systemHealth',
   ];
 
+  // Signed in, but the initial Firestore load failed even after retrying — show a
+  // clear error + reload, never a silent stuck login gate.
+  if (firebaseUser && dataLoadError) {
+    return (
+      <div className="flex flex-col justify-center items-center h-screen gap-4 p-6 text-center bg-slate-50">
+        <Icons.Warning size={48} className="text-amber-500" />
+        <h2 className="text-xl font-semibold text-slate-800">ไม่สามารถโหลดข้อมูลได้</h2>
+        <p className="text-sm text-slate-600 max-w-md">
+          เข้าสู่ระบบสำเร็จแล้ว แต่ระบบยังเชื่อมต่อฐานข้อมูลไม่ได้ (สิทธิ์การเข้าถึง)
+          กรุณารีเฟรชหน้าเว็บอีกครั้ง หากยังไม่หายให้ติดต่อผู้ดูแลระบบ
+        </p>
+        <button
+          onClick={() => { if (typeof window !== 'undefined') window.location.reload(); }}
+          className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md text-sm font-medium"
+        >
+          รีเฟรชหน้าเว็บ (Reload)
+        </button>
+        <button onClick={handleLogout} className="text-sm text-slate-500 hover:text-slate-700 underline">
+          ออกจากระบบ
+        </button>
+      </div>
+    );
+  }
   if (!isDataLoaded || isAuthChecking || !appData) {
     return <div className="flex justify-center items-center h-screen text-xl text-slate-600">Loading application...</div>;
   }

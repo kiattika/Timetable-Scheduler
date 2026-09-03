@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef, type MutableRefObject } from 'react';
 import { fetchAppData, registerCurrentUser, safeUpsert, DEFAULT_DEPARTMENTS, DEFAULT_RESOURCE_TYPES, ORG_ID, normalizeLoadedSubjects, reconcileServerWithLocal } from '../api';
 import { AppData, User, ScheduleEntry, ActivityLog, Teacher } from '../types';
-import { db } from '../lib/firebase';
-import { doc, collection, onSnapshot, query, orderBy, limit } from 'firebase/firestore';
+import { db, auth } from '../lib/firebase';
+import { doc, collection, onSnapshot, query, orderBy, limit, type Query, type DocumentReference } from 'firebase/firestore';
 import { DEFAULT_PERIOD_SETTINGS } from '../constants';
 import { logActivity, logLoginAttempt } from '../lib/logger';
 
@@ -22,6 +22,9 @@ export const useAppAuth = (
   });
   const [firebaseUser, setFirebaseUser] = useState<any>(null);
   const [isLoadingInitialData, setIsLoadingInitialData] = useState(false);
+  // Set when all `permission-denied` retries on the initial data load are
+  // exhausted — App shows a "reload" error instead of a silent stuck login gate.
+  const [dataLoadError, setDataLoadError] = useState<string | null>(null);
   const recordedLoginSessionRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -33,6 +36,7 @@ export const useAppAuth = (
 
     const loadData = async () => {
       setIsLoadingInitialData(true);
+      setDataLoadError(null);
       try {
         const userEmail = firebaseUser?.email ? firebaseUser.email.toLowerCase().trim() : '';
 
@@ -48,36 +52,102 @@ export const useAppAuth = (
           return;
         }
 
-        // Fetch custom claims to verify role securely from JWT token
+        // Force-refresh the ID token so the Firestore SDK's credentials provider
+        // has a current token BEFORE we open listeners. After a signInWithRedirect
+        // return, auth.currentUser is restored before the token reaches Firestore;
+        // a listener that attaches in that window fails permission-denied and
+        // (unlike a getDoc) does NOT auto-retry. The retry wrapper below is the
+        // real backstop; this just narrows the window.
         let userClaimRole: string | null = null;
         try {
           const idTokenResult = await firebaseUser.getIdTokenResult(true);
           if (idTokenResult?.claims?.role) {
             userClaimRole = String(idTokenResult.claims.role);
           }
+          // --- TEMPORARY auth diagnostic (remove once the redirect race is confirmed) ---
+          const c: any = idTokenResult?.claims || {};
+          console.log(
+            `[auth-diag] listeners about to open — uid=${auth.currentUser?.uid} ` +
+            `email=${auth.currentUser?.email} tokenLen=${(idTokenResult?.token || '').length} ` +
+            `claims: role=${c.role ?? '∅'} orgId=${c.orgId ?? '∅'} email=${c.email ?? '∅'} ` +
+            `email_verified=${c.email_verified ?? '∅'}`
+          );
         } catch (claimErr) {
-          console.warn("Could not read custom claims:", claimErr);
+          console.warn("[auth-diag] Could not read custom claims / refresh token:", claimErr);
         }
 
         let currentScheduleEntries: ScheduleEntry[] = [];
         let currentActivityLogs: ActivityLog[] = [];
         let mainParsedData: any = null;
+        let mainDocFired = false;
+
+        // Bounded retry for a listener that fails with `permission-denied` — the
+        // token-propagation race above. Per-listener state; each re-attach clears
+        // the previous timer + unsub so retries never stack or duplicate.
+        const PERM_RETRY_MAX = 5;
+        const makeRetryingListener = (
+          label: string,
+          build: () => Query | DocumentReference,
+          onSnap: (snap: any) => void,
+        ): (() => void) => {
+          let attempts = 0;
+          let unsub: (() => void) | null = null;
+          let timer: ReturnType<typeof setTimeout> | null = null;
+          const clear = () => {
+            if (timer) { clearTimeout(timer); timer = null; }
+            if (unsub) { unsub(); unsub = null; }
+          };
+          const attach = async () => {
+            clear();
+            if (!isMounted) return;
+            if (attempts > 0) {
+              // Force a fresh token on each retry so Firestore has current creds.
+              try { await auth.currentUser?.getIdToken(true); } catch { /* keep retrying */ }
+              if (!isMounted) return;
+            }
+            unsub = onSnapshot(
+              build() as any,
+              (snap: any) => {
+                if (attempts > 0) console.log(`[auth-diag] ${label}: recovered after ${attempts} retr${attempts === 1 ? 'y' : 'ies'}`);
+                attempts = 0;
+                setDataLoadError(null);
+                onSnap(snap);
+              },
+              (error: any) => {
+                const code = error?.code || '';
+                if (code === 'permission-denied' && attempts < PERM_RETRY_MAX && isMounted) {
+                  attempts += 1;
+                  const delay = Math.min(1000 * Math.pow(1.8, attempts - 1), 8000);
+                  console.warn(`[auth-diag] ${label}: permission-denied — retry ${attempts}/${PERM_RETRY_MAX} in ${Math.round(delay)}ms (auth token not propagated yet)`);
+                  timer = setTimeout(() => { void attach(); }, delay);
+                } else if (code === 'permission-denied') {
+                  console.error(`[auth-diag] ${label}: gave up after ${attempts} retries.`);
+                  if (label === 'main-doc' && isMounted) setDataLoadError('permission-denied');
+                } else {
+                  // Non-permission error — do NOT retry (would mask a real bug).
+                  console.warn(`[useAppAuth] ${label} listener error:`, code || error?.message || error);
+                }
+              },
+            );
+          };
+          void attach();
+          return clear;
+        };
 
         const updateCombinedAppData = async () => {
           if (!isMounted) return;
-          if (!mainParsedData) {
-            const defaultInit = await fetchAppData(ORG_ID);
-            setAppData(defaultInit);
-            setIsDataLoaded(true);
-            return;
-          }
+          // Wait for the main-doc listener to report at least once — otherwise a
+          // faster subcollection listener would flash guest/sample data (and the
+          // login gate) while main-doc is still retrying.
+          if (!mainDocFired) return;
+          const md = mainParsedData || {};
 
           // Single shared normaliser — MUST match fetchAppData / executeRestore,
           // otherwise a subject's diff baseline and current state have different
           // key sets and every save re-sends it as "changed".
-          const subjectsWithDefaults = normalizeLoadedSubjects(mainParsedData.subjects);
+          const subjectsWithDefaults = normalizeLoadedSubjects(md.subjects);
 
-          const existingUsers: User[] = mainParsedData.users || [];
+          const existingUsers: User[] = md.users || [];
           const existingUser = existingUsers.find(u => u.email.toLowerCase().trim() === userEmail);
 
           // Resolve role exclusively from Firebase Auth Custom Claims (source of truth)
@@ -118,29 +188,29 @@ export const useAppAuth = (
             };
           }
 
-          const finalScheduleEntries: ScheduleEntry[] = Array.isArray(currentScheduleEntries) && currentScheduleEntries.length > 0 
-            ? currentScheduleEntries 
-            : (Array.isArray(mainParsedData.scheduleEntries) ? mainParsedData.scheduleEntries : []);
+          const finalScheduleEntries: ScheduleEntry[] = Array.isArray(currentScheduleEntries) && currentScheduleEntries.length > 0
+            ? currentScheduleEntries
+            : (Array.isArray(md.scheduleEntries) ? md.scheduleEntries : []);
 
           const finalActivityLogs: ActivityLog[] = Array.isArray(currentActivityLogs) && currentActivityLogs.length > 0
             ? currentActivityLogs
-            : (Array.isArray(mainParsedData.activityLogs) ? mainParsedData.activityLogs : []);
+            : (Array.isArray(md.activityLogs) ? md.activityLogs : []);
 
           const updatedData: AppData = {
-            departments: safeUpsert(mainParsedData.departments, DEFAULT_DEPARTMENTS),
-            resourceTypes: safeUpsert(mainParsedData.resourceTypes, DEFAULT_RESOURCE_TYPES),
-            teachers: mainParsedData.teachers || [],
+            departments: safeUpsert(md.departments, DEFAULT_DEPARTMENTS),
+            resourceTypes: safeUpsert(md.resourceTypes, DEFAULT_RESOURCE_TYPES),
+            teachers: md.teachers || [],
             subjects: subjectsWithDefaults,
-            gradeLevels: mainParsedData.gradeLevels || [],
-            physicalRooms: mainParsedData.physicalRooms || [],
+            gradeLevels: md.gradeLevels || [],
+            physicalRooms: md.physicalRooms || [],
             scheduleEntries: finalScheduleEntries,
-            periodSettings: mainParsedData.periodSettings || DEFAULT_PERIOD_SETTINGS,
-            teacherSubjectAssignments: mainParsedData.teacherSubjectAssignments || [],
-            organizationSettings: mainParsedData.organizationSettings || null,
+            periodSettings: md.periodSettings || DEFAULT_PERIOD_SETTINGS,
+            teacherSubjectAssignments: md.teacherSubjectAssignments || [],
+            organizationSettings: md.organizationSettings || null,
             users: newUsers,
             activityLogs: finalActivityLogs,
             currentUser: appUser,
-            authorizedAdmins: mainParsedData.authorizedAdmins || []
+            authorizedAdmins: md.authorizedAdmins || []
           };
 
           // Session Login Audit Logging (Record once per user per session)
@@ -168,64 +238,39 @@ export const useAppAuth = (
           setIsDataLoaded(true);
         };
 
-        // 1. Real-time listener for main doc (apps/{ORG_ID})
-        unsubMainDoc = onSnapshot(
-          doc(db, 'apps', ORG_ID),
-          (docSnap) => {
-            if (!isMounted) return;
-            if (docSnap.exists()) {
-              mainParsedData = docSnap.data();
-            } else {
-              mainParsedData = null;
-            }
+        // 1. Real-time listener for main doc (apps/{ORG_ID}) — retries permission-denied.
+        unsubMainDoc = makeRetryingListener(
+          'main-doc',
+          () => doc(db, 'apps', ORG_ID),
+          (docSnap: any) => {
+            mainDocFired = true;
+            mainParsedData = docSnap.exists() ? docSnap.data() : null;
             updateCombinedAppData();
           },
-          (error) => {
-            console.warn("Firestore main doc listener error:", error);
-            if (!mainParsedData) {
-              fetchAppData(ORG_ID).then(fallbackData => {
-                if (isMounted) {
-                  setAppData(prev => prev || fallbackData);
-                  setIsDataLoaded(true);
-                }
-              }).catch(console.error);
-            }
-          }
         );
 
-        // 2. Real-time listener for subcollection (apps/{ORG_ID}/scheduleEntries)
-        unsubSchedule = onSnapshot(
-          collection(db, 'apps', ORG_ID, 'scheduleEntries'),
-          (colSnap) => {
-            if (!isMounted) return;
-            if (!colSnap.empty) {
-              currentScheduleEntries = colSnap.docs.map(d => ({ ...d.data(), id: d.id } as ScheduleEntry));
-            } else {
-              currentScheduleEntries = [];
-            }
+        // 2. Real-time listener for subcollection (apps/{ORG_ID}/scheduleEntries).
+        unsubSchedule = makeRetryingListener(
+          'scheduleEntries',
+          () => collection(db, 'apps', ORG_ID, 'scheduleEntries'),
+          (colSnap: any) => {
+            currentScheduleEntries = !colSnap.empty
+              ? colSnap.docs.map((d: any) => ({ ...d.data(), id: d.id } as ScheduleEntry))
+              : [];
             updateCombinedAppData();
           },
-          (error: any) => {
-            console.warn("Firestore scheduleEntries subcollection notice (main doc listener active):", error?.message || error);
-          }
         );
 
-        // 3. Real-time listener for subcollection (apps/{ORG_ID}/activityLogs)
-        const logsQuery = query(collection(db, 'apps', ORG_ID, 'activityLogs'), orderBy('timestamp', 'desc'), limit(50));
-        unsubLogs = onSnapshot(
-          logsQuery,
-          (logsSnap) => {
-            if (!isMounted) return;
-            if (!logsSnap.empty) {
-              currentActivityLogs = logsSnap.docs.map(d => ({ ...d.data(), id: d.id } as ActivityLog));
-            } else {
-              currentActivityLogs = [];
-            }
+        // 3. Real-time listener for subcollection (apps/{ORG_ID}/activityLogs).
+        unsubLogs = makeRetryingListener(
+          'activityLogs',
+          () => query(collection(db, 'apps', ORG_ID, 'activityLogs'), orderBy('timestamp', 'desc'), limit(50)),
+          (logsSnap: any) => {
+            currentActivityLogs = !logsSnap.empty
+              ? logsSnap.docs.map((d: any) => ({ ...d.data(), id: d.id } as ActivityLog))
+              : [];
             updateCombinedAppData();
           },
-          (err: any) => {
-            console.warn("Firestore activityLogs subcollection notice (main doc listener active):", err?.message || err);
-          }
         );
 
       } catch (error) {
@@ -301,6 +346,7 @@ export const useAppAuth = (
     isAuthChecking,
     googleAccessToken,
     firebaseUser,
+    dataLoadError,
     handleLoginSuccess,
     handleLogout
   };

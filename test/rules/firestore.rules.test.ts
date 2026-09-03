@@ -130,6 +130,16 @@ describe('apps/{appId} document', () => {
     await assertSucceeds(getDoc(appDoc(notBackfilled())));
     await assertFails(updateDoc(appDoc(notBackfilled()), { teachers: [] }));
   });
+
+  it('an @utd.ac.th token with ONLY the standard email claim (no role, no orgId) can READ', async () => {
+    // This is a fresh sign-in before any custom claim has propagated. Proves a
+    // read permission-denied in production == request.auth == null (no token),
+    // NOT a stale/missing custom claim.
+    const emailOnly = ctx('fresh1', { email: 'fresh@utd.ac.th' });
+    await assertSucceeds(getDoc(appDoc(emailOnly)));
+    await assertSucceeds(getDoc(schedDoc(emailOnly, 'existing')));
+    await assertSucceeds(getDocs(collection(emailOnly.firestore(), 'apps', APP_ID, 'activityLogs')));
+  });
 });
 
 describe('apps/{appId}/scheduleEntries', () => {

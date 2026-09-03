@@ -180,6 +180,34 @@ Domains list the popup did.
 Verify (fresh incognito): click sign in → exactly ONE redirect to Google → back to
 the app → main UI directly, **no** COOP console errors, **no** manual refresh.
 
+### C-followup-2 — still stuck after redirect: `permission-denied` on the listeners
+After the redirect switch, the app returned but sat on the login gate again with
+`"Missing or insufficient permissions"` on all three `onSnapshot` listeners.
+**Hypothesis 1 (stale custom claims) REFUTED** — `firestore.rules` gates reads on
+`isUtdDomain()` (the standard `email` claim only); `role`/`orgId` are checked on
+*writes*. New test proves an `@utd.ac.th` token with **only** the `email` claim
+reads fine. So a read `permission-denied` == `request.auth == null` == **no token
+on the request**: after a `signInWithRedirect` return, `auth.currentUser` is
+restored before the token reaches the Firestore SDK's credentials provider, a
+listener that attaches in that window is denied, and `onSnapshot` fires its error
+callback once and **dies — no auto-retry**.
+**Fix (`hooks/useAppAuth.ts` + `App.tsx`):**
+- Force-refresh the ID token (`getIdTokenResult(true)`) before opening listeners.
+- All three listeners wrapped in `makeRetryingListener`: on `permission-denied`
+  only (never other codes), force a fresh token and re-attach with exponential
+  backoff (1 → 1.8 → 3.2 → 5.8 → 8 s, 5 attempts). Per-listener state; each
+  re-attach clears its previous timer + unsub so retries never stack/duplicate.
+- Subcollection listeners no longer flash guest/sample data while main-doc is
+  still retrying (`mainDocFired` guard).
+- If retries are exhausted: `dataLoadError` → App shows a "ไม่สามารถโหลดข้อมูล /
+  Reload" screen, **never** the silent login gate.
+- Temporary `[auth-diag]` console logs (claims at listener-open + retry/recovery)
+  — **remove the per-load claim dump once confirmed**; the retry/recovery lines
+  are low-noise and worth keeping.
+Verify (fresh incognito, ≥2 roles): sign in → console shows either no permission
+errors, or `permission-denied — retry N` then `recovered after N retries` within
+a few seconds → app reaches the main UI on its own.
+
 ---
 
 ## ⚠️ CRITICAL #3 — every save re-sent (almost) every entity ("spurious updates")
