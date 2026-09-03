@@ -155,6 +155,31 @@ every entity looked unsynced → the same storm via a different trigger.
 Verify: log in → settle → log out → log back in → **zero** `assistantUpdateEntity`
 / `commitOrgChanges` calls until the user actually edits something.
 
+### C-followup — infinite re-login loop from COOP breaking the popup
+`signInWithPopup` (Firebase SDK) polls the cross-origin Google popup's
+`window.closed`; Chrome's Cross-Origin-Opener-Policy now blocks that read
+(`"Cross-Origin-Opener-Policy policy would block the window.closed call"` in
+console). The popup handshake never completes → the Firestore auth token never
+propagates → every read fails `permission-denied` → the app falls back to sample
+data (`currentUser: null`) → shows the login gate again → user re-clicks →
+another popup ("คุณกำลังลงชื่อเข้าใช้ Timetable อีกครั้ง").
+**Fix (`lib/firebase.ts` + `LoginScreen.tsx`, no popup-monitoring code existed to
+remove — it was all inside the SDK):**
+- `googleSignIn()` now uses **`signInWithRedirect`** (full-page redirect, no popup
+  → no `.closed` polling). Returns `void` (navigates away).
+- New `completeRedirectSignIn()` runs once from `initAuth()` on app startup:
+  `getRedirectResult()` → domain check → cache the Google token. `onAuthStateChanged`
+  remains the single source of truth for propagating the user into React.
+- Single-flight guard: a `sessionStorage` flag (+ in-memory bool) prevents a second
+  redirect while one is pending; stale (>2 min) flag is ignored; cleared on logout.
+- A redirect-time error (e.g. non-@utd.ac.th account) is stashed and shown by
+  `LoginScreen` on the return render.
+**UX tradeoff:** sign-in is now a full-page navigation to Google and back, not a
+popup. No Firebase Console change needed — redirect uses the same Authorized
+Domains list the popup did.
+Verify (fresh incognito): click sign in → exactly ONE redirect to Google → back to
+the app → main UI directly, **no** COOP console errors, **no** manual refresh.
+
 ---
 
 ## ⚠️ CRITICAL #3 — every save re-sent (almost) every entity ("spurious updates")

@@ -1,32 +1,38 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Icons, APP_TITLE } from '../constants';
-import { googleSignIn } from '../lib/firebase';
+import { googleSignIn, takeRedirectSignInError } from '../lib/firebase';
 import { User as FirebaseUser } from 'firebase/auth';
 
 interface LoginScreenProps {
-  onLoginSuccess: (user: FirebaseUser, token: string | null) => void;
+  onLoginSuccess?: (user: FirebaseUser, token: string | null) => void; // legacy (redirect flow completes via onAuthStateChanged)
   onLoginFailure?: (error: string) => void;
 }
 
-const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess, onLoginFailure }) => {
+const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginFailure }) => {
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+
+  // Surface an error from a redirect sign-in that failed after navigating away.
+  useEffect(() => {
+    const e = takeRedirectSignInError();
+    if (e) setError(e);
+  }, []);
 
   const handleGoogleLogin = async () => {
     setError(null);
     setIsLoading(true);
     try {
-      const result = await googleSignIn();
-      if (result) {
-        onLoginSuccess(result.user, result.accessToken);
-      }
+      // Full-page redirect to Google. On success the browser navigates away and
+      // this component unmounts; the app re-loads, completeRedirectSignIn() +
+      // onAuthStateChanged take over. `isLoading` stays true until navigation.
+      await googleSignIn();
     } catch (err: any) {
+      // Only reached if the redirect could not even start.
       console.error('Login failed:', err);
-      const errorMessage = err.message || 'Failed to sign in with Google.';
+      const errorMessage = err.message || 'Failed to start Google sign-in.';
       setError(errorMessage);
       if (onLoginFailure) onLoginFailure(errorMessage);
-    } finally {
       setIsLoading(false);
     }
   };
