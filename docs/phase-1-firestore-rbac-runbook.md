@@ -94,6 +94,44 @@ Needs the same non-transactional treatment.
 
 ---
 
+## ⚠️ CRITICAL #3 — every save re-sent (almost) every entity ("spurious updates")
+
+Discovered / confirmed 2026-09-03.
+
+Change-detection compared entities with `JSON.stringify`, which is **key-order
+sensitive**. The production **ENTERPRISE**-edition DB returns document/array-element
+map keys in an **arbitrary per-map order** (REST probe: every teacher/subject in
+`apps/utd` has a different key order; the diagnostic caught live spurious calls
+with `existingKeys=[teacherId,id,subjectId,gradeLevelId]` vs
+`payloadKeys=[gradeLevelId,subjectId,id,teacherId]` — same keys, same content).
+So whenever the diff baseline and current `appData` came from different SDK
+document states, **every** entity looked "changed" → one "add a subject" fired
+dozens of `assistantUpdateEntity` / `commitOrgChanges` writes. On a quota-capped
+DB this alone could exhaust the daily cap.
+
+Compounded by three divergent client-side subject-normalisation implementations
+(`fetchAppData` / `useAppAuth` / `executeRestore`) producing different key SETS.
+
+**Fixed** (commits `0125ad2`, `e0c94b1`):
+- `canonicalKey` (recursively sorts object keys, keeps array order) replaces
+  `JSON.stringify` in every change-detection site — client (`diffById`,
+  `computeOrgChanges`, new shared `diffAssistantEntities`, the App autosave gate)
+  and functions (conflict logging).
+- One shared `normalizeLoadedSubject` (`lib/normalizeAppData.ts`) for all load paths.
+- **Server no-op guard (deployed):** `assistantUpdateEntity` and `mergeOrgChanges`
+  detect a payload that only reorders keys and return success with **no write**.
+  Verified in production — the pre-existing spurious storm now returns
+  SUCCESS/no-op instead of 403.
+
+**⚠️ Client still pending deploy.** The server guard contains the damage (no
+writes, no errors) but the spurious *calls* keep happening until the client
+ships `0125ad2`. Acceptance test after client deploy:
+1. Assistant adds ONE subject → Network shows exactly ONE `assistantUpdateEntity` call.
+2. Admin edits ONE teacher field → `commitOrgChanges` payload `changes.teachers.upsert`
+   has only that teacher; no other fields populated.
+
+---
+
 ## 0. What changed
 
 | Area | Change |
