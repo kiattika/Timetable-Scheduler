@@ -34,7 +34,6 @@ provider.setCustomParameters({
   hd: 'utd.ac.th'
 });
 
-let isSigningIn = false;
 let cachedAccessToken: string | null = null;
 if (typeof window !== 'undefined') {
   cachedAccessToken = localStorage.getItem('googleAccessToken');
@@ -45,32 +44,36 @@ export const initAuth = (
   onAuthFailure?: () => void
 ) => {
   return onAuthStateChanged(auth, async (user: User | null) => {
-    if (user) {
-      const email = (user.email || '').toLowerCase().trim();
-      if (!email.endsWith('@utd.ac.th')) {
-        await auth.signOut();
-        if (typeof window !== 'undefined') localStorage.removeItem('googleAccessToken');
-        if (onAuthFailure) onAuthFailure();
-        return;
-      }
-      if (cachedAccessToken) {
-        if (onAuthSuccess) onAuthSuccess(user, cachedAccessToken);
-      } else if (!isSigningIn) {
-        cachedAccessToken = null;
-        if (typeof window !== 'undefined') localStorage.removeItem('googleAccessToken');
-        if (onAuthSuccess) onAuthSuccess(user, null);
-      }
-    } else {
+    if (!user) {
       cachedAccessToken = null;
       if (typeof window !== 'undefined') localStorage.removeItem('googleAccessToken');
       if (onAuthFailure) onAuthFailure();
+      return;
     }
+
+    const email = (user.email || '').toLowerCase().trim();
+    if (!email.endsWith('@utd.ac.th')) {
+      await auth.signOut();
+      if (typeof window !== 'undefined') localStorage.removeItem('googleAccessToken');
+      if (onAuthFailure) onAuthFailure();
+      return;
+    }
+
+    // Valid @utd.ac.th user — ALWAYS propagate, even mid-sign-in and even if the
+    // Google access token has not resolved yet. The token is only used for the
+    // optional Sheets import/export and arrives separately via handleLoginSuccess.
+    // The old code skipped this branch while a popup sign-in was in progress and
+    // no token was cached yet, so onAuthStateChanged firing during the popup
+    // handshake left the UI stuck on the login gate until a manual refresh.
+    if (!cachedAccessToken && typeof window !== 'undefined') {
+      cachedAccessToken = localStorage.getItem('googleAccessToken');
+    }
+    if (onAuthSuccess) onAuthSuccess(user, cachedAccessToken);
   });
 };
 
 export const googleSignIn = async (): Promise<{ user: User; accessToken: string | null } | null> => {
   try {
-    isSigningIn = true;
     const result = await signInWithPopup(auth, provider);
     const email = (result.user.email || '').toLowerCase().trim();
     if (!email.endsWith('@utd.ac.th')) {
@@ -92,8 +95,6 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
       logLoginAttempt('failed', auth.currentUser?.email || '', error?.message || 'Popup closed or authentication error');
     }
     throw error;
-  } finally {
-    isSigningIn = false;
   }
 };
 

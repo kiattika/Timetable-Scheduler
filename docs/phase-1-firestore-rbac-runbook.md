@@ -87,10 +87,55 @@ smoke-test the acceptance scenario below.
 5. Two clients creating a subject with the same `subjectCode` ~simultaneously —
    exactly one succeeds, the other gets a clear "รหัสวิชาซ้ำ" error, no dup lands.
 
-### Still broken, separately (not in scope of this fix)
+### Still broken, separately (not in scope of these fixes)
 `resetSemesterTimetable` (api.ts) still uses a client `runTransaction`, which
 hangs on the ENTERPRISE database. Admin "reset for new semester" will time out.
 Needs the same non-transactional treatment.
+
+---
+
+## Issues A / B / C (2026-09-03)
+
+### A — true-simultaneous creates silently lost one
+`useAppAuth.updateCombinedAppData` replaced `appData` **wholesale** from every
+Firestore snapshot. A snapshot arriving during the ~2 s autosave debounce dropped
+an entity the user had just added locally, before it was persisted → the diff
+then saw nothing to save. Server side is fine — verified by REST probe that the
+ENTERPRISE DB **does** enforce `updateTime` write preconditions, and by an
+emulator test of two concurrent client-flow creates.
+**Fix:** `reconcileServerWithLocal(server, local, baseline)` — a 3-way merge that
+keeps this client's not-yet-persisted adds / edits / deletes on top of the fresh
+server view.
+
+### B — a rejected write retried forever (100+ requests / "error รันไม่หยุด")
+The autosave never advanced its baseline past a **permanently** failed entity
+(permission-denied, duplicate subjectCode, assignment-in-use), so every cycle
+re-diffed and re-attempted the identical doomed write, silently.
+**Fix:**
+- `classifySaveError` → `permanent` vs `retryable`.
+- `knownFailedRef` (`${type}:${id}` → op+content hash): a permanently-failed op is
+  attempted **once**, then suppressed until the user changes that entity again.
+- The failure is surfaced **once** via a top toast (`saveErrorToast`).
+- Baseline advances to `result.persistedBaseline` — exactly what landed, never
+  past a failed entity.
+- `mergeOrgChanges` now **skips-and-reports** a colliding subjectCode / an
+  in-use assignment-delete instead of throwing, so one bad entity no longer
+  blocks an otherwise-valid admin save (`rejected[]` in the response).
+- Retryable failures: retry once after 4 s; after 3 in a row, a toast.
+
+### C — stuck on login screen after a successful Google sign-in
+Two bugs: (1) `lib/firebase.ts` `initAuth`'s `onAuthStateChanged` handler had a
+fall-through — when a valid user was present but no access token was cached yet
+and `isSigningIn` was true (i.e. `onAuthStateChanged` firing during the popup
+handshake), it called **neither** callback, so React never learned about the
+user. (2) `useAppAuth.handleLoginSuccess` set the token but not `firebaseUser`.
+A manual refresh re-ran `onAuthStateChanged` cleanly (token now in localStorage),
+hence the "press F5 and it's fine" workaround.
+**Fix:** `initAuth` always propagates a valid `@utd.ac.th` user (token optional,
+arrives separately); `handleLoginSuccess` also `setFirebaseUser` + `setIsAuthChecking(false)`.
+
+**Deployed:** `commitOrgChanges` (skip-and-report). **Client pending deploy** for
+all of the above.
 
 ---
 

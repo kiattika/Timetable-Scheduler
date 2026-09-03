@@ -9,6 +9,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { initializeApp, deleteApp, type App } from 'firebase-admin/app';
 import { getFirestore, type Firestore } from 'firebase-admin/firestore';
 import { applyOrgChanges, applyOrgReplace } from '../../functions/src/orgWrites';
+import { computeOrgChanges } from '../../lib/orgChangesClient';
 
 const EMULATED = !!process.env.FIRESTORE_EMULATOR_HOST;
 const d = EMULATED ? describe : describe.skip;
@@ -57,6 +58,27 @@ d('applyOrgChanges — concurrent writers do not lose data', () => {
     expect(ids).toEqual(['x', 'y']);
   });
 
+  it('ISSUE A: two clients each add ONE subject via the real client flow (read -> computeOrgChanges -> commit), concurrently — both survive', async () => {
+    // each "client" reads the server, diffs its own local state, and commits — the
+    // exact path the app takes. Client B reads BEFORE A commits (stale).
+    const serverForA = (await db.doc(APP_DOC).get()).data()!;
+    const serverForB = (await db.doc(APP_DOC).get()).data()!;
+
+    const localA = { ...serverForA, subjects: [...(serverForA.subjects || []), { id: 'jp1', subjectCode: 'JP1', name: 'ภาษาญี่ปุ่น 1' }] };
+    const localB = { ...serverForB, subjects: [...(serverForB.subjects || []), { id: 'kr1', subjectCode: 'KR1', name: 'ภาษาเกาหลี 1' }] };
+
+    const chA = computeOrgChanges(serverForA, localA).changes;
+    const chB = computeOrgChanges(serverForB, localB).changes;
+
+    await Promise.all([
+      applyOrgChanges(db, db.doc(APP_DOC), chA as any, 'admin'),
+      applyOrgChanges(db, db.doc(APP_DOC), chB as any, 'manager'),
+    ]);
+
+    const finalIds = ((await db.doc(APP_DOC).get()).data()!.subjects as any[]).map((s) => s.id).sort();
+    expect(finalIds).toEqual(['jp1', 'kr1']);
+  });
+
   it('true race: two concurrent applyOrgChanges both land (precondition + retry)', async () => {
     const results = await Promise.all([
       applyOrgChanges(db, db.doc(APP_DOC), {
@@ -88,8 +110,8 @@ d('applyOrgChanges — concurrent writers do not lose data', () => {
     expect(ids).toEqual(['s0', 's1', 's2', 's3', 's4', 's5']);
   });
 
-  it('rejects a concurrent duplicate subjectCode (exactly one wins)', async () => {
-    const settled = await Promise.allSettled([
+  it('a concurrent duplicate subjectCode is skipped (not thrown) — exactly one lands', async () => {
+    const [ra, rb] = await Promise.all([
       applyOrgChanges(db, db.doc(APP_DOC), {
         subjects: { upsert: [{ id: 'p', subjectCode: 'SAME', name: 'P' }], deleteIds: [] },
       }, 'admin'),
@@ -97,11 +119,9 @@ d('applyOrgChanges — concurrent writers do not lose data', () => {
         subjects: { upsert: [{ id: 'q', subjectCode: 'same', name: 'Q' }], deleteIds: [] },
       }, 'admin'),
     ]);
-    const ok = settled.filter((s) => s.status === 'fulfilled').length;
-    const failed = settled.filter((s) => s.status === 'rejected');
-    expect(ok).toBe(1);
-    expect(failed).toHaveLength(1);
-    expect((failed[0] as PromiseRejectedResult).reason.code).toBe('already-exists');
+    // both calls succeed; exactly one reports a rejection
+    const totalRejected = ra.rejected.length + rb.rejected.length;
+    expect(totalRejected).toBe(1);
 
     const snap = await db.doc(APP_DOC).get();
     const codes = (snap.data()!.subjects as any[]).map((s) => String(s.subjectCode).toLowerCase());

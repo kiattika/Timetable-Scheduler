@@ -65,15 +65,21 @@ describe('mergeOrgChanges — concurrent edits do not clobber', () => {
 });
 
 describe('mergeOrgChanges — subjectCode uniqueness', () => {
-  it('rejects a NEW subject whose code collides (case-insensitive, trimmed)', () => {
+  it('SKIPS a NEW subject whose code collides (case-insensitive, trimmed) and reports it', () => {
     const server = { subjects: [S('s1', 'MATH101')] };
     const changes: OrgChanges = { subjects: { upsert: [S('s2', '  math101 ')], deleteIds: [] } };
-    expect(() => mergeOrgChanges(server, changes, 'manager')).toThrow(OrgChangeError);
-    try {
-      mergeOrgChanges(server, changes, 'manager');
-    } catch (e: any) {
-      expect(e.code).toBe('already-exists');
-    }
+    const { updates, rejected } = mergeOrgChanges(server, changes, 'manager');
+    expect(updates.subjects).toBeUndefined();          // nothing applied
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0]).toMatchObject({ field: 'subjects', id: 's2' });
+  });
+
+  it('applies the rest of the changeset when only one subject collides', () => {
+    const server = { subjects: [S('s1', 'MATH101')] };
+    const changes: OrgChanges = { subjects: { upsert: [S('s2', 'math101'), S('s3', 'PHYS1')], deleteIds: [] } };
+    const { updates, rejected } = mergeOrgChanges(server, changes, 'admin');
+    expect(updates.subjects.map((s: any) => s.id).sort()).toEqual(['s1', 's3']);
+    expect(rejected.map((r) => r.id)).toEqual(['s2']);
   });
 
   it('allows updating a subject while keeping its own code', () => {
@@ -88,12 +94,14 @@ describe('mergeOrgChanges — subjectCode uniqueness', () => {
     expect(() => mergeOrgChanges(server, changes, 'admin')).not.toThrow();
   });
 
-  it('rejects two concurrent NEW subjects racing for the same code (second one loses)', () => {
+  it('two concurrent NEW subjects racing for the same code: the second is skipped, not applied', () => {
     // client A's add already merged onto the server
     const afterA = { subjects: [S('s1', 'CHEM')] };
     // client B (stale) tries to add a different subject with the same code
     const changesB: OrgChanges = { subjects: { upsert: [S('s2', 'chem')], deleteIds: [] } };
-    expect(() => mergeOrgChanges(afterA, changesB, 'manager')).toThrow(/already-exists|ถูกใช้/);
+    const { updates, rejected } = mergeOrgChanges(afterA, changesB, 'manager');
+    expect(updates.subjects).toBeUndefined();
+    expect(rejected.map((r) => r.id)).toEqual(['s2']);
   });
 
   it('subjects with no code are never flagged', () => {
@@ -118,19 +126,15 @@ describe('mergeOrgChanges — guards', () => {
     expect(updates.organizationSettings).toEqual({ name: 'School', semester: '2', academicYear: '2568' });
   });
 
-  it('blocks deleting a teacherSubjectAssignment that is still on the timetable', () => {
+  it('SKIPS deleting a teacherSubjectAssignment still on the timetable, reports it, keeps the assignment', () => {
     const server = {
       teacherSubjectAssignments: [{ id: 'a1', teacherId: 't1', subjectId: 's1', gradeLevelId: 'g1' }],
       scheduleEntries: [{ id: 'e1', teacherIds: ['t1'], subjectId: 's1', gradeLevelId: 'g1' }],
     };
     const changes: OrgChanges = { teacherSubjectAssignments: { upsert: [], deleteIds: ['a1'] } };
-    try {
-      mergeOrgChanges(server, changes, 'admin');
-      throw new Error('should have thrown');
-    } catch (e: any) {
-      expect(e).toBeInstanceOf(OrgChangeError);
-      expect(e.code).toBe('409_CONFLICT_ASSIGNMENT_IN_USE');
-    }
+    const { updates, rejected } = mergeOrgChanges(server, changes, 'admin');
+    expect(updates.teacherSubjectAssignments).toBeUndefined(); // a1 not removed
+    expect(rejected).toEqual([{ field: 'teacherSubjectAssignments', id: 'a1', reason: '409_CONFLICT_ASSIGNMENT_IN_USE' }]);
   });
 
   it('allows deleting a teacherSubjectAssignment that is NOT on the timetable', () => {

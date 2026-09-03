@@ -116,19 +116,24 @@ export function sanitizeOrgChanges(raw: any): OrgChanges {
 }
 
 export type MergeSummary = Record<string, { upserts: number; deletes: number; length: number }>;
+export type RejectedChange = { field: string; id: string; reason: string };
 
 /**
  * PURE. Given the fresh server document, the client's changes and the caller's
- * role, return the field updates to write plus a summary. Throws OrgChangeError
- * on a violation (uniqueness, permission, assignment-in-use).
+ * role, return the field updates to write, a summary, and any individual changes
+ * that were REJECTED (skipped, not applied) — subjectCode collision, an
+ * assignment still on the timetable. The rest of the changeset is still applied,
+ * so one bad entity never blocks an otherwise-valid save. Only a structural
+ * permission violation (non-admin toggling isLocked) still throws.
  */
 export function mergeOrgChanges(
   serverDoc: Record<string, any>,
   changes: OrgChanges,
   callerRole: CallerRole,
-): { updates: Record<string, any>; summary: MergeSummary } {
+): { updates: Record<string, any>; summary: MergeSummary; rejected: RejectedChange[] } {
   const updates: Record<string, any> = {};
   const summary: MergeSummary = {};
+  const rejected: RejectedChange[] = [];
 
   // ---- organizationSettings: shallow key-level merge ----
   if (changes.organizationSettings?.set && typeof changes.organizationSettings.set === 'object') {
@@ -160,10 +165,10 @@ export function mergeOrgChanges(
     const byId = new Map<string, IdItem>();
     for (const it of serverArr) byId.set(it.id, it);
 
-    // teacherSubjectAssignments: block deleting one that is still on the timetable.
+    // teacherSubjectAssignments: skip (don't apply) a delete of one still on the timetable.
     if (field === 'teacherSubjectAssignments' && deleteIds.size > 0) {
       const schedule = asArray(serverDoc.scheduleEntries);
-      for (const id of deleteIds) {
+      for (const id of Array.from(deleteIds)) {
         const asm = byId.get(id);
         if (!asm) continue;
         const inUse = schedule.some(
@@ -174,41 +179,43 @@ export function mergeOrgChanges(
             e.gradeLevelId === asm.gradeLevelId,
         );
         if (inUse) {
-          throw new OrgChangeError(
-            '409_CONFLICT_ASSIGNMENT_IN_USE',
-            `ไม่สามารถลบลิงค์มอบหมายงานได้ รายวิชานี้ถูกจัดวางบนตารางเรียนแล้ว (assignment ${id} is still placed on the timetable).`,
-          );
+          deleteIds.delete(id);
+          rejected.push({ field, id, reason: '409_CONFLICT_ASSIGNMENT_IN_USE' });
         }
       }
     }
 
     for (const id of deleteIds) byId.delete(id);
 
+    // subjectCode uniqueness — skip a colliding upsert, keep the rest.
+    const rejectedUpsertIds = new Set<string>();
+    if (field === 'subjects') {
+      const existingCodes = new Map<string, string>(); // normCode -> id, from entities NOT changed here
+      const changedIds = new Set(upsertList.map((s) => s?.id).filter((x): x is string => typeof x === 'string'));
+      for (const s of serverArr) {
+        if (changedIds.has(s.id)) continue;
+        const c = normCode(s.subjectCode);
+        if (c) existingCodes.set(c, s.id);
+      }
+      for (const item of upsertList) {
+        const c = normCode(item?.subjectCode);
+        if (!c) continue;
+        const owner = existingCodes.get(c);
+        if (owner && owner !== item.id) {
+          rejectedUpsertIds.add(item.id);
+          rejected.push({ field, id: item.id, reason: `subjectCode "${item.subjectCode}" already used` });
+        } else {
+          existingCodes.set(c, item.id);
+        }
+      }
+    }
+
     let upserts = 0;
     for (const item of upsertList) {
-      if (!item || typeof item.id !== 'string' || deleteIds.has(item.id)) continue;
+      if (!item || typeof item.id !== 'string' || deleteIds.has(item.id) || rejectedUpsertIds.has(item.id)) continue;
       const existing = byId.get(item.id);
       byId.set(item.id, existing ? { ...existing, ...item } : item);
       upserts++;
-    }
-
-    // subjectCode uniqueness — only for subjects touched in THIS request, so a
-    // pre-existing duplicate in untouched data does not block every save.
-    if (field === 'subjects') {
-      const merged = Array.from(byId.values());
-      const changedIds = new Set(upsertList.map((s) => s?.id).filter((x): x is string => typeof x === 'string'));
-      for (const s of merged) {
-        if (!changedIds.has(s.id)) continue;
-        const code = normCode(s.subjectCode);
-        if (!code) continue;
-        const clash = merged.find((o) => o.id !== s.id && normCode(o.subjectCode) === code);
-        if (clash) {
-          throw new OrgChangeError(
-            'already-exists',
-            `รหัสวิชา "${s.subjectCode}" ถูกใช้โดยวิชา "${clash.name || clash.id}" อยู่แล้ว (subjectCode must be unique).`,
-          );
-        }
-      }
     }
 
     const merged = Array.from(byId.values());
@@ -226,7 +233,7 @@ export function mergeOrgChanges(
     delete summary.organizationSettings;
   }
 
-  return { updates, summary };
+  return { updates, summary, rejected };
 }
 
 /** Append-only activity-log entries to write to the subcollection (never a blob). */
@@ -266,6 +273,7 @@ export type ApplyResult = {
   summary: MergeSummary;
   attempts: number;
   conflicts: number;
+  rejected: RejectedChange[];
 };
 
 /**
@@ -303,13 +311,14 @@ export async function applyOrgChanges(
       );
     }
 
-    const { updates, summary } = mergeOrgChanges(server, changes, callerRole);
+    const { updates, summary, rejected } = mergeOrgChanges(server, changes, callerRole);
+    if (rejected.length) log(`rejected ${rejected.length} change(s): ${JSON.stringify(rejected)}`);
 
     if (Object.keys(updates).length === 0) {
       await syncScheduleSubcollection(appDocRef, changes.scheduleEntries);
       await writeActivityLogs(appDocRef, opts.activityLogs || []);
       log(`no doc-field changes; synced ${(changes.scheduleEntries?.upsert?.length || 0)} schedule upserts`);
-      return { summary, attempts: attempt, conflicts };
+      return { summary, attempts: attempt, conflicts, rejected };
     }
 
     try {
@@ -317,7 +326,7 @@ export async function applyOrgChanges(
       await syncScheduleSubcollection(appDocRef, changes.scheduleEntries);
       await writeActivityLogs(appDocRef, opts.activityLogs || []);
       log(`committed on attempt ${attempt} after ${conflicts} conflict(s): ${JSON.stringify(summary)}`);
-      return { summary, attempts: attempt, conflicts };
+      return { summary, attempts: attempt, conflicts, rejected };
     } catch (err: any) {
       // 9 = FAILED_PRECONDITION, 10 = ABORTED — doc changed since our read.
       if ((err?.code === 9 || err?.code === 10) && attempt < maxAttempts) {

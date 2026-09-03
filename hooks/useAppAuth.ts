@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef } from 'react';
-import { fetchAppData, registerCurrentUser, safeUpsert, DEFAULT_DEPARTMENTS, DEFAULT_RESOURCE_TYPES, ORG_ID, normalizeLoadedSubjects } from '../api';
+import { useState, useEffect, useRef, type MutableRefObject } from 'react';
+import { fetchAppData, registerCurrentUser, safeUpsert, DEFAULT_DEPARTMENTS, DEFAULT_RESOURCE_TYPES, ORG_ID, normalizeLoadedSubjects, reconcileServerWithLocal } from '../api';
 import { AppData, User, ScheduleEntry, ActivityLog, Teacher } from '../types';
 import { db } from '../lib/firebase';
 import { doc, collection, onSnapshot, query, orderBy, limit } from 'firebase/firestore';
@@ -10,7 +10,8 @@ export const useAppAuth = (
   appData: AppData | null,
   setAppData: (data: AppData | ((prev: AppData | null) => AppData | null)) => void,
   setIsDataLoaded: (val: boolean) => void,
-  setCurrentView: (view: any) => void
+  setCurrentView: (view: any) => void,
+  lastSavedDataStrRef?: MutableRefObject<string | null>
 ) => {
   const [isAuthChecking, setIsAuthChecking] = useState(true);
   const [googleAccessToken, setGoogleAccessToken] = useState<string | null>(() => {
@@ -152,7 +153,15 @@ export const useAppAuth = (
             }
           }
 
-          setAppData(updatedData);
+          // Reconcile with this client's not-yet-persisted local edits so a
+          // snapshot arriving mid-autosave doesn't silently drop them.
+          setAppData(prev => {
+            let baseline: any = null;
+            try {
+              baseline = lastSavedDataStrRef?.current ? JSON.parse(lastSavedDataStrRef.current) : null;
+            } catch { baseline = null; }
+            return reconcileServerWithLocal(updatedData, prev, baseline);
+          });
           setIsDataLoaded(true);
         };
 
@@ -248,7 +257,7 @@ export const useAppAuth = (
         (user, token) => {
           setIsAuthChecking(false);
           setGoogleAccessToken(token);
-          setFirebaseUser(user);
+          setFirebaseUser((prev: any) => (prev && user && prev.uid === user.uid ? prev : user));
         },
         () => {
           setIsAuthChecking(false);
@@ -265,6 +274,13 @@ export const useAppAuth = (
       localStorage.setItem('googleAccessToken', token);
     } else {
       localStorage.removeItem('googleAccessToken');
+    }
+    // Propagate the signed-in user into React state immediately. Do NOT rely
+    // solely on onAuthStateChanged — it can fire during the popup handshake and
+    // race this, leaving the app stuck on the login screen until a refresh.
+    if (user) {
+      setIsAuthChecking(false);
+      setFirebaseUser((prev: any) => (prev && prev.uid === user.uid ? prev : user));
     }
   };
 

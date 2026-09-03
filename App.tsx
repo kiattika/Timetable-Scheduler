@@ -24,7 +24,7 @@ import { TeacherScheduleTable } from './components/TeacherScheduleView';
 import { RoomUsageScheduleTable } from './components/RoomUsageView';
 
 import { Icons, APP_TITLE, PREDEFINED_SUBJECT_COLORS, DEFAULT_PERIOD_SETTINGS } from './constants';
-import { fetchAppData, saveAppData, persistAssistantChanges, getSampleAppData, DEFAULT_DEPARTMENTS, DEFAULT_RESOURCE_TYPES, ORG_ID, pruneActivityLogs, canonicalKey, normalizeLoadedSubject } from './api';
+import { fetchAppData, saveAppData, persistAssistantChanges, persistOrgChanges, getSampleAppData, DEFAULT_DEPARTMENTS, DEFAULT_RESOURCE_TYPES, ORG_ID, pruneActivityLogs, canonicalKey, normalizeLoadedSubject } from './api';
 import { isParentGrade as checkIsParentGradeUtil, getParentGradeLevelId, getChildGradeLevelIds, isChildOf } from './components/scheduleUtils';
 import { useAppAuth } from './hooks/useAppAuth';
 import { useBackupRestore } from './hooks/useBackupRestore';
@@ -71,6 +71,18 @@ const App: React.FC = () => {
   } | null>(null);
   const [isRestoring, setIsRestoring] = useState(false);
 
+  // canonicalKey(appData) of the last state we believe is fully persisted.
+  const lastSavedDataStr = useRef<string | null>(null);
+  // Entities that failed PERMANENTLY (permission / duplicate / conflict): key
+  // `${type}:${id}` -> failureKey(op, entity). Suppresses the doomed retry until
+  // the user changes that entity again. Plus a `__org__` key for the whole
+  // admin/manager changeset.
+  const knownFailedRef = useRef<Map<string, string>>(new Map());
+  // Consecutive retryable (transient) autosave failures — after a few, surface it.
+  const retryableStreakRef = useRef(0);
+  // Guards against overlapping syncs (assistant + admin/manager both).
+  const syncInFlight = useRef(false);
+
   const {
     isAuthChecking, googleAccessToken, firebaseUser,
     handleLoginSuccess, handleLogout
@@ -78,21 +90,26 @@ const App: React.FC = () => {
     appData,
     setAppData as React.Dispatch<React.SetStateAction<AppData | null>>,
     setIsDataLoaded,
-    setCurrentView
+    setCurrentView,
+    lastSavedDataStr
   );
 
     useEffect(() => {
     if (isDataLoaded && appData && !firebaseUser && appData.currentUser) {
         setAppData(prev => prev ? ({ ...prev, currentUser: null }) : null);
     }
+    if (!firebaseUser) {
+      knownFailedRef.current.clear();
+      retryableStreakRef.current = 0;
+    }
   }, [isDataLoaded, firebaseUser, appData?.currentUser?.id]);
 
-  const lastSavedDataStr = useRef<string | null>(null);
-  // Guards against overlapping assistant syncs. Without this, every Firestore
-  // snapshot / keystroke re-fires the sync while a previous call is still in
-  // flight, producing a storm of concurrent writes that contend on the monolithic
-  // apps/{orgId} document. Applies to BOTH write paths (assistant + admin/manager).
-  const syncInFlight = useRef(false);
+  const [saveErrorToast, setSaveErrorToast] = useState<string | null>(null);
+  useEffect(() => {
+    if (!saveErrorToast) return;
+    const t = setTimeout(() => setSaveErrorToast(null), 9000);
+    return () => clearTimeout(t);
+  }, [saveErrorToast]);
 
   useEffect(() => {
     if (isDataLoaded && appData) {
@@ -134,19 +151,39 @@ const App: React.FC = () => {
           catch { return null; }
         })();
         try {
-          if (isAssistant) {
-            await persistAssistantChanges(prevSaved, appData, ORG_ID);
-          } else {
-            await saveAppData(appData, ORG_ID, prevSaved);
-          }
-          lastSavedDataStr.current = currentDataStr;
+          const result = isAssistant
+            ? await persistAssistantChanges(prevSaved, appData, ORG_ID, knownFailedRef.current)
+            : await persistOrgChanges(prevSaved, appData, ORG_ID, knownFailedRef.current);
+
+          // Advance the baseline to ONLY what actually persisted — never past a
+          // permanently-failed entity (so a later edit of it re-syncs).
+          try { lastSavedDataStr.current = canonicalKey(result.persistedBaseline); }
+          catch { lastSavedDataStr.current = currentDataStr; }
           syncInFlight.current = false;
-          // Edits made while the sync was running won't have re-triggered this
-          // effect usefully (guard was up) — nudge once to flush them.
-          setAppData(prev => (prev ? { ...prev } : prev));
+
+          if (result.permanentFailures.length > 0) {
+            const extra = result.permanentFailures.length - 1;
+            setSaveErrorToast(result.permanentFailures[0] + (extra > 0 ? ` (และอีก ${extra} รายการ)` : ''));
+          }
+
+          if (result.retryableFailures > 0) {
+            // Transient failure (network / another user's concurrent edit / quota).
+            retryableStreakRef.current += 1;
+            if (retryableStreakRef.current >= 3) {
+              setSaveErrorToast('บันทึกอัตโนมัติล้มเหลวชั่วคราวหลายครั้ง — ตรวจสอบการเชื่อมต่อ หรือลองบันทึกใหม่');
+            }
+            // Retry once after a short delay (not an immediate loop).
+            setTimeout(() => setAppData(prev => (prev ? { ...prev } : prev)), 4000);
+          } else {
+            retryableStreakRef.current = 0;
+          }
+
+          // Nudge to flush edits made during the sync — but ONLY if a write landed,
+          // otherwise a suppressed/failed changeset would nudge-loop every cycle.
+          if (result.progressed) {
+            setAppData(prev => (prev ? { ...prev } : prev));
+          }
         } catch (error: any) {
-          // Do NOT auto-retry here: a persistent failure (permission, uniqueness,
-          // assignment-in-use) would loop every 2s. The next real edit retries.
           console.warn("Auto-save notice:", error?.message || error);
           syncInFlight.current = false;
         }
@@ -889,6 +926,15 @@ const App: React.FC = () => {
 
   return (
     <div className="flex flex-col md:flex-row min-h-screen bg-slate-100 print:block">
+      {saveErrorToast && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[100] max-w-md w-[92%] print:hidden" role="alert">
+          <div className="bg-red-600 text-white px-4 py-3 rounded-lg shadow-xl flex items-start gap-3">
+            <Icons.Warning size={20} className="shrink-0 mt-0.5" />
+            <span className="text-sm font-medium flex-1">{saveErrorToast}</span>
+            <button onClick={() => setSaveErrorToast(null)} className="shrink-0 text-white/80 hover:text-white" aria-label="ปิด">✕</button>
+          </div>
+        </div>
+      )}
       <nav className="w-full md:w-[80px] md:hover:w-72 bg-white px-2 py-4 shadow-lg md:min-h-screen border-r border-slate-200 flex flex-col transition-all duration-300 ease-in-out z-30 group shrink-0 overflow-x-hidden whitespace-nowrap md:fixed md:h-screen md:top-0 print:hidden" aria-label="Main navigation">
         <div>
           <div className="text-2xl font-bold text-blue-700 mb-6 flex items-center overflow-hidden px-2">

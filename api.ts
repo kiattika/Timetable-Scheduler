@@ -3,10 +3,10 @@ import { DEFAULT_PERIOD_SETTINGS, PREDEFINED_SUBJECT_COLORS } from './constants'
 import { db, auth, functions } from './lib/firebase';
 import { doc, getDoc, setDoc, deleteDoc, collection, getDocs, writeBatch, query, orderBy, limit, deleteField, runTransaction } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
-import { computeOrgChanges, diffById, diffAssistantEntities, canonicalKey, ORG_ARRAY_FIELDS, cleanUndefined as cleanUndefinedShared } from './lib/orgChangesClient';
+import { computeOrgChanges, diffById, diffAssistantEntities, canonicalKey, failureKey, classifySaveError, describeSaveError, reconcileServerWithLocal, ORG_ARRAY_FIELDS, cleanUndefined as cleanUndefinedShared } from './lib/orgChangesClient';
 import { normalizeLoadedSubject, normalizeLoadedSubjects } from './lib/normalizeAppData';
 
-export { computeOrgChanges, diffById, diffAssistantEntities, canonicalKey, ORG_ARRAY_FIELDS, normalizeLoadedSubject, normalizeLoadedSubjects };
+export { computeOrgChanges, diffById, diffAssistantEntities, canonicalKey, failureKey, classifySaveError, describeSaveError, reconcileServerWithLocal, ORG_ARRAY_FIELDS, normalizeLoadedSubject, normalizeLoadedSubjects };
 
 export const ORG_ID = import.meta.env.VITE_ORG_ID || 'utd';
 
@@ -229,6 +229,13 @@ export const fetchAppData = async (orgId: string = ORG_ID): Promise<AppData> => 
 
 const cleanUndefined = cleanUndefinedShared;
 
+export type PersistResult = {
+  permanentFailures: string[]; // user-facing messages, newly failed this cycle
+  retryableFailures: number;
+  persistedBaseline: AppData;  // the state now known to be persisted
+  progressed: boolean;         // a write actually landed
+};
+
 const surfaceSaveError = (error: any) => {
   const msg: string = error?.message || '';
   const code: string = error?.code || '';
@@ -391,52 +398,150 @@ const callAssistantUpdate = async (
   await fn({ type, op, id: entity?.id, payload: entity, orgId });
 };
 
+const labelOf = (key: string, entity: any): string =>
+  entity?.name || entity?.subjectCode || entity?.teacherCode || entity?.code || `${key}/${entity?.id ?? '?'}`;
+
+const applyOpToBaseline = (baseline: AppData, key: string, op: 'create' | 'update' | 'delete', entity: any): void => {
+  const arr: any[] = Array.isArray((baseline as any)[key]) ? [...(baseline as any)[key]] : [];
+  const i = arr.findIndex(e => e && e.id === entity?.id);
+  if (op === 'delete') {
+    if (i >= 0) arr.splice(i, 1);
+  } else if (i >= 0) {
+    arr[i] = entity;
+  } else {
+    arr.push(entity);
+  }
+  (baseline as any)[key] = arr;
+};
+
 /**
- * Diff the department-scoped entity arrays between the previously-persisted state
+ * Diff the department-scoped entity arrays between the last-persisted baseline
  * and the current in-memory state, and route each add / change / removal through
- * the assistantUpdateEntity Cloud Function. Called by the App autosave effect for
- * assistant-role users in place of saveAppData().
+ * the assistantUpdateEntity Cloud Function.
  *
- * Errors from individual entity calls (e.g. an edit outside the assistant's
- * departments) are collected and re-thrown so the caller can surface them without
- * losing the other successful writes.
+ * - `knownFailed` suppresses an op that already failed permanently, until the
+ *   user changes that entity again (fixes the "error runs forever" retry storm).
+ * - Returns which state is now persisted so the caller advances its baseline
+ *   past ONLY the successful ops, never past a doomed one.
  */
 export const persistAssistantChanges = async (
   prev: AppData | null,
   next: AppData | null,
-  orgId: string = ORG_ID
-): Promise<void> => {
-  if (!next) return;
-  const errors: string[] = [];
+  orgId: string = ORG_ID,
+  knownFailed?: Map<string, string>,
+): Promise<PersistResult> => {
+  // Start from the last-known-persisted state (never assume `next` is persisted).
+  const persistedBaseline: AppData = prev ? JSON.parse(JSON.stringify(prev)) : ({} as AppData);
+  const result: PersistResult = { permanentFailures: [], retryableFailures: 0, persistedBaseline, progressed: false };
+  if (!next) return result;
 
   for (const key of ASSISTANT_SYNC_KEYS) {
     const before: any[] = Array.isArray((prev as any)?.[key]) ? (prev as any)[key] : [];
     const after: any[] = Array.isArray((next as any)?.[key]) ? (next as any)[key] : [];
 
-    // Order-insensitive diff — the SAME comparison the admin/manager path uses.
-    // JSON.stringify equality here previously flagged nearly every entity as
-    // "changed" whenever the diff baseline and `appData` came from different
-    // Firestore deserialisations (key order is not stable), firing dozens of
-    // spurious update calls per save.
-    const { ops, skippedDeletes } = diffAssistantEntities(before, after);
+    const { ops, skippedDeletes, suppressed } = diffAssistantEntities(before, after, knownFailed, key);
     if (skippedDeletes.length > 0) {
       console.warn(
         `[persistAssistantChanges] SKIPPING ${skippedDeletes.length} '${key}' delete(s) — ` +
         `looks like a transient state, not an intentional delete (before=${before.length}, after=${after.length}).`
       );
     }
+    if (suppressed > 0) {
+      console.warn(`[persistAssistantChanges] ${suppressed} '${key}' op(s) suppressed — already failed permanently, unchanged since.`);
+    }
+
     for (const { op, id, entity } of ops) {
+      const fk = `${key}:${id}`;
       try {
         await callAssistantUpdate(key, op, entity, orgId);
+        knownFailed?.delete(fk);
+        applyOpToBaseline(persistedBaseline, key, op, entity);
+        result.progressed = true;
       } catch (err: any) {
-        errors.push(`${key}/${id} (${op}): ${err?.message || err}`);
+        if (classifySaveError(err) === 'permanent') {
+          if (knownFailed) knownFailed.set(fk, failureKey(op, entity));
+          result.permanentFailures.push(describeSaveError(labelOf(key, entity), err));
+        } else {
+          result.retryableFailures++;
+        }
       }
     }
   }
 
-  if (errors.length > 0) {
-    throw new Error(`Assistant sync completed with errors:\n${errors.join('\n')}`);
+  return result;
+};
+
+/**
+ * Admin/manager autosave. Sends this client's own change-set to commitOrgChanges.
+ * The whole changeset is atomic server-side, so on a PERMANENT failure the exact
+ * changeset hash is blocked (no auto-retry storm) until the user changes something;
+ * on success / retryable failure the baseline advances / stays put accordingly.
+ */
+export const persistOrgChanges = async (
+  prev: AppData | null,
+  next: AppData,
+  orgId: string = ORG_ID,
+  knownFailed?: Map<string, string>,
+): Promise<PersistResult> => {
+  const persistedBaseline: AppData = prev ? JSON.parse(JSON.stringify(prev)) : JSON.parse(JSON.stringify(next));
+  const result: PersistResult = { permanentFailures: [], retryableFailures: 0, persistedBaseline, progressed: false };
+
+  const { changes, newActivityLogs, hasChanges } = computeOrgChanges(prev, next);
+  if (!hasChanges) {
+    result.persistedBaseline = JSON.parse(JSON.stringify(next));
+    return result;
   }
+
+  const hash = canonicalKey(changes);
+  const FK = '__org__';
+  if (knownFailed?.get(FK) === hash) {
+    console.warn('[persistOrgChanges] changeset suppressed — identical to one that already failed permanently.');
+    return result; // baseline stays at prev; nothing sent
+  }
+
+  try {
+    const commitFn = httpsCallable(functions, 'commitOrgChanges');
+    const res: any = await commitFn({ orgId, changes: cleanUndefined(changes), newActivityLogs });
+    const rejected: Array<{ field: string; id: string; reason: string }> = Array.isArray(res?.data?.rejected) ? res.data.rejected : [];
+
+    result.progressed = true;
+    if (rejected.length === 0) {
+      knownFailed?.delete(FK);
+      result.persistedBaseline = JSON.parse(JSON.stringify(next));
+    } else {
+      // The valid part of the changeset was applied; only these entities were
+      // skipped server-side. Block the identical changeset from auto-retrying,
+      // surface the reasons, and keep the rejected entities "dirty" locally.
+      if (knownFailed) knownFailed.set(FK, hash);
+      const pb: any = JSON.parse(JSON.stringify(next));
+      const prevBy = (f: string) => {
+        const m = new Map<string, any>();
+        for (const e of (Array.isArray((prev as any)?.[f]) ? (prev as any)[f] : [])) if (e && e.id) m.set(e.id, e);
+        return m;
+      };
+      for (const r of rejected) {
+        const arr: any[] = Array.isArray(pb[r.field]) ? pb[r.field] : [];
+        const original = prevBy(r.field).get(r.id);
+        const i = arr.findIndex((e) => e && e.id === r.id);
+        const label = arr.find((e) => e && e.id === r.id)?.name
+          || arr.find((e) => e && e.id === r.id)?.subjectCode || r.id;
+        if (original) { if (i >= 0) arr[i] = original; else arr.push(original); }
+        else if (i >= 0) arr.splice(i, 1);
+        pb[r.field] = arr;
+        result.permanentFailures.push(describeSaveError(label, { message: r.reason }));
+      }
+      result.persistedBaseline = pb;
+    }
+  } catch (err: any) {
+    if (classifySaveError(err) === 'permanent') {
+      if (knownFailed) knownFailed.set(FK, hash);
+      const changedFields = Object.keys(changes).filter(f => f !== 'organizationSettings');
+      result.permanentFailures.push(describeSaveError(changedFields.join(', ') || 'การเปลี่ยนแปลง', err));
+    } else {
+      result.retryableFailures++;
+    }
+  }
+  return result;
 };
 
 export { buildTimetableBackupPayload, triggerJsonDownload } from './utils/backup';

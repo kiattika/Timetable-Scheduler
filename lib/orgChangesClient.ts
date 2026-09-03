@@ -150,21 +150,30 @@ export type AssistantEntityOp = { op: 'create' | 'update' | 'delete'; id: string
  * count is an implausible fraction of the baseline, deletes are skipped as a
  * likely transient/partial-load state rather than an intentional removal.
  */
+/**
+ * @param knownFailed  optional `${keyPrefix}:${id}` -> canonicalKey(entity) map of
+ *   operations that already failed PERMANENTLY (permission-denied, duplicate code,
+ *   …). An op is suppressed while the entity's content still hashes to the same
+ *   value — so a doomed write is attempted once, not on every autosave cycle.
+ * @param keyPrefix    entity-type prefix for the knownFailed keys.
+ */
 export const diffAssistantEntities = (
   before: any[] = [],
   after: any[] = [],
-): { ops: AssistantEntityOp[]; skippedDeletes: string[] } => {
+  knownFailed?: Map<string, string>,
+  keyPrefix = '',
+): { ops: AssistantEntityOp[]; skippedDeletes: string[]; suppressed: number } => {
   const beforeById = new Map<string, any>();
   for (const e of before || []) if (e && typeof e.id === 'string') beforeById.set(e.id, e);
   const afterById = new Map<string, any>();
   for (const e of after || []) if (e && typeof e.id === 'string') afterById.set(e.id, e);
 
-  const ops: AssistantEntityOp[] = [];
+  const rawOps: AssistantEntityOp[] = [];
 
   for (const [id, entity] of afterById) {
     const prior = beforeById.get(id);
-    if (!prior) ops.push({ op: 'create', id, entity });
-    else if (!sameEntity(prior, entity)) ops.push({ op: 'update', id, entity });
+    if (!prior) rawOps.push({ op: 'create', id, entity });
+    else if (!sameEntity(prior, entity)) rawOps.push({ op: 'update', id, entity });
   }
 
   const removedIds: string[] = [];
@@ -177,9 +186,146 @@ export const diffAssistantEntities = (
     if (wholeArrayVanished || implausibleMassDelete) {
       skippedDeletes = removedIds;
     } else {
-      for (const id of removedIds) ops.push({ op: 'delete', id, entity: { id } });
+      for (const id of removedIds) rawOps.push({ op: 'delete', id, entity: { id } });
     }
   }
 
-  return { ops, skippedDeletes };
+  let suppressed = 0;
+  const ops = rawOps.filter((o) => {
+    if (!knownFailed) return true;
+    const fk = `${keyPrefix}:${o.id}`;
+    if (knownFailed.get(fk) === canonicalKey({ op: o.op, entity: o.entity })) {
+      suppressed++;
+      return false;
+    }
+    return true;
+  });
+
+  return { ops, skippedDeletes, suppressed };
+};
+
+/** Stable hash of an op for the knownFailed map. */
+export const failureKey = (op: string, entity: any): string => canonicalKey({ op, entity });
+
+/**
+ * Classify a save error. PERMANENT = the same write will keep failing until the
+ * user changes the data (don't auto-retry it every autosave cycle); RETRYABLE =
+ * transient (network, quota, another user's concurrent edit) — retry next cycle.
+ */
+export type SaveErrorClass = 'permanent' | 'retryable';
+export const classifySaveError = (err: any): SaveErrorClass => {
+  const code = String(err?.code || '');
+  const msg = String(err?.message || '');
+  const PERMANENT = [
+    'functions/permission-denied', 'permission-denied',
+    'functions/already-exists', 'already-exists',
+    'functions/failed-precondition', 'failed-precondition',
+    'functions/invalid-argument', 'invalid-argument',
+    'functions/not-found', 'not-found',
+  ];
+  if (PERMANENT.includes(code)) return 'permanent';
+  if (/409_CONFLICT_ASSIGNMENT_IN_USE|subjectCode|รหัสวิชา|department outside your assignment|No departments assigned|Organization mismatch|Requires (manager|assistant)/i.test(msg)) {
+    return 'permanent';
+  }
+  // aborted (too many concurrent edits), resource-exhausted, deadline-exceeded,
+  // internal, network — all worth another try on the next cycle.
+  return 'retryable';
+};
+
+/** Short human-readable reason for a save failure (for a toast). */
+export const describeSaveError = (label: string, err: any): string => {
+  const msg = String(err?.message || err || '');
+  const code = String(err?.code || '');
+  if (/subjectCode|รหัสวิชา/i.test(msg)) return `บันทึก "${label}" ไม่ได้: รหัสวิชาซ้ำกับที่มีอยู่แล้ว`;
+  if (/409_CONFLICT_ASSIGNMENT_IN_USE/i.test(msg)) return `ลบ "${label}" ไม่ได้: รายการนี้ถูกใช้อยู่ในตารางสอนแล้ว`;
+  if (/department outside your assignment|No departments assigned/i.test(msg)) return `บันทึก "${label}" ไม่ได้: อยู่นอกกลุ่มสาระฯ ที่คุณรับผิดชอบ`;
+  if (code.includes('permission-denied') || /permission/i.test(msg)) return `บันทึก "${label}" ไม่ได้: คุณไม่มีสิทธิ์แก้ไขส่วนนี้`;
+  if (/lock or unlock|ล็อก\/ปลดล็อก/i.test(msg)) return `เฉพาะแอดมินเท่านั้นที่ล็อก/ปลดล็อกตารางเรียนได้`;
+  return `บันทึก "${label}" ไม่สำเร็จ: ${msg.slice(0, 120)}`;
+};
+
+// ---------------------------------------------------------------------------
+// Reconcile a fresh server snapshot with THIS client's not-yet-persisted edits.
+// ---------------------------------------------------------------------------
+
+/**
+ * Merge one id-keyed array: start from the authoritative server array, then
+ * re-apply the local client's changes that are not yet on the server (adds and
+ * edits), and honour the local client's not-yet-synced deletes.
+ *
+ * 3-way against `baseline` (the last state this client knows is persisted):
+ *  - id in local, not in baseline, not in server  -> local ADD not synced   -> keep
+ *  - id in baseline & local, local != baseline, still on server -> local EDIT -> keep local
+ *  - id in baseline, not in local, still on server -> local DELETE not synced -> remove
+ *  - everything else -> server wins (incl. other users' concurrent changes)
+ */
+const reconcileArray = (server: any[], local: any[], baseline: any[]): any[] => {
+  const s = new Map<string, any>();
+  for (const e of server || []) if (e && typeof e.id === 'string') s.set(e.id, e);
+  const b = new Map<string, any>();
+  for (const e of baseline || []) if (e && typeof e.id === 'string') b.set(e.id, e);
+  const l = new Map<string, any>();
+  for (const e of local || []) if (e && typeof e.id === 'string') l.set(e.id, e);
+
+  const result: any[] = [...(server || [])];
+  const idxOf = (id: string) => result.findIndex((e) => e && e.id === id);
+
+  for (const [id, ent] of l) {
+    if (!b.has(id) && !s.has(id)) {
+      result.push(ent); // local add, not yet synced
+    } else if (b.has(id) && s.has(id) && !sameEntity(b.get(id), ent)) {
+      const i = idxOf(id);
+      if (i >= 0) result[i] = ent; // local edit in progress
+    }
+  }
+  for (const [id] of b) {
+    if (!l.has(id) && s.has(id)) {
+      const i = idxOf(id);
+      if (i >= 0) result.splice(i, 1); // local delete, not yet synced
+    }
+  }
+  return result;
+};
+
+const reconcileSettings = (server: any, local: any, baseline: any): any => {
+  if (!local || typeof local !== 'object') return server ?? null;
+  const bs = (baseline && typeof baseline === 'object') ? baseline : {};
+  const out: Record<string, any> = { ...(server && typeof server === 'object' ? server : {}) };
+  for (const k of Object.keys(local)) {
+    if (!sameEntity(bs[k], local[k])) out[k] = local[k]; // local's un-synced key change
+  }
+  return out;
+};
+
+/**
+ * Given the freshly-rebuilt server view (`server`), the current in-memory state
+ * (`local`) and the last-persisted baseline (`baseline`), return a view that
+ * keeps this client's not-yet-saved work instead of discarding it.
+ *
+ * Fixes the silent-data-loss race: a Firestore snapshot arriving during the
+ * autosave debounce used to replace `appData` wholesale, dropping an entity the
+ * user had just added locally before it was persisted.
+ */
+export const reconcileServerWithLocal = <T extends Record<string, any>>(
+  server: T,
+  local: T | null | undefined,
+  baseline: Record<string, any> | null | undefined,
+): T => {
+  // No baseline -> we have no proof of what is "local unsaved" vs "server truth".
+  if (!local || !baseline) return server;
+
+  const out: Record<string, any> = { ...server };
+  for (const field of ORG_ARRAY_FIELDS) {
+    out[field] = reconcileArray(
+      Array.isArray(server[field]) ? server[field] : [],
+      Array.isArray(local[field]) ? local[field] : [],
+      Array.isArray(baseline[field]) ? baseline[field] : [],
+    );
+  }
+  out.organizationSettings = reconcileSettings(
+    server.organizationSettings,
+    local.organizationSettings,
+    baseline.organizationSettings,
+  );
+  return out as T;
 };
