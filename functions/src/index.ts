@@ -12,6 +12,7 @@ import {
   sanitizeActivityLogs,
   mapOrgErrorCode,
   OrgChangeError,
+  canon,
   type CallerRole,
 } from './orgWrites';
 
@@ -950,22 +951,14 @@ export const assistantUpdateEntity = functions.https.onCall(async (
       throw new functions.https.HttpsError('not-found', `${type}/${entityId} not found.`);
     }
 
-    // --- TEMPORARY DIAGNOSTIC (spurious-update investigation) — remove after root cause confirmed ---
-    if (op === 'update' && existing) {
-      const canon = (o: any): string => {
-        if (o === null || typeof o !== 'object') return JSON.stringify(o);
-        if (Array.isArray(o)) return `[${o.map(canon).join(',')}]`;
-        return `{${Object.keys(o).sort().map((k) => JSON.stringify(k) + ':' + canon(o[k])).join(',')}}`;
-      };
-      const merged = { ...existing, ...payload };
-      const semanticNoop = canon(merged) === canon(existing);
-      const keyOrderExisting = Object.keys(existing).join(',');
-      const keyOrderPayload = Object.keys(payload).join(',');
-      console.log(
-        `[aUE-DIAG:${traceId}] update ${type}/${entityId} semanticNoop=${semanticNoop} ` +
-        `existingKeys=[${keyOrderExisting}] payloadKeys=[${keyOrderPayload}] ` +
-        (semanticNoop ? 'SPURIOUS (payload adds nothing)' : 'real-change'),
-      );
+    // Semantic no-op guard: clients can send an "update" whose payload is byte-for-
+    // byte the same entity, just with map keys in a different order (the ENTERPRISE
+    // database returns keys in an arbitrary per-map order, and JSON.stringify-based
+    // change detection then treats every entity as "changed"). Nothing is actually
+    // changing, so return success without a write and without a department check.
+    if (op === 'update' && existing && canon({ ...existing, ...payload }) === canon(existing)) {
+      finish('no-op update (payload semantically matches server)');
+      return { entity: existing };
     }
 
     // A client retry of a create that already landed becomes an idempotent update.

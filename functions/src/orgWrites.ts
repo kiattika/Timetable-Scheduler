@@ -211,8 +211,19 @@ export function mergeOrgChanges(
       }
     }
 
-    updates[field] = Array.from(byId.values());
-    summary[field] = { upserts, deletes: deleteIds.size, length: updates[field].length };
+    const merged = Array.from(byId.values());
+    // Semantic no-op guard: if the merged array is identical to the server array
+    // apart from map key order (the ENTERPRISE db returns keys in arbitrary order,
+    // so a client's stringify-based diff over-reports "changed"), skip the write.
+    if (canon(merged) === canon(serverArr)) continue;
+    updates[field] = merged;
+    summary[field] = { upserts, deletes: deleteIds.size, length: merged.length };
+  }
+
+  // Drop an organizationSettings write that only reorders keys.
+  if (updates.organizationSettings && canon(updates.organizationSettings) === canon(serverDoc.organizationSettings)) {
+    delete updates.organizationSettings;
+    delete summary.organizationSettings;
   }
 
   return { updates, summary };

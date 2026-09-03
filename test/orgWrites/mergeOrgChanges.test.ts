@@ -51,6 +51,17 @@ describe('mergeOrgChanges — concurrent edits do not clobber', () => {
     const { updates } = mergeOrgChanges({ subjects: [S('s1')] }, {}, 'admin');
     expect(Object.keys(updates)).toHaveLength(0);
   });
+
+  it('a key-order-only "change" is recognised as a no-op (no write)', () => {
+    const server = { teachers: [{ name: 'A', teacherCode: 'T1', department: 'Sci', id: 't1' }] };
+    // client re-sends the same teacher with keys in a different order
+    const changes: OrgChanges = {
+      teachers: { upsert: [{ id: 't1', department: 'Sci', name: 'A', teacherCode: 'T1' }], deleteIds: [] },
+    };
+    const { updates } = mergeOrgChanges(server, changes, 'admin');
+    expect(updates.teachers).toBeUndefined();
+    expect(Object.keys(updates)).toHaveLength(0);
+  });
 });
 
 describe('mergeOrgChanges — subjectCode uniqueness', () => {
