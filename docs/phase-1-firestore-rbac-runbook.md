@@ -137,6 +137,24 @@ arrives separately); `handleLoginSuccess` also `setFirebaseUser` + `setIsAuthChe
 **Deployed:** `commitOrgChanges` (skip-and-report). **Client pending deploy** for
 all of the above.
 
+### A-followup — spurious storm on logout → re-login
+`lastSavedDataStr` (the autosave baseline ref in `App.tsx`) was never reset on
+logout — only `knownFailedRef` / `retryableStreakRef` were. On re-login the
+"first load" guard (`lastSavedDataStr.current === null`) never re-fired, so the
+freshly-loaded data was diffed against the previous session's baseline and nearly
+every entity looked unsynced → the same storm via a different trigger.
+**Fix (client-only, no function change):**
+- All per-session refs (`lastSavedDataStr`, `knownFailedRef`, `retryableStreakRef`,
+  `syncInFlight`) now reset on **any auth transition** — keyed on `firebaseUser?.uid`
+  change (covers login, logout, and user-switch).
+- The autosave baseline is only anchored from a **genuine authenticated session**
+  (`firebaseUser && appData.currentUser`), never from the transient guest/fallback
+  data shown during the login/logout transition.
+- `useAppAuth`: `recordedLoginSessionRef` also cleared on session end so the login
+  audit re-records on the next sign-in.
+Verify: log in → settle → log out → log back in → **zero** `assistantUpdateEntity`
+/ `commitOrgChanges` calls until the user actually edits something.
+
 ---
 
 ## ⚠️ CRITICAL #3 — every save re-sent (almost) every entity ("spurious updates")

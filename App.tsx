@@ -82,6 +82,9 @@ const App: React.FC = () => {
   const retryableStreakRef = useRef(0);
   // Guards against overlapping syncs (assistant + admin/manager both).
   const syncInFlight = useRef(false);
+  // Tracks the authenticated uid so ALL per-session client state can be dropped
+  // on any auth transition (login / logout / user switch).
+  const sessionUidRef = useRef<string | null | undefined>(undefined);
 
   const {
     isAuthChecking, googleAccessToken, firebaseUser,
@@ -98,9 +101,18 @@ const App: React.FC = () => {
     if (isDataLoaded && appData && !firebaseUser && appData.currentUser) {
         setAppData(prev => prev ? ({ ...prev, currentUser: null }) : null);
     }
-    if (!firebaseUser) {
+    // Any auth transition (login / logout / user switch): drop every piece of
+    // per-session client state. Otherwise `lastSavedDataStr` keeps a baseline
+    // from the PREVIOUS session, the "first load" guard in the autosave effect
+    // never re-fires, and the freshly-loaded data is diffed against a stale
+    // baseline — making nearly every entity look unsynced (spurious write storm).
+    const uid = firebaseUser?.uid ?? null;
+    if (uid !== sessionUidRef.current) {
+      sessionUidRef.current = uid;
+      lastSavedDataStr.current = null;
       knownFailedRef.current.clear();
       retryableStreakRef.current = 0;
+      syncInFlight.current = false;
     }
   }, [isDataLoaded, firebaseUser, appData?.currentUser?.id]);
 
@@ -119,9 +131,15 @@ const App: React.FC = () => {
       // entity as "changed".
       const currentDataStr = canonicalKey(appData);
 
+      // Only anchor the baseline once we have a genuine authenticated,
+      // server-loaded session — never from the transient guest/fallback data
+      // shown during a login/logout transition (anchoring on that would make the
+      // first real snapshot look like a full re-add of every entity).
+      const authedSession = !!firebaseUser && !!appData.currentUser;
+
       // On initial load, initialize ref without triggering a save
       if (lastSavedDataStr.current === null) {
-        lastSavedDataStr.current = currentDataStr;
+        if (authedSession) lastSavedDataStr.current = currentDataStr;
         return;
       }
 
@@ -137,7 +155,7 @@ const App: React.FC = () => {
       const canBlobSave = role === 'admin' || role === 'manager';
       const isAssistant = role === 'assistant';
       if (!canBlobSave && !isAssistant) {
-        lastSavedDataStr.current = currentDataStr;
+        if (authedSession) lastSavedDataStr.current = currentDataStr;
         return;
       }
 

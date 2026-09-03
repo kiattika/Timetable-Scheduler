@@ -39,6 +39,9 @@ export const useAppAuth = (
         // Not logged in -> Show login / default state
         if (!userEmail) {
           if (!isMounted) return;
+          // Session ended (logout / token expiry) — allow the login audit to
+          // re-record on the next sign-in.
+          recordedLoginSessionRef.current = null;
           const initData = await fetchAppData(ORG_ID);
           setAppData({ ...initData, currentUser: null });
           setIsDataLoaded(true);
