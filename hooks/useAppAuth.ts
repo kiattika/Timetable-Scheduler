@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { fetchAppData, registerCurrentUser, safeUpsert, DEFAULT_DEPARTMENTS, DEFAULT_RESOURCE_TYPES, ORG_ID } from '../api';
+import { fetchAppData, registerCurrentUser, safeUpsert, DEFAULT_DEPARTMENTS, DEFAULT_RESOURCE_TYPES, ORG_ID, normalizeLoadedSubjects } from '../api';
 import { AppData, User, ScheduleEntry, ActivityLog, Teacher } from '../types';
 import { db } from '../lib/firebase';
 import { doc, collection, onSnapshot, query, orderBy, limit } from 'firebase/firestore';
@@ -68,10 +68,10 @@ export const useAppAuth = (
             return;
           }
 
-          const subjectsWithDefaults = (mainParsedData.subjects || []).map((s: any) => ({
-            ...s, 
-            teachingMode: s.teachingMode || 'single'
-          }));
+          // Single shared normaliser — MUST match fetchAppData / executeRestore,
+          // otherwise a subject's diff baseline and current state have different
+          // key sets and every save re-sends it as "changed".
+          const subjectsWithDefaults = normalizeLoadedSubjects(mainParsedData.subjects);
 
           const existingUsers: User[] = mainParsedData.users || [];
           const existingUser = existingUsers.find(u => u.email.toLowerCase().trim() === userEmail);

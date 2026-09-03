@@ -3,9 +3,10 @@ import { DEFAULT_PERIOD_SETTINGS, PREDEFINED_SUBJECT_COLORS } from './constants'
 import { db, auth, functions } from './lib/firebase';
 import { doc, getDoc, setDoc, deleteDoc, collection, getDocs, writeBatch, query, orderBy, limit, deleteField, runTransaction } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
-import { computeOrgChanges, diffById, ORG_ARRAY_FIELDS, cleanUndefined as cleanUndefinedShared } from './lib/orgChangesClient';
+import { computeOrgChanges, diffById, diffAssistantEntities, canonicalKey, ORG_ARRAY_FIELDS, cleanUndefined as cleanUndefinedShared } from './lib/orgChangesClient';
+import { normalizeLoadedSubject, normalizeLoadedSubjects } from './lib/normalizeAppData';
 
-export { computeOrgChanges, diffById, ORG_ARRAY_FIELDS };
+export { computeOrgChanges, diffById, diffAssistantEntities, canonicalKey, ORG_ARRAY_FIELDS, normalizeLoadedSubject, normalizeLoadedSubjects };
 
 export const ORG_ID = import.meta.env.VITE_ORG_ID || 'utd';
 
@@ -185,26 +186,7 @@ export const fetchAppData = async (orgId: string = ORG_ID): Promise<AppData> => 
 
     if (docSnap && docSnap.exists()) {
       const parsedData = docSnap.data() as any;
-      const subjectsWithDefaults = (parsedData.subjects || []).map((s: any) => {
-        let allowSharing = s.allowPhysicalRoomSharing;
-        if (allowSharing === undefined && s.allowClassroomSharing !== undefined) {
-          allowSharing = s.allowClassroomSharing;
-        }
-        // One-time migration: default to true for existing STUDENT_ONLY / TEACHER_ONLY subjects if previously unset
-        if (allowSharing === undefined || allowSharing === null) {
-          if (s.type === 'STUDENT_ONLY' || s.type === 'TEACHER_ONLY') {
-            allowSharing = true;
-          } else {
-            allowSharing = false;
-          }
-        }
-        return {
-          ...s,
-          teachingMode: s.teachingMode || 'single',
-          allowPhysicalRoomSharing: Boolean(allowSharing),
-          allowClassroomSharing: Boolean(allowSharing),
-        };
-      });
+      const subjectsWithDefaults = normalizeLoadedSubjects(parsedData.subjects);
       
       // If subcollection was empty but main document has scheduleEntries, use main document
       const finalScheduleEntries: ScheduleEntry[] = Array.isArray(loadedScheduleEntries) && loadedScheduleEntries.length > 0 
@@ -430,43 +412,24 @@ export const persistAssistantChanges = async (
   for (const key of ASSISTANT_SYNC_KEYS) {
     const before: any[] = Array.isArray((prev as any)?.[key]) ? (prev as any)[key] : [];
     const after: any[] = Array.isArray((next as any)?.[key]) ? (next as any)[key] : [];
-    const beforeById = new Map(before.filter(e => e && e.id).map(e => [e.id, e]));
-    const afterById = new Map(after.filter(e => e && e.id).map(e => [e.id, e]));
 
-    for (const [id, entity] of afterById) {
-      const prior = beforeById.get(id);
-      try {
-        if (!prior) {
-          await callAssistantUpdate(key, 'create', entity, orgId);
-        } else if (JSON.stringify(prior) !== JSON.stringify(entity)) {
-          await callAssistantUpdate(key, 'update', entity, orgId);
-        }
-      } catch (err: any) {
-        errors.push(`${key}/${id}: ${err?.message || err}`);
-      }
+    // Order-insensitive diff — the SAME comparison the admin/manager path uses.
+    // JSON.stringify equality here previously flagged nearly every entity as
+    // "changed" whenever the diff baseline and `appData` came from different
+    // Firestore deserialisations (key order is not stable), firing dozens of
+    // spurious update calls per save.
+    const { ops, skippedDeletes } = diffAssistantEntities(before, after);
+    if (skippedDeletes.length > 0) {
+      console.warn(
+        `[persistAssistantChanges] SKIPPING ${skippedDeletes.length} '${key}' delete(s) — ` +
+        `looks like a transient state, not an intentional delete (before=${before.length}, after=${after.length}).`
+      );
     }
-
-    // Deletes — with defensive guards. The entity screens always operate on the
-    // FULL appData arrays (department filtering is render-only), so a spurious
-    // delete should be impossible; these guards are belt-and-suspenders against a
-    // transient partially-loaded / empty local array being misread as "delete all".
-    const removedIds = [...beforeById.keys()].filter(id => !afterById.has(id));
-    if (removedIds.length > 0) {
-      const wholeArrayVanished = after.length === 0 && before.length > 0;
-      const implausibleMassDelete = removedIds.length > Math.max(3, Math.floor(before.length * 0.34));
-      if (wholeArrayVanished || implausibleMassDelete) {
-        console.warn(
-          `[persistAssistantChanges] SKIPPING ${removedIds.length} '${key}' delete(s) — ` +
-          `looks like a transient state, not an intentional delete (before=${before.length}, after=${after.length}).`
-        );
-      } else {
-        for (const id of removedIds) {
-          try {
-            await callAssistantUpdate(key, 'delete', { id }, orgId);
-          } catch (err: any) {
-            errors.push(`${key}/${id} (delete): ${err?.message || err}`);
-          }
-        }
+    for (const { op, id, entity } of ops) {
+      try {
+        await callAssistantUpdate(key, op, entity, orgId);
+      } catch (err: any) {
+        errors.push(`${key}/${id} (${op}): ${err?.message || err}`);
       }
     }
   }

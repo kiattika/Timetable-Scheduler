@@ -24,7 +24,7 @@ import { TeacherScheduleTable } from './components/TeacherScheduleView';
 import { RoomUsageScheduleTable } from './components/RoomUsageView';
 
 import { Icons, APP_TITLE, PREDEFINED_SUBJECT_COLORS, DEFAULT_PERIOD_SETTINGS } from './constants';
-import { fetchAppData, saveAppData, persistAssistantChanges, getSampleAppData, DEFAULT_DEPARTMENTS, DEFAULT_RESOURCE_TYPES, ORG_ID, pruneActivityLogs } from './api';
+import { fetchAppData, saveAppData, persistAssistantChanges, getSampleAppData, DEFAULT_DEPARTMENTS, DEFAULT_RESOURCE_TYPES, ORG_ID, pruneActivityLogs, canonicalKey, normalizeLoadedSubject } from './api';
 import { isParentGrade as checkIsParentGradeUtil, getParentGradeLevelId, getChildGradeLevelIds, isChildOf } from './components/scheduleUtils';
 import { useAppAuth } from './hooks/useAppAuth';
 import { useBackupRestore } from './hooks/useBackupRestore';
@@ -96,7 +96,11 @@ const App: React.FC = () => {
 
   useEffect(() => {
     if (isDataLoaded && appData) {
-      const currentDataStr = JSON.stringify(appData);
+      // Order-INSENSITIVE canonical form. Plain JSON.stringify drifts when appData
+      // is rebuilt from a fresh Firestore snapshot (key order is not stable), which
+      // made this gate fire on every render and the per-entity diff flag every
+      // entity as "changed".
+      const currentDataStr = canonicalKey(appData);
 
       // On initial load, initialize ref without triggering a save
       if (lastSavedDataStr.current === null) {
@@ -209,29 +213,13 @@ const App: React.FC = () => {
                 departments: rawData.departments && rawData.departments.length > 0 ? rawData.departments : (appData.departments || [...DEFAULT_DEPARTMENTS]),
                 resourceTypes: rawData.resourceTypes && rawData.resourceTypes.length > 0 ? rawData.resourceTypes : (appData.resourceTypes || [...DEFAULT_RESOURCE_TYPES]),
                 teachers: Array.isArray(rawData.teachers) ? rawData.teachers : [],
-                subjects: Array.isArray(rawData.subjects) ? rawData.subjects.map((s: any) => {
-                  let allowSharing = s.allowPhysicalRoomSharing;
-                  if (allowSharing === undefined && s.allowClassroomSharing !== undefined) {
-                    allowSharing = s.allowClassroomSharing;
-                  }
-                  if (allowSharing === undefined || allowSharing === null) {
-                    if (s.type === 'STUDENT_ONLY' || s.type === 'TEACHER_ONLY') {
-                      allowSharing = true;
-                    } else {
-                      allowSharing = false;
-                    }
-                  }
-                  return {
-                    ...s,
-                    teachingMode: s.teachingMode || 'single',
-                    allowPhysicalRoomSharing: Boolean(allowSharing),
-                    allowClassroomSharing: Boolean(allowSharing),
-                    isBroadAssignment: !!s.isBroadAssignment,
-                    isHomeroomAdvisorySubject: !!s.isHomeroomAdvisorySubject,
-                    autoLinkToHomeroomTeachers: !!s.autoLinkToHomeroomTeachers,
-                    applicableParentGradeLevelIds: s.applicableParentGradeLevelIds || []
-                  };
-                }) : [],
+                subjects: Array.isArray(rawData.subjects) ? rawData.subjects.map((s: any) => ({
+                  ...normalizeLoadedSubject(s), // shared: teachingMode + room-sharing (matches all load paths)
+                  isBroadAssignment: !!s.isBroadAssignment,
+                  isHomeroomAdvisorySubject: !!s.isHomeroomAdvisorySubject,
+                  autoLinkToHomeroomTeachers: !!s.autoLinkToHomeroomTeachers,
+                  applicableParentGradeLevelIds: s.applicableParentGradeLevelIds || []
+                })) : [],
                 gradeLevels: Array.isArray(rawData.gradeLevels) ? rawData.gradeLevels : [],
                 physicalRooms: Array.isArray(rawData.physicalRooms) ? rawData.physicalRooms : [],
                 scheduleEntries: Array.isArray(rawData.scheduleEntries) ? rawData.scheduleEntries : [],
@@ -248,7 +236,7 @@ const App: React.FC = () => {
 
             // Persist immediately — full replace (admin restore-from-backup).
             await saveAppData(newAppData, ORG_ID, null, { replace: true });
-            lastSavedDataStr.current = JSON.stringify(newAppData);
+            lastSavedDataStr.current = canonicalKey(newAppData);
           }
           
           setShowRestoreConfirm(false);

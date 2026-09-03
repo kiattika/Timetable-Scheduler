@@ -4,7 +4,38 @@
  * never emits deletes without a baseline.
  */
 import { describe, it, expect } from 'vitest';
-import { diffById, computeOrgChanges } from '../../lib/orgChangesClient';
+import { diffById, computeOrgChanges, canonicalKey, sameEntity } from '../../lib/orgChangesClient';
+
+describe('canonicalKey / sameEntity — the spurious-update regression', () => {
+  it('two objects with identical fields in DIFFERENT key order are equal', () => {
+    const a = { name: 'Dr Smith', teacherCode: 'T1', department: 'Sci', email: 'x@utd.ac.th' };
+    const b = { email: 'x@utd.ac.th', department: 'Sci', name: 'Dr Smith', teacherCode: 'T1' };
+    expect(canonicalKey(a)).toBe(canonicalKey(b));
+    expect(sameEntity(a, b)).toBe(true);
+  });
+
+  it('nested objects with reordered keys are equal', () => {
+    const a = { id: 's1', meta: { a: 1, b: 2 }, tags: ['x', 'y'] };
+    const b = { tags: ['x', 'y'], id: 's1', meta: { b: 2, a: 1 } };
+    expect(sameEntity(a, b)).toBe(true);
+  });
+
+  it('ARRAY order is still significant (teacherIds / operatingDays)', () => {
+    expect(sameEntity({ teacherIds: ['a', 'b'] }, { teacherIds: ['b', 'a'] })).toBe(false);
+  });
+
+  it('a real field change is still detected', () => {
+    expect(sameEntity({ a: 1, b: 2 }, { b: 2, a: 999 })).toBe(false);
+  });
+
+  it('a missing key vs an extra key is a real difference (normalisation must be unified)', () => {
+    expect(sameEntity({ a: 1 }, { a: 1, b: false })).toBe(false);
+  });
+
+  it('undefined-valued keys are ignored (JSON semantics)', () => {
+    expect(sameEntity({ a: 1, b: undefined }, { a: 1 })).toBe(true);
+  });
+});
 
 describe('diffById', () => {
   it('detects adds, updates and deletes by id', () => {
@@ -22,6 +53,27 @@ describe('diffById', () => {
 });
 
 describe('computeOrgChanges', () => {
+  it('an untouched entity with reordered keys is NOT flagged as changed (the bug)', () => {
+    const baseline = {
+      teachers: [
+        { name: 'A', teacherCode: 'T1', department: 'Sci' },
+        { name: 'B', teacherCode: 'T2', department: 'Math' },
+      ],
+      subjects: [{ id: 's1', name: 'Math', subjectCode: 'M1' }],
+    };
+    // same data, every object's keys reordered (simulates a fresh Firestore deserialisation)
+    const current = {
+      teachers: [
+        { department: 'Sci', name: 'A', teacherCode: 'T1' },
+        { teacherCode: 'T2', department: 'Math', name: 'B' },
+      ],
+      subjects: [{ subjectCode: 'M1', id: 's1', name: 'Math' }],
+    };
+    const { changes, hasChanges } = computeOrgChanges(baseline, current);
+    expect(hasChanges).toBe(false);
+    expect(changes).toEqual({});
+  });
+
   it('emits only the fields this client changed', () => {
     const baseline = {
       teachers: [{ id: 't1', name: 'A' }],

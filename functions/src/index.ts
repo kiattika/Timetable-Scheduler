@@ -949,6 +949,25 @@ export const assistantUpdateEntity = functions.https.onCall(async (
     if (op !== 'create' && !existing) {
       throw new functions.https.HttpsError('not-found', `${type}/${entityId} not found.`);
     }
+
+    // --- TEMPORARY DIAGNOSTIC (spurious-update investigation) — remove after root cause confirmed ---
+    if (op === 'update' && existing) {
+      const canon = (o: any): string => {
+        if (o === null || typeof o !== 'object') return JSON.stringify(o);
+        if (Array.isArray(o)) return `[${o.map(canon).join(',')}]`;
+        return `{${Object.keys(o).sort().map((k) => JSON.stringify(k) + ':' + canon(o[k])).join(',')}}`;
+      };
+      const merged = { ...existing, ...payload };
+      const semanticNoop = canon(merged) === canon(existing);
+      const keyOrderExisting = Object.keys(existing).join(',');
+      const keyOrderPayload = Object.keys(payload).join(',');
+      console.log(
+        `[aUE-DIAG:${traceId}] update ${type}/${entityId} semanticNoop=${semanticNoop} ` +
+        `existingKeys=[${keyOrderExisting}] payloadKeys=[${keyOrderPayload}] ` +
+        (semanticNoop ? 'SPURIOUS (payload adds nothing)' : 'real-change'),
+      );
+    }
+
     // A client retry of a create that already landed becomes an idempotent update.
     const effectiveOp: 'create' | 'update' | 'delete' =
       op === 'create' && existing ? 'update' : op;

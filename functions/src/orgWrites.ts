@@ -64,6 +64,15 @@ export const PROTECTED_ORG_FIELDS = ['users', 'authorizedAdmins'] as const;
 
 export type CallerRole = 'admin' | 'manager';
 
+/** Order-insensitive canonical serialization (object keys sorted, array order kept). */
+export const canon = (x: any): string => {
+  if (x === undefined || x === null) return 'null';
+  if (typeof x !== 'object') { try { return JSON.stringify(x); } catch { return String(x); } }
+  if (Array.isArray(x)) return '[' + x.map(canon).join(',') + ']';
+  return '{' + Object.keys(x).filter((k) => x[k] !== undefined).sort()
+    .map((k) => JSON.stringify(k) + ':' + canon(x[k])).join(',') + '}';
+};
+
 export class OrgChangeError extends Error {
   constructor(public code: string, message: string) {
     super(message);
@@ -272,9 +281,9 @@ export async function applyOrgChanges(
     if (prevServer) {
       const changedUnderUs: string[] = [];
       for (const f of ORG_ARRAY_FIELDS) {
-        if (JSON.stringify(prevServer[f]) !== JSON.stringify(server[f])) changedUnderUs.push(f);
+        if (canon(prevServer[f]) !== canon(server[f])) changedUnderUs.push(f);
       }
-      if (JSON.stringify(prevServer.organizationSettings) !== JSON.stringify(server.organizationSettings)) {
+      if (canon(prevServer.organizationSettings) !== canon(server.organizationSettings)) {
         changedUnderUs.push('organizationSettings');
       }
       log(

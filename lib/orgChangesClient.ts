@@ -19,9 +19,35 @@ export const ORG_ARRAY_FIELDS = [
   'resourceTypes', 'teacherSubjectAssignments', 'periodSettings', 'scheduleEntries',
 ] as const;
 
-export const stableKey = (x: any): string => {
-  try { return JSON.stringify(x); } catch { return String(x); }
+/**
+ * Order-INSENSITIVE canonical serialization for change-detection.
+ *
+ * `JSON.stringify` is sensitive to object key insertion order. Entities that
+ * round-trip through two Firestore deserialisations (e.g. the diff baseline came
+ * from an earlier snapshot than `appData`) or through divergent client-side
+ * normalisation can be semantically identical yet stringify differently — which
+ * made the diff flag EVERY entity as "changed" on every save, firing dozens of
+ * spurious update calls (and burning read/write quota).
+ *
+ * This sorts OBJECT keys recursively but preserves ARRAY order (array order is
+ * semantic — e.g. `teacherIds`, `operatingDays`). `undefined`-valued keys are
+ * dropped, matching JSON semantics. Output is valid JSON.
+ */
+export const canonicalKey = (x: any): string => {
+  if (x === undefined || x === null) return 'null';
+  if (typeof x !== 'object') {
+    try { return JSON.stringify(x); } catch { return String(x); }
+  }
+  if (Array.isArray(x)) return '[' + x.map(canonicalKey).join(',') + ']';
+  const keys = Object.keys(x).filter((k) => x[k] !== undefined).sort();
+  return '{' + keys.map((k) => JSON.stringify(k) + ':' + canonicalKey(x[k])).join(',') + '}';
 };
+
+/** @deprecated use canonicalKey — kept for any external importer. */
+export const stableKey = canonicalKey;
+
+/** Semantic (order-insensitive) equality of two values. */
+export const sameEntity = (a: any, b: any): boolean => canonicalKey(a) === canonicalKey(b);
 
 /** Recursively convert `undefined`/`null` to `null` (Firestore rejects undefined). */
 export const cleanUndefined = (obj: any): any => {
@@ -50,7 +76,7 @@ export const diffById = <T extends { id?: string }>(
   const upsert: T[] = [];
   for (const [id, item] of c) {
     const prev = b.get(id);
-    if (!prev || stableKey(prev) !== stableKey(item)) upsert.push(item);
+    if (!prev || !sameEntity(prev, item)) upsert.push(item);
   }
   const deleteIds: string[] = [];
   for (const id of b.keys()) if (!c.has(id)) deleteIds.push(id);
@@ -91,7 +117,7 @@ export const computeOrgChanges = (
   const cs = (current.organizationSettings || {}) as Record<string, any>;
   const set: Record<string, any> = {};
   for (const k of Object.keys(cs)) {
-    if (stableKey(bs[k]) !== stableKey(cs[k])) set[k] = cs[k];
+    if (!sameEntity(bs[k], cs[k])) set[k] = cs[k];
   }
   if (Object.keys(set).length) {
     changes.organizationSettings = { set };
@@ -106,4 +132,54 @@ export const computeOrgChanges = (
     .map(cleanUndefined);
 
   return { changes, newActivityLogs, hasChanges: hasChanges || newActivityLogs.length > 0 };
+};
+
+// ---------------------------------------------------------------------------
+// Assistant write path — same order-insensitive comparison as the admin path.
+// (Both paths MUST use the same equality check; a divergence here is a bug.)
+// ---------------------------------------------------------------------------
+
+export type AssistantEntityOp = { op: 'create' | 'update' | 'delete'; id: string; entity: any };
+
+/**
+ * Diff one department-scoped entity array (teachers / subjects /
+ * teacherSubjectAssignments / scheduleEntries) between the last-synced baseline
+ * and the current state, into per-entity create/update/delete ops.
+ *
+ * Deletes have defensive guards: if the whole array vanished, or the delete
+ * count is an implausible fraction of the baseline, deletes are skipped as a
+ * likely transient/partial-load state rather than an intentional removal.
+ */
+export const diffAssistantEntities = (
+  before: any[] = [],
+  after: any[] = [],
+): { ops: AssistantEntityOp[]; skippedDeletes: string[] } => {
+  const beforeById = new Map<string, any>();
+  for (const e of before || []) if (e && typeof e.id === 'string') beforeById.set(e.id, e);
+  const afterById = new Map<string, any>();
+  for (const e of after || []) if (e && typeof e.id === 'string') afterById.set(e.id, e);
+
+  const ops: AssistantEntityOp[] = [];
+
+  for (const [id, entity] of afterById) {
+    const prior = beforeById.get(id);
+    if (!prior) ops.push({ op: 'create', id, entity });
+    else if (!sameEntity(prior, entity)) ops.push({ op: 'update', id, entity });
+  }
+
+  const removedIds: string[] = [];
+  for (const id of beforeById.keys()) if (!afterById.has(id)) removedIds.push(id);
+
+  let skippedDeletes: string[] = [];
+  if (removedIds.length > 0) {
+    const wholeArrayVanished = (after?.length ?? 0) === 0 && (before?.length ?? 0) > 0;
+    const implausibleMassDelete = removedIds.length > Math.max(3, Math.floor((before?.length ?? 0) * 0.34));
+    if (wholeArrayVanished || implausibleMassDelete) {
+      skippedDeletes = removedIds;
+    } else {
+      for (const id of removedIds) ops.push({ op: 'delete', id, entity: { id } });
+    }
+  }
+
+  return { ops, skippedDeletes };
 };
