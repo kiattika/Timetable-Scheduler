@@ -1,24 +1,36 @@
 /**
- * Phase 0 migration safety net — full entity-lifecycle integration tests.
+ * Full entity-lifecycle integration tests (Phase 0) + Phase 1 dual-write net.
  *
  * These exercise the REAL server write path (`applyOrgChanges` / `applyOrgReplace`
  * from functions/src/orgWrites.ts) against the Firestore emulator, end to end:
- * create → fresh read → update → fresh read → delete → fresh read. They pin the
- * CURRENT behaviour of `apps/{orgId}` so that if the upcoming subcollection
- * migration changes it (an entity silently vanishing, a field bleeding across,
- * a count drifting), one of these fails immediately.
+ * create → fresh read → update → fresh read → delete → fresh read.
+ *
+ * Phase 1 addition: `afterEach` runs `verifyOrgConsistency` after EVERY test, so
+ * every lifecycle operation above is also asserting that the mirror
+ * subcollections (`apps/{orgId}/{entity}/{id}` + the single `periodSettings`
+ * doc) stayed byte-for-byte in sync with the authoritative doc arrays. The
+ * dedicated "Phase 1 — mirror mechanics" block adds explicit per-op checks.
  *
  * Requires the Firestore emulator (FIRESTORE_EMULATOR_HOST). Run via:
  *   npm run test:rules:emulate
  * When the emulator is not running these tests skip themselves.
  *
  * Scope note: several assertions here document a BASELINE, not a guarantee of
- * correctness — see the "known gap" markers. Phase 0 does not fix them.
+ * correctness — see the "known gap" markers.
  */
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { initializeApp, deleteApp, type App } from 'firebase-admin/app';
 import { getFirestore, type Firestore } from 'firebase-admin/firestore';
-import { applyOrgChanges } from '../../functions/src/orgWrites';
+import {
+  applyOrgChanges,
+  applyOrgReplace,
+  rebuildEntityMirror,
+  mirrorPeriodSettingsDoc,
+  mirrorUserDoc,
+  verifyOrgConsistency,
+  MIRRORED_ENTITY_FIELDS,
+  PERIOD_SETTINGS_MIRROR_DOC_ID,
+} from '../../functions/src/orgWrites';
 
 const EMULATED = !!process.env.FIRESTORE_EMULATOR_HOST;
 const d = EMULATED ? describe : describe.skip;
@@ -29,6 +41,24 @@ let db: Firestore;
 
 const readDoc = async () => (await db.doc(APP_DOC).get()).data()!;
 const scheduleDoc = (id: string) => db.doc(APP_DOC).collection('scheduleEntries').doc(id).get();
+const mirrorDoc = (field: string, id: string) => db.doc(APP_DOC).collection(field).doc(id).get();
+const periodMirror = () => db.doc(APP_DOC).collection('periodSettings').doc(PERIOD_SETTINGS_MIRROR_DOC_ID).get();
+
+const SEED = {
+  organizationId: 'utd',
+  teachers: [{ id: 't-seed', name: 'Seed Teacher', department: 'Science', email: 'seed@utd.ac.th' }],
+  subjects: [{ id: 's-seed', subjectCode: 'SEED1', name: 'Seed Subject' }],
+  gradeLevels: [{ id: 'g1', name: 'M.1' }],
+  physicalRooms: [{ id: 'r1', code: '101', name: 'Room 101', type: 'ห้องเรียนทั่วไป' }],
+  teacherSubjectAssignments: [] as any[],
+  periodSettings: [{ id: 'p1', label: 'P1', startTime: '08:30', endTime: '09:20' }],
+  scheduleEntries: [] as any[],
+  users: [{ id: 'admin1', email: 'admin@utd.ac.th', role: 'admin' }],
+  authorizedAdmins: ['admin@utd.ac.th'],
+  organizationSettings: { name: 'UTD', isLocked: false, schemaVersion: 1 },
+};
+
+const MIRROR_COLLS = [...MIRRORED_ENTITY_FIELDS, 'users', 'periodSettings'];
 
 beforeAll(() => {
   if (!EMULATED) return;
@@ -42,24 +72,25 @@ afterAll(async () => {
 
 beforeEach(async () => {
   if (!EMULATED) return;
-  // A clean, minimal but realistic org. `users` / `authorizedAdmins` are the
-  // identity fields the content write path must never touch.
-  await db.doc(APP_DOC).set({
-    organizationId: 'utd',
-    teachers: [{ id: 't-seed', name: 'Seed Teacher', department: 'Science', email: 'seed@utd.ac.th' }],
-    subjects: [{ id: 's-seed', subjectCode: 'SEED1', name: 'Seed Subject' }],
-    gradeLevels: [{ id: 'g1', name: 'M.1' }],
-    physicalRooms: [{ id: 'r1', code: '101', name: 'Room 101', type: 'ห้องเรียนทั่วไป' }],
-    teacherSubjectAssignments: [],
-    periodSettings: [{ id: 'p1', label: 'P1', startTime: '08:30', endTime: '09:20' }],
-    scheduleEntries: [],
-    users: [{ id: 'admin1', email: 'admin@utd.ac.th', role: 'admin' }],
-    authorizedAdmins: ['admin@utd.ac.th'],
-    organizationSettings: { name: 'UTD', isLocked: false, schemaVersion: 1 },
-  });
-  // subcollection may carry over between tests in the same emulator run
-  const existing = await db.doc(APP_DOC).collection('scheduleEntries').listDocuments();
-  await Promise.all(existing.map((docRef) => docRef.delete()));
+  await db.doc(APP_DOC).set(SEED);
+  // Wipe then re-seed the mirrors so the org starts in the consistent state that
+  // the backfill leaves it in — then afterEach proves each test KEEPS it so.
+  for (const coll of MIRROR_COLLS) {
+    const docs = await db.doc(APP_DOC).collection(coll).listDocuments();
+    await Promise.all(docs.map((docRef) => docRef.delete()));
+  }
+  for (const f of MIRRORED_ENTITY_FIELDS) {
+    await rebuildEntityMirror(db.doc(APP_DOC), f, (SEED as any)[f] || []);
+  }
+  await mirrorPeriodSettingsDoc(db.doc(APP_DOC), SEED.periodSettings);
+  for (const u of SEED.users) await mirrorUserDoc(db.doc(APP_DOC), u);
+});
+
+afterEach(async () => {
+  if (!EMULATED) return;
+  const report = await verifyOrgConsistency(db.doc(APP_DOC), { includeUsers: true });
+  const diverged = report.fields.filter((f) => !f.ok);
+  expect(diverged, `mirror divergence after test:\n${JSON.stringify(diverged, null, 2)}`).toEqual([]);
 });
 
 // ---------------------------------------------------------------------------
@@ -334,5 +365,105 @@ d('Schedule conflict detection — KNOWN GAP (documented, not fixed in Phase 0)'
     expect(res.rejected).toEqual([]);
     const ids = (await readDoc()).scheduleEntries.map((e: any) => e.id).sort();
     expect(ids).toEqual(['clash-a', 'clash-b']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 7. PHASE 1 — mirror mechanics (explicit per-operation subcollection checks)
+// ---------------------------------------------------------------------------
+d('Phase 1 — mirror subcollection mechanics', () => {
+  it('create: the mirror doc holds the SAME entity as the doc array', async () => {
+    await applyOrgChanges(db, db.doc(APP_DOC), {
+      teachers: { upsert: [{ id: 't-m', name: 'Mirror', department: 'Science', teacherCode: 'TM' }], deleteIds: [] },
+      subjects: { upsert: [{ id: 's-m', subjectCode: 'MIR1', name: 'Mirrored', color: '#0f0' }], deleteIds: [] },
+    }, 'manager');
+
+    const doc = await readDoc();
+    for (const [field, id] of [['teachers', 't-m'], ['subjects', 's-m']] as const) {
+      const inArray = (doc[field] as any[]).find((e) => e.id === id);
+      const inMirror = (await mirrorDoc(field, id)).data();
+      expect(inMirror).toEqual(inArray);
+    }
+  });
+
+  it('partial update: the mirror gets the MERGED entity, not the partial payload', async () => {
+    await applyOrgChanges(db, db.doc(APP_DOC), {
+      teachers: { upsert: [{ id: 't-m', name: 'Full', department: 'Science', email: 'm@utd.ac.th' }], deleteIds: [] },
+    }, 'admin');
+    await applyOrgChanges(db, db.doc(APP_DOC), {
+      teachers: { upsert: [{ id: 't-m', department: 'Mathematics' }], deleteIds: [] },
+    }, 'admin');
+
+    const inMirror = (await mirrorDoc('teachers', 't-m')).data();
+    expect(inMirror).toEqual({ id: 't-m', name: 'Full', department: 'Mathematics', email: 'm@utd.ac.th' });
+  });
+
+  it('delete: the mirror doc is actually removed', async () => {
+    await applyOrgChanges(db, db.doc(APP_DOC), {
+      subjects: { upsert: [{ id: 's-x', subjectCode: 'XX', name: 'X' }], deleteIds: [] },
+    }, 'manager');
+    expect((await mirrorDoc('subjects', 's-x')).exists).toBe(true);
+    await applyOrgChanges(db, db.doc(APP_DOC), {
+      subjects: { upsert: [], deleteIds: ['s-x'] },
+    }, 'manager');
+    expect((await mirrorDoc('subjects', 's-x')).exists).toBe(false);
+  });
+
+  it('a rejected subjectCode collision is NOT mirrored', async () => {
+    await applyOrgChanges(db, db.doc(APP_DOC), {
+      subjects: { upsert: [{ id: 's-dup', subjectCode: 'seed1', name: 'dup' }], deleteIds: [] },
+    }, 'admin');
+    expect((await mirrorDoc('subjects', 's-dup')).exists).toBe(false);
+    // afterEach's verifyOrgConsistency also guards this
+  });
+
+  it('periodSettings mirrors to ONE ordered doc, not one-per-item', async () => {
+    await applyOrgChanges(db, db.doc(APP_DOC), {
+      periodSettings: {
+        upsert: [
+          { id: 'p1', label: 'P1', startTime: '08:30', endTime: '09:20' },
+          { id: 'p0', label: 'P0', startTime: '07:40', endTime: '08:30' },
+          { id: 'p2', label: 'P2', startTime: '09:20', endTime: '10:10' },
+        ],
+        deleteIds: [],
+      },
+    }, 'admin');
+
+    const single = await periodMirror();
+    expect(single.exists).toBe(true);
+    const items = (single.data() as any).items as any[];
+    const doc = await readDoc();
+    // same order as the doc array (order is load-bearing: scheduleEntry.period is an index)
+    expect(items.map((p) => p.id)).toEqual((doc.periodSettings as any[]).map((p) => p.id));
+    expect(items).toEqual(doc.periodSettings);
+    // no stray one-doc-per-item collection
+    const asColl = (await db.doc(APP_DOC).collection('periodSettings').listDocuments()).map((r) => r.id);
+    expect(asColl).toEqual([PERIOD_SETTINGS_MIRROR_DOC_ID]);
+  });
+
+  it('applyOrgReplace (admin restore) rebuilds every mirror to match the restored doc', async () => {
+    // pre-existing mirror rows that the restore must drop
+    await applyOrgChanges(db, db.doc(APP_DOC), {
+      teachers: { upsert: [{ id: 't-old', name: 'Old' }], deleteIds: [] },
+    }, 'admin');
+    expect((await mirrorDoc('teachers', 't-old')).exists).toBe(true);
+
+    await applyOrgReplace(db, db.doc(APP_DOC), {
+      teachers: [{ id: 't-r1', name: 'Restored One' }, { id: 't-r2', name: 'Restored Two' }],
+      subjects: [{ id: 's-r1', subjectCode: 'R1', name: 'Restored Subj' }],
+      gradeLevels: [{ id: 'g1', name: 'M.1' }],
+      physicalRooms: [],
+      teacherSubjectAssignments: [],
+      periodSettings: [{ id: 'p9', label: 'P9', startTime: '15:00', endTime: '15:50' }],
+      scheduleEntries: [],
+      organizationSettings: { name: 'Restored', schemaVersion: 1 },
+      organizationId: 'utd',
+    });
+
+    expect((await mirrorDoc('teachers', 't-old')).exists).toBe(false);
+    expect((await db.doc(APP_DOC).collection('teachers').listDocuments()).map((r) => r.id).sort()).toEqual(['t-r1', 't-r2']);
+    expect((await periodMirror()).data()).toEqual({ items: [{ id: 'p9', label: 'P9', startTime: '15:00', endTime: '15:50' }] });
+    // users mirror is deliberately NOT touched by restore
+    expect((await mirrorDoc('users', 'admin1')).exists).toBe(true);
   });
 });

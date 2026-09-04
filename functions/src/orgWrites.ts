@@ -244,22 +244,162 @@ export function sanitizeActivityLogs(raw: any): IdItem[] {
     .slice(0, 25);
 }
 
-async function syncScheduleSubcollection(
+// ===========================================================================
+// PHASE 1 — dual-write of the monolithic-doc entity arrays to mirror
+// subcollections. Reads are UNCHANGED in this phase: the array fields on
+// `apps/{orgId}` stay authoritative and every reader still uses them. The
+// subcollections are a write-only shadow copy so a later phase can flip reads.
+//
+// Sequencing (see docs/phase-1-dual-write-runbook.md for the full rationale):
+//   1. the authoritative `apps/{orgId}` doc field is written FIRST, with the
+//      existing optimistic-concurrency + retry (unchanged);
+//   2. only AFTER that commit succeeds, each per-entity change is replayed onto
+//      its mirror subcollection with idempotent `set(merge)` / `delete()`.
+// So the mirror can only ever LAG the authoritative doc, never lead it. A lag is
+// invisible (nothing reads the mirror yet) and self-heals: a failed mirror write
+// throws the whole callable, the client autosave retries the identical
+// changeset, `mergeOrgChanges` is then a semantic no-op for the doc field, and
+// the "no doc-field changes" branch re-runs the mirror step until it lands.
+// `scripts/migrate-to-subcollections.ts` + `verifyOrgConsistency` catch anything
+// that stays diverged.
+// ===========================================================================
+
+/**
+ * Array-of-`{id}` fields of `apps/{orgId}` that are mirrored one-doc-per-entity
+ * to `apps/{orgId}/{field}/{entityId}`. `scheduleEntries` already worked this way
+ * before Phase 1 and is included here so there is a single code path.
+ * `periodSettings` is NOT here — it is order-significant and settings-shaped, so
+ * it mirrors to ONE doc (see `mirrorPeriodSettingsDoc`). `users` is mirrored by
+ * the identity callables (setUserRole / registerCurrentUser), not this path.
+ */
+export const MIRRORED_ENTITY_FIELDS = [
+  'teachers',
+  'subjects',
+  'gradeLevels',
+  'physicalRooms',
+  'teacherSubjectAssignments',
+  'scheduleEntries',
+] as const;
+export type MirroredEntityField = typeof MIRRORED_ENTITY_FIELDS[number];
+
+/** Well-known id of the single doc that mirrors the ordered `periodSettings` array. */
+export const PERIOD_SETTINGS_MIRROR_DOC_ID = 'current';
+
+/** Chunked `Promise.all` to stay well under any per-op burst limits. */
+async function runChunked(ops: Promise<any>[], size = 100): Promise<void> {
+  for (let i = 0; i < ops.length; i += size) {
+    await Promise.all(ops.slice(i, i + size));
+  }
+}
+
+/**
+ * Replay one field's change onto its mirror subcollection, AFTER the
+ * authoritative doc write. `authoritative` is the post-write array for that field
+ * (`updates[field]` when it changed, else the untouched server array) — the
+ * mirror is asserted to match it, so re-running with the same `change` is
+ * idempotent and self-healing. An upsert whose id is absent from `authoritative`
+ * (rejected by `mergeOrgChanges` — subjectCode clash) is skipped; a delete whose
+ * id is still present (rejected — assignment in use) is skipped.
+ */
+export async function applyEntityMirror(
   appDocRef: DocumentReference,
+  field: string,
   change: FieldChange | undefined,
+  authoritative: IdItem[],
 ): Promise<void> {
   if (!change) return;
-  const coll = appDocRef.collection('scheduleEntries');
+  const coll = appDocRef.collection(field);
+  const byId = new Map<string, IdItem>();
+  for (const e of asArray(authoritative)) byId.set(e.id, e);
+
   const ops: Promise<any>[] = [];
-  for (const e of change.upsert || []) {
-    if (e && typeof e.id === 'string') ops.push(coll.doc(e.id).set(e, { merge: true }));
+  for (const item of change.upsert || []) {
+    if (!item || typeof item.id !== 'string') continue;
+    const landed = byId.get(item.id);
+    if (landed) ops.push(coll.doc(item.id).set(landed, { merge: true }));
   }
   for (const id of change.deleteIds || []) {
-    if (typeof id === 'string' && id) ops.push(coll.doc(id).delete());
+    if (typeof id === 'string' && id && !byId.has(id)) ops.push(coll.doc(id).delete());
   }
-  // Chunk to stay well under any per-op burst limits.
-  for (let i = 0; i < ops.length; i += 100) {
-    await Promise.all(ops.slice(i, i + 100));
+  await runChunked(ops);
+}
+
+/**
+ * Mirror the ordered `periodSettings` array to a single doc
+ * `apps/{orgId}/periodSettings/current` as `{ items: [...] }`. One doc (not
+ * one-per-item) because the array order is load-bearing — `scheduleEntry.period`
+ * is an index into it.
+ */
+export async function mirrorPeriodSettingsDoc(
+  appDocRef: DocumentReference,
+  items: IdItem[],
+): Promise<void> {
+  await appDocRef
+    .collection('periodSettings')
+    .doc(PERIOD_SETTINGS_MIRROR_DOC_ID)
+    .set({ items: asArray(items) }, { merge: false });
+}
+
+/**
+ * Full rebuild of one entity mirror subcollection to match `entities` exactly:
+ * delete every mirror doc whose id is not in `entities`, then upsert all of
+ * `entities`. Used by the restore/replace path and the backfill script (NOT the
+ * incremental save path). Idempotent.
+ */
+export async function rebuildEntityMirror(
+  appDocRef: DocumentReference,
+  field: string,
+  entities: IdItem[],
+): Promise<{ upserts: number; deletes: number }> {
+  const coll = appDocRef.collection(field);
+  const keep = new Set(asArray(entities).map((e) => e.id));
+  const existing = await coll.listDocuments();
+  const ops: Promise<any>[] = [];
+  let deletes = 0;
+  for (const d of existing) {
+    if (!keep.has(d.id)) { ops.push(d.delete()); deletes++; }
+  }
+  let upserts = 0;
+  for (const e of asArray(entities)) { ops.push(coll.doc(e.id).set(e, { merge: true })); upserts++; }
+  await runChunked(ops);
+  return { upserts, deletes };
+}
+
+/** Mirror a single user record to `apps/{orgId}/users/{uid}` (Phase 1 dual-write
+ *  for the identity callables). Best-effort — callers log, never fail on it. */
+export async function mirrorUserDoc(appDocRef: DocumentReference, user: IdItem): Promise<void> {
+  if (!user || typeof user.id !== 'string') return;
+  await appDocRef.collection('users').doc(user.id).set(user, { merge: true });
+}
+
+/** Remove a user's mirror doc. */
+export async function deleteMirrorUserDoc(appDocRef: DocumentReference, userId: string): Promise<void> {
+  if (typeof userId !== 'string' || !userId) return;
+  await appDocRef.collection('users').doc(userId).delete();
+}
+
+/**
+ * Replay a whole `OrgChanges` onto every mirror subcollection, given the
+ * pre-write server snapshot and the `mergeOrgChanges` `updates`. Safe to call in
+ * both the committed and the no-op branch of `applyOrgChanges`.
+ */
+async function syncAllEntityMirrors(
+  appDocRef: DocumentReference,
+  changes: OrgChanges,
+  server: Record<string, any>,
+  updates: Record<string, any>,
+): Promise<void> {
+  for (const field of MIRRORED_ENTITY_FIELDS) {
+    const change = changes[field as keyof OrgChanges] as FieldChange | undefined;
+    if (!change) continue;
+    const authoritative: IdItem[] =
+      Array.isArray(updates[field]) ? updates[field] : asArray(server[field]);
+    await applyEntityMirror(appDocRef, field, change, authoritative);
+  }
+  if (changes.periodSettings) {
+    const authoritative: IdItem[] =
+      Array.isArray(updates.periodSettings) ? updates.periodSettings : asArray(server.periodSettings);
+    await mirrorPeriodSettingsDoc(appDocRef, authoritative);
   }
 }
 
@@ -315,15 +455,15 @@ export async function applyOrgChanges(
     if (rejected.length) log(`rejected ${rejected.length} change(s): ${JSON.stringify(rejected)}`);
 
     if (Object.keys(updates).length === 0) {
-      await syncScheduleSubcollection(appDocRef, changes.scheduleEntries);
+      await syncAllEntityMirrors(appDocRef, changes, server, updates);
       await writeActivityLogs(appDocRef, opts.activityLogs || []);
-      log(`no doc-field changes; synced ${(changes.scheduleEntries?.upsert?.length || 0)} schedule upserts`);
+      log(`no doc-field changes; re-asserted mirror subcollections`);
       return { summary, attempts: attempt, conflicts, rejected };
     }
 
     try {
       await appDocRef.update(updates, { lastUpdateTime: snap.updateTime! });
-      await syncScheduleSubcollection(appDocRef, changes.scheduleEntries);
+      await syncAllEntityMirrors(appDocRef, changes, server, updates);
       await writeActivityLogs(appDocRef, opts.activityLogs || []);
       log(`committed on attempt ${attempt} after ${conflicts} conflict(s): ${JSON.stringify(summary)}`);
       return { summary, attempts: attempt, conflicts, rejected };
@@ -383,15 +523,20 @@ export async function applyOrgReplace(
     if (!snap.exists) throw new OrgChangeError('not-found', `${appDocRef.path} does not exist.`);
     try {
       await appDocRef.set(managed, { merge: true });
-      // Rebuild the scheduleEntries subcollection to match.
-      const coll = appDocRef.collection('scheduleEntries');
-      const existing = await coll.listDocuments();
-      const keep = new Set(asArray(managed.scheduleEntries).map((e) => e.id));
-      const ops: Promise<any>[] = [];
-      for (const d of existing) if (!keep.has(d.id)) ops.push(d.delete());
-      for (const e of asArray(managed.scheduleEntries)) ops.push(coll.doc(e.id).set(e, { merge: true }));
-      for (let i = 0; i < ops.length; i += 100) await Promise.all(ops.slice(i, i + 100));
-      log(`restore replace committed (attempt ${attempt}): ${asArray(managed.scheduleEntries).length} schedule entries`);
+      // Phase 1: rebuild the mirror for each field the restore actually wrote to
+      // the doc. A field absent from `managed` (not in the backup) leaves BOTH
+      // the doc array and its mirror untouched — never wipe a mirror whose source
+      // array we did not replace.
+      for (const f of MIRRORED_ENTITY_FIELDS) {
+        if (Array.isArray(managed[f])) await rebuildEntityMirror(appDocRef, f, asArray(managed[f]));
+      }
+      if (Array.isArray(managed.periodSettings)) {
+        await mirrorPeriodSettingsDoc(appDocRef, asArray(managed.periodSettings));
+      }
+      log(
+        `restore replace committed (attempt ${attempt}): ` +
+          `${asArray(managed.scheduleEntries).length} schedule entries, mirrors rebuilt`,
+      );
       return { attempts: attempt };
     } catch (err: any) {
       if ((err?.code === 9 || err?.code === 10) && attempt < 3) {
@@ -440,6 +585,101 @@ export async function optimisticDocUpdate<T>(
     }
   }
   throw new OrgChangeError('aborted', 'Could not save due to concurrent edits — please try again.');
+}
+
+// ===========================================================================
+// PHASE 1 — consistency verification. Reads the authoritative `apps/{orgId}`
+// doc arrays and every mirror subcollection and reports any divergence. This is
+// what lets a later phase trust the mirrors enough to flip reads onto them.
+// ===========================================================================
+
+export type FieldConsistency = {
+  field: string;
+  docCount: number;
+  mirrorCount: number;
+  missingInMirror: string[]; // id present in the doc array, absent from the mirror
+  extraInMirror: string[]; // id present in the mirror, absent from the doc array
+  contentMismatch: string[]; // id in both, but content differs (order-insensitive)
+  ok: boolean;
+};
+
+export type OrgConsistencyReport = {
+  orgId: string;
+  checkedAt: string;
+  ok: boolean;
+  fields: FieldConsistency[];
+};
+
+/** Compare one entity field's doc array against its mirror docs. */
+function compareEntityField(field: string, docArr: IdItem[], mirrorArr: IdItem[]): FieldConsistency {
+  const docById = new Map<string, IdItem>();
+  for (const e of asArray(docArr)) docById.set(e.id, e);
+  const mirById = new Map<string, IdItem>();
+  for (const e of asArray(mirrorArr)) mirById.set(e.id, e);
+
+  const missingInMirror: string[] = [];
+  const contentMismatch: string[] = [];
+  for (const [id, e] of docById) {
+    if (!mirById.has(id)) missingInMirror.push(id);
+    else if (canon(e) !== canon(mirById.get(id))) contentMismatch.push(id);
+  }
+  const extraInMirror: string[] = [];
+  for (const id of mirById.keys()) if (!docById.has(id)) extraInMirror.push(id);
+
+  return {
+    field,
+    docCount: docById.size,
+    mirrorCount: mirById.size,
+    missingInMirror: missingInMirror.sort(),
+    extraInMirror: extraInMirror.sort(),
+    contentMismatch: contentMismatch.sort(),
+    ok: !missingInMirror.length && !extraInMirror.length && !contentMismatch.length,
+  };
+}
+
+/**
+ * Verify every Phase 1 mirror subcollection against the authoritative
+ * `apps/{orgId}` doc fields: same ids, same content, and (for periodSettings)
+ * same order. Read-only. Safe to run any time.
+ */
+export async function verifyOrgConsistency(
+  appDocRef: DocumentReference,
+  opts: { includeUsers?: boolean } = {},
+): Promise<OrgConsistencyReport> {
+  const snap = await appDocRef.get();
+  if (!snap.exists) throw new OrgChangeError('not-found', `${appDocRef.path} does not exist.`);
+  const server = snap.data() || {};
+  const fields: FieldConsistency[] = [];
+
+  for (const field of MIRRORED_ENTITY_FIELDS) {
+    const mirrorSnap = await appDocRef.collection(field).get();
+    const mirrorArr = mirrorSnap.docs.map((d) => ({ ...(d.data() as any), id: d.id }));
+    fields.push(compareEntityField(field, asArray(server[field]), mirrorArr));
+  }
+
+  // periodSettings — one doc holding the ordered array.
+  {
+    const psDoc = await appDocRef.collection('periodSettings').doc(PERIOD_SETTINGS_MIRROR_DOC_ID).get();
+    const docArr = asArray(server.periodSettings);
+    const mirrorItems = psDoc.exists ? asArray((psDoc.data() as any)?.items) : [];
+    const base = compareEntityField('periodSettings', docArr, mirrorItems);
+    // order matters for periodSettings: also flag a pure re-order as a mismatch
+    const orderOk = canon(docArr.map((x) => x.id)) === canon(mirrorItems.map((x) => x.id));
+    fields.push({ ...base, ok: base.ok && orderOk, contentMismatch: orderOk ? base.contentMismatch : [...new Set([...base.contentMismatch, '__order__'])] });
+  }
+
+  if (opts.includeUsers) {
+    const mirrorSnap = await appDocRef.collection('users').get();
+    const mirrorArr = mirrorSnap.docs.map((d) => ({ ...(d.data() as any), id: d.id }));
+    fields.push(compareEntityField('users', asArray(server.users), mirrorArr));
+  }
+
+  return {
+    orgId: appDocRef.id,
+    checkedAt: new Date().toISOString(),
+    ok: fields.every((f) => f.ok),
+    fields,
+  };
 }
 
 /** Map an OrgChangeError code to a Firebase callable error code. */

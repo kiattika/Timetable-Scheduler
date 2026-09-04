@@ -1,139 +1,152 @@
 /**
- * Migration Script: Migrate ScheduleEntries and ActivityLogs to Subcollections
+ * Phase 1 backfill — copy the monolithic `apps/{orgId}` entity arrays into their
+ * mirror subcollections, WITHOUT changing the main document.
  *
- * This script is idempotent: it can be executed safely multiple times.
- * It copies array entries from the monolithic `apps/{orgId}` document into:
- * - `apps/{orgId}/scheduleEntries/{entryId}`
- * - `apps/{orgId}/activityLogs/{logId}`
- * And removes the legacy arrays from the main document using FieldValue.delete().
+ * This is the one-time (re-runnable) backfill that pairs with the live dual-write
+ * added to `commitOrgChanges` / `assistantUpdateEntity` / the identity callables.
+ * It is PURELY ADDITIVE: it never deletes a field from `apps/{orgId}`. (The
+ * previous version of this file also stripped `scheduleEntries` / `activityLogs`
+ * from the main doc — that array-cleanup belongs to a LATER phase and is kept in
+ * `migrate-to-subcollections.ts.phase2-bak` for reference.)
+ *
+ * The entity → subcollection mapping is NOT reimplemented here: it calls the
+ * exact same helpers the live write path uses (`rebuildEntityMirror`,
+ * `mirrorPeriodSettingsDoc`, `mirrorUserDoc` in functions/src/orgWrites.ts), so
+ * the script and production cannot drift.
+ *
+ * Idempotent: `rebuildEntityMirror` deletes any mirror doc whose id is not in the
+ * source array and upserts the rest, so running N times === running once.
  *
  * Usage:
- *   npx tsx scripts/migrate-to-subcollections.ts [orgId]
+ *   npx tsx scripts/migrate-to-subcollections.ts [orgId] [--dry-run] [--verify-only]
+ *
+ * Env:
+ *   FIRESTORE_DATABASE_ID   default: the prod named DB (same default as functions/src/index.ts)
+ *   FIRESTORE_EMULATOR_HOST  set by the emulator; the script then targets it
+ *   GOOGLE_APPLICATION_CREDENTIALS  service-account key for a real run
  */
 
 import { initializeApp, getApps } from 'firebase-admin/app';
-import { getFirestore, FieldValue } from 'firebase-admin/firestore';
+import { getFirestore, type DocumentReference } from 'firebase-admin/firestore';
+import {
+  MIRRORED_ENTITY_FIELDS,
+  rebuildEntityMirror,
+  mirrorPeriodSettingsDoc,
+  mirrorUserDoc,
+  verifyOrgConsistency,
+  PERIOD_SETTINGS_MIRROR_DOC_ID,
+} from '../functions/src/orgWrites';
 
-// Initialize Firebase Admin if not already initialized
+const FIRESTORE_DATABASE_ID =
+  process.env.FIRESTORE_DATABASE_ID || 'ai-studio-ddf61d33-4a5f-4aed-a5a9-5bc34b3c98da';
+
+const args = process.argv.slice(2);
+const flags = new Set(args.filter((a) => a.startsWith('--')));
+const positional = args.filter((a) => !a.startsWith('--'));
+const targetOrgId = positional[0] || process.env.VITE_ORG_ID || 'utd';
+const DRY_RUN = flags.has('--dry-run');
+const VERIFY_ONLY = flags.has('--verify-only');
+const INCLUDE_USERS = true;
+
 if (getApps().length === 0) {
-  try {
-    initializeApp();
-  } catch (e) {
-    initializeApp({
-      projectId: process.env.VITE_FIREBASE_PROJECT_ID || 'uttaradit-school'
-    });
-  }
+  initializeApp(
+    process.env.FIRESTORE_EMULATOR_HOST
+      ? { projectId: process.env.GCLOUD_PROJECT || 'timetable-backfill' }
+      : {},
+  );
 }
 
-const db = getFirestore();
-const targetOrgId = process.argv[2] || process.env.VITE_ORG_ID || 'utd';
+const db = getFirestore(FIRESTORE_DATABASE_ID);
+const asArray = (v: any): any[] => (Array.isArray(v) ? v.filter((x) => x && typeof x.id === 'string') : []);
 
-async function runMigration() {
-  console.log(`=======================================================`);
-  console.log(`Starting subcollections migration for org: "${targetOrgId}"`);
-  console.log(`=======================================================`);
+function banner(msg: string) {
+  console.log('='.repeat(70));
+  console.log(msg);
+  console.log('='.repeat(70));
+}
 
-  const docRef = db.doc(`apps/${targetOrgId}`);
-  const docSnap = await docRef.get();
+/** Report what a rebuild WOULD do without writing (dry-run). */
+async function planField(appDocRef: DocumentReference, field: string, source: any[]) {
+  const keep = new Set(asArray(source).map((e) => e.id));
+  const existing = await appDocRef.collection(field).get();
+  const existingIds = new Set(existing.docs.map((d) => d.id));
+  const toDelete = [...existingIds].filter((id) => !keep.has(id));
+  const toAdd = [...keep].filter((id) => !existingIds.has(id));
+  const toMaybeUpdate = [...keep].filter((id) => existingIds.has(id));
+  console.log(
+    `  ${field.padEnd(26)} source=${String(asArray(source).length).padStart(4)}  ` +
+      `mirror=${String(existingIds.size).padStart(4)}  +add=${toAdd.length}  -del=${toDelete.length}  ~upsert=${toMaybeUpdate.length}`,
+  );
+  return { toAdd, toDelete, toMaybeUpdate };
+}
 
-  if (!docSnap.exists) {
-    console.log(`No main document found at apps/${targetOrgId}. Nothing to migrate.`);
+async function run() {
+  banner(`Phase 1 subcollection backfill — org "${targetOrgId}"  db "${FIRESTORE_DATABASE_ID}"`);
+  console.log(`mode: ${VERIFY_ONLY ? 'VERIFY ONLY' : DRY_RUN ? 'DRY RUN (no writes)' : 'LIVE (will write mirrors)'}`);
+  console.log(`emulator: ${process.env.FIRESTORE_EMULATOR_HOST || '(none — real database)'}`);
+  console.log('');
+
+  const appDocRef = db.doc(`apps/${targetOrgId}`);
+  const snap = await appDocRef.get();
+  if (!snap.exists) {
+    console.error(`No document at apps/${targetOrgId}. Nothing to do.`);
+    process.exit(1);
+  }
+  const doc = snap.data() || {};
+
+  if (VERIFY_ONLY) {
+    const report = await verifyOrgConsistency(appDocRef, { includeUsers: INCLUDE_USERS });
+    console.log(JSON.stringify(report, null, 2));
+    banner(report.ok ? '✓ CONSISTENT — mirrors match the monolithic doc' : '✗ DIVERGENCE — see report above');
+    process.exit(report.ok ? 0 : 2);
+  }
+
+  if (DRY_RUN) {
+    console.log('Would rebuild these mirror subcollections:');
+    for (const field of MIRRORED_ENTITY_FIELDS) await planField(appDocRef, field, doc[field]);
+    // periodSettings — single doc
+    {
+      const ps = await appDocRef.collection('periodSettings').doc(PERIOD_SETTINGS_MIRROR_DOC_ID).get();
+      const mirrorLen = ps.exists ? (Array.isArray((ps.data() as any)?.items) ? (ps.data() as any).items.length : 0) : 0;
+      console.log(`  ${'periodSettings (single doc)'.padEnd(26)} source=${String(asArray(doc.periodSettings).length).padStart(4)}  mirror=${String(mirrorLen).padStart(4)}`);
+    }
+    if (INCLUDE_USERS) await planField(appDocRef, 'users', doc.users);
+    banner('DRY RUN complete — no writes performed. Re-run without --dry-run to apply.');
     return;
   }
 
-  const data = docSnap.data() || {};
-  const scheduleEntries: any[] = Array.isArray(data.scheduleEntries) ? data.scheduleEntries : [];
-  const activityLogs: any[] = Array.isArray(data.activityLogs) ? data.activityLogs : [];
-
-  console.log(`Found ${scheduleEntries.length} schedule entries and ${activityLogs.length} activity logs in main doc.`);
-
-  // 1. Migrate scheduleEntries to subcollection apps/{orgId}/scheduleEntries/{entryId}
-  if (scheduleEntries.length > 0) {
-    console.log(`Migrating ${scheduleEntries.length} schedule entries to subcollection...`);
-    const scheduleCol = db.collection(`apps/${targetOrgId}/scheduleEntries`);
-    
-    let batch = db.batch();
-    let count = 0;
-    let totalMigrated = 0;
-
-    for (const entry of scheduleEntries) {
-      if (!entry || !entry.id) continue;
-      const entryRef = scheduleCol.doc(entry.id);
-      
-      // Idempotent write
-      batch.set(entryRef, entry, { merge: true });
-      count++;
-      totalMigrated++;
-
-      if (count >= 400) {
-        await batch.commit();
-        console.log(`Committed batch of ${count} schedule entries.`);
-        batch = db.batch();
-        count = 0;
-      }
-    }
-
-    if (count > 0) {
-      await batch.commit();
-      console.log(`Committed final batch of ${count} schedule entries.`);
-    }
-
-    console.log(`✓ Completed schedule entries migration: ${totalMigrated} entries written.`);
-  } else {
-    console.log(`- No schedule entries array found in main document (already migrated or empty).`);
+  // LIVE
+  for (const field of MIRRORED_ENTITY_FIELDS) {
+    const res = await rebuildEntityMirror(appDocRef, field, asArray(doc[field]));
+    console.log(`  ${field.padEnd(26)} upserts=${res.upserts}  deletes=${res.deletes}`);
+  }
+  if (Array.isArray(doc.periodSettings)) {
+    await mirrorPeriodSettingsDoc(appDocRef, asArray(doc.periodSettings));
+    console.log(`  periodSettings              wrote single doc "${PERIOD_SETTINGS_MIRROR_DOC_ID}" (${asArray(doc.periodSettings).length} items)`);
+  }
+  if (INCLUDE_USERS) {
+    let n = 0;
+    for (const u of asArray(doc.users)) { await mirrorUserDoc(appDocRef, u); n++; }
+    // prune mirror users no longer in the array
+    const keep = new Set(asArray(doc.users).map((u) => u.id));
+    const existing = await appDocRef.collection('users').listDocuments();
+    let pruned = 0;
+    for (const d of existing) if (!keep.has(d.id)) { await d.delete(); pruned++; }
+    console.log(`  users                      upserts=${n}  deletes=${pruned}`);
   }
 
-  // 2. Migrate activityLogs to subcollection apps/{orgId}/activityLogs/{logId}
-  if (activityLogs.length > 0) {
-    console.log(`Migrating ${activityLogs.length} activity logs to subcollection...`);
-    const logsCol = db.collection(`apps/${targetOrgId}/activityLogs`);
-
-    let batch = db.batch();
-    let count = 0;
-    let totalMigrated = 0;
-
-    for (const log of activityLogs) {
-      if (!log || !log.id) continue;
-      const logRef = logsCol.doc(log.id);
-
-      // Idempotent write
-      batch.set(logRef, log, { merge: true });
-      count++;
-      totalMigrated++;
-
-      if (count >= 400) {
-        await batch.commit();
-        console.log(`Committed batch of ${count} activity logs.`);
-        batch = db.batch();
-        count = 0;
-      }
-    }
-
-    if (count > 0) {
-      await batch.commit();
-      console.log(`Committed final batch of ${count} activity logs.`);
-    }
-
-    console.log(`✓ Completed activity logs migration: ${totalMigrated} logs written.`);
-  } else {
-    console.log(`- No activity logs array found in main document (already migrated or empty).`);
+  console.log('');
+  const report = await verifyOrgConsistency(appDocRef, { includeUsers: INCLUDE_USERS });
+  console.log(`post-backfill consistency: ${report.ok ? 'OK ✓' : 'STILL DIVERGED ✗'}`);
+  if (!report.ok) {
+    console.log(JSON.stringify(report.fields.filter((f) => !f.ok), null, 2));
+    banner('✗ Backfill ran but mirrors still diverge — investigate before proceeding.');
+    process.exit(2);
   }
-
-  // 3. Clean up legacy fields from main doc
-  console.log(`Cleaning up legacy fields from apps/${targetOrgId}...`);
-  await docRef.update({
-    scheduleEntries: FieldValue.delete(),
-    activityLogs: FieldValue.delete()
-  });
-
-  console.log(`✓ Main document cleaned up successfully.`);
-  console.log(`=======================================================`);
-  console.log(`Migration completed successfully!`);
-  console.log(`=======================================================`);
+  banner('✓ Backfill complete and verified consistent.');
 }
 
-// If run directly
-runMigration().catch(err => {
-  console.error("Migration error:", err);
+run().catch((err) => {
+  console.error('Backfill error:', err);
   process.exit(1);
 });

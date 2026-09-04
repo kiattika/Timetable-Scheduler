@@ -188,6 +188,48 @@ describe('apps/{appId}/activityLogs', () => {
   });
 });
 
+describe('apps/{appId} Phase 1 mirror subcollections', () => {
+  const MIRROR_COLLS = ['teachers', 'subjects', 'gradeLevels', 'physicalRooms', 'teacherSubjectAssignments', 'periodSettings', 'users'];
+
+  beforeEach(async () => {
+    await testEnv.withSecurityRulesDisabled(async (c) => {
+      for (const coll of MIRROR_COLLS) {
+        await setDoc(doc(c.firestore(), 'apps', APP_ID, coll, 'seed'), { id: 'seed', name: 'x' });
+      }
+    });
+  });
+
+  it('any domain account can READ a mirror doc / collection', async () => {
+    for (const coll of MIRROR_COLLS) {
+      await assertSucceeds(getDoc(doc(guest().firestore(), 'apps', APP_ID, coll, 'seed')));
+      await assertSucceeds(getDocs(collection(assistant().firestore(), 'apps', APP_ID, coll)));
+    }
+  });
+
+  it('a non-@utd.ac.th account still cannot read a mirror doc', async () => {
+    await assertFails(getDoc(doc(foreignDomain().firestore(), 'apps', APP_ID, 'teachers', 'seed')));
+  });
+
+  it('NOBODY may write a mirror doc directly from a client — not even admin (Admin SDK only)', async () => {
+    for (const coll of MIRROR_COLLS) {
+      await assertFails(setDoc(doc(admin().firestore(), 'apps', APP_ID, coll, 'x'), { id: 'x' }));
+      await assertFails(setDoc(doc(manager().firestore(), 'apps', APP_ID, coll, 'x'), { id: 'x' }));
+      await assertFails(deleteDoc(doc(admin().firestore(), 'apps', APP_ID, coll, 'seed')));
+    }
+  });
+
+  it('the wildcard mirror rule does NOT loosen scheduleEntries / activityLogs / errors', async () => {
+    // scheduleEntries: elevated write still allowed, assistant still denied
+    await assertSucceeds(setDoc(schedDoc(manager(), 'e-mgr2'), { id: 'e-mgr2' }));
+    await assertFails(setDoc(schedDoc(assistant(), 'e-asst2'), { id: 'e-asst2' }));
+    // activityLogs: manager still cannot update/delete
+    await testEnv.withSecurityRulesDisabled(async (c) => {
+      await setDoc(doc(c.firestore(), 'apps', APP_ID, 'activityLogs', 'seed2'), { id: 'seed2', action: 'Updated' });
+    });
+    await assertFails(deleteDoc(logDoc(manager(), 'seed2')));
+  });
+});
+
 describe('apps/{appId}/errors', () => {
   it('any authenticated account can create an error report', async () => {
     await assertSucceeds(setDoc(errDoc(guest(), 'e1'), { id: 'e1', message: 'boom' }));

@@ -11,6 +11,8 @@ import {
   sanitizeOrgChanges,
   sanitizeActivityLogs,
   mapOrgErrorCode,
+  mirrorUserDoc,
+  verifyOrgConsistency,
   OrgChangeError,
   canon,
   type CallerRole,
@@ -182,6 +184,15 @@ export const setUserRole = functions.https.onCall(async (
         authorizedAdmins
       });
 
+      // Phase 1 dual-write: mirror the one changed user record to
+      // apps/{orgId}/users/{uid}. Best-effort — never fail the role change on it.
+      try {
+        const mirrored = users.find((u: any) => u.email?.toLowerCase().trim() === cleanTargetEmail);
+        if (mirrored) await mirrorUserDoc(appDocRef, mirrored);
+      } catch (mirrorErr: any) {
+        console.warn('[setUserRole] user mirror notice:', mirrorErr?.message || mirrorErr);
+      }
+
       updatedUsers = users;
       updatedAdmins = authorizedAdmins;
     }
@@ -264,6 +275,14 @@ export const bootstrapAdmin = functions.https.onCall(async (_data: any, context:
       }
 
       await appDocRef.update({ users, authorizedAdmins });
+
+      // Phase 1 dual-write: mirror the bootstrap admin's user record.
+      try {
+        const mirrored = users.find((u: any) => u.email?.toLowerCase().trim() === callerEmail);
+        if (mirrored) await mirrorUserDoc(appDocRef, mirrored);
+      } catch (mirrorErr: any) {
+        console.warn('[bootstrapAdmin] user mirror notice:', mirrorErr?.message || mirrorErr);
+      }
     }
 
     console.log(`[AUDIT] Bootstrap admin claims successfully granted to '${callerEmail}' at ${new Date().toISOString()}`);
@@ -776,15 +795,20 @@ export const registerCurrentUser = functions.https.onCall(async (
     if (found) {
       result = { created: false, reason: 'already-registered', role: found.role };
     } else {
-      await appDocRef.update({
-        users: FieldValue.arrayUnion({
-          id: uid,
-          name: String(data?.name || tokenName || email.split('@')[0]).slice(0, 120),
-          email,
-          role: 'guest',
-          organizationId: orgId
-        })
-      });
+      const newUser = {
+        id: uid,
+        name: String(data?.name || tokenName || email.split('@')[0]).slice(0, 120),
+        email,
+        role: 'guest',
+        organizationId: orgId
+      };
+      await appDocRef.update({ users: FieldValue.arrayUnion(newUser) });
+      // Phase 1 dual-write: mirror the new user record.
+      try {
+        await mirrorUserDoc(appDocRef, newUser);
+      } catch (mirrorErr: any) {
+        console.warn('[registerCurrentUser] user mirror notice:', mirrorErr?.message || mirrorErr);
+      }
       result = { created: true, role: 'guest' };
     }
   }
@@ -888,9 +912,11 @@ export const assistantUpdateEntity = functions.https.onCall(async (
 
   const db = getDb();
   const appDocRef = db.doc(`apps/${orgId}`);
-  const subDocRef = type === 'scheduleEntries'
-    ? db.doc(`apps/${orgId}/scheduleEntries/${entityId}`)
-    : null;
+  // Phase 1 dual-write: every assistant-editable type (teachers / subjects /
+  // teacherSubjectAssignments / scheduleEntries) is mirrored one-doc-per-entity
+  // to apps/{orgId}/{type}/{id}. The array field on apps/{orgId} stays
+  // authoritative; the mirror doc is written AFTER the array write below.
+  const subDocRef = db.doc(`apps/${orgId}/${type}/${entityId}`);
 
   const listOf = (appDoc: Record<string, any>): any[] =>
     Array.isArray(appDoc[type]) ? appDoc[type] : [];
@@ -1156,6 +1182,46 @@ export const commitOrgChanges = functions.https.onCall(async (
     throw new functions.https.HttpsError('internal', err?.message || 'commitOrgChanges failed.');
   } finally {
     if (timer) clearTimeout(timer);
+  }
+});
+
+/**
+ * Callable Function: verifyOrgConsistency  (Phase 1)
+ * Read-only. Compares every Phase 1 mirror subcollection against the
+ * authoritative `apps/{orgId}` doc arrays and returns a per-field report
+ * (same ids, same content, and — for periodSettings — same order). This is the
+ * gate for flipping reads onto the subcollections in a later phase.
+ * Admin-only. Never writes.
+ */
+export const verifyOrgConsistencyFn = functions.https.onCall(async (
+  data: { orgId?: string; includeUsers?: boolean },
+  context: functions.https.CallableContext
+) => {
+  if (!context.auth) {
+    throw new functions.https.HttpsError('unauthenticated', 'User must be authenticated.');
+  }
+  const callerEmail = context.auth.token.email?.toLowerCase().trim();
+  const callerRole = context.auth.token.role;
+  const isCallerAdmin = callerRole === 'admin' || callerEmail === BOOTSTRAP_ADMIN_EMAIL || callerEmail === 'kiattika@utd.ac.th';
+  if (!callerEmail?.endsWith(DOMAIN)) {
+    throw new functions.https.HttpsError('permission-denied', `Access restricted to ${DOMAIN} domain.`);
+  }
+  if (!isCallerAdmin) {
+    throw new functions.https.HttpsError('permission-denied', 'Only administrators can run the consistency check.');
+  }
+
+  const orgId = (data?.orgId || DEFAULT_ORG_ID).replace(/[^a-zA-Z0-9_-]/g, '');
+  const db = getDb();
+  try {
+    const report = await verifyOrgConsistency(db.doc(`apps/${orgId}`), { includeUsers: data?.includeUsers === true });
+    console.log(`[verifyOrgConsistency] org=${orgId} ok=${report.ok} ` +
+      report.fields.map((f) => `${f.field}:${f.ok ? 'ok' : `DIFF(doc=${f.docCount},mir=${f.mirrorCount})`}`).join(' '));
+    return { success: true, ...report };
+  } catch (err: any) {
+    if (err instanceof OrgChangeError) {
+      throw new functions.https.HttpsError(mapOrgErrorCode(err.code) as any, err.message);
+    }
+    throw new functions.https.HttpsError('internal', err?.message || 'verifyOrgConsistency failed.');
   }
 });
 

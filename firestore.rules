@@ -103,6 +103,31 @@ service cloud.firestore {
         allow create: if isAuthenticated();
         allow update, delete: if isAdmin(appId);
       }
+
+      // -----------------------------------------------------------------------
+      // Phase 1 dual-write mirror subcollections (teachers / subjects /
+      // gradeLevels / physicalRooms / teacherSubjectAssignments / periodSettings
+      // / users). These are a WRITE-ONLY shadow of the corresponding array field
+      // on apps/{appId} — nothing in the app reads them yet (that is Phase 2).
+      // They are populated exclusively by Cloud Functions via the Admin SDK,
+      // which bypasses these rules, so no client WRITE grant is needed here; a
+      // direct client write would bypass mergeOrgChanges' validation and is a
+      // bug, so it stays denied. READ is granted to the same domain accounts
+      // that can already read the array field, so the Phase 2 read-flip and the
+      // consistency tooling work without a rules change then.
+      //
+      // Scoped to exactly these names so the existing scheduleEntries /
+      // activityLogs / errors match blocks above are unaffected (rules v2 = OR
+      // across all matching blocks; this one contributes nothing for a name not
+      // in the list).
+      // -----------------------------------------------------------------------
+      match /{mirrorColl}/{docId} {
+        allow read: if isUtdDomain() && mirrorColl in [
+          'teachers', 'subjects', 'gradeLevels', 'physicalRooms',
+          'teacherSubjectAssignments', 'periodSettings', 'users'
+        ];
+        // no client write grant — Admin SDK only.
+      }
     }
     // Any collection not matched above (incl. future apps/{appId} subcollections)
     // is denied by default — Firestore grants nothing unless an allow matches.
