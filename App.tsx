@@ -24,7 +24,7 @@ import { TeacherScheduleTable } from './components/TeacherScheduleView';
 import { RoomUsageScheduleTable } from './components/RoomUsageView';
 
 import { Icons, APP_TITLE, PREDEFINED_SUBJECT_COLORS, DEFAULT_PERIOD_SETTINGS } from './constants';
-import { fetchAppData, saveAppData, persistAssistantChanges, persistOrgChanges, getSampleAppData, DEFAULT_DEPARTMENTS, DEFAULT_RESOURCE_TYPES, ORG_ID, pruneActivityLogs, canonicalKey, normalizeLoadedSubject } from './api';
+import { fetchAppData, saveAppData, persistAssistantChanges, persistOrgChanges, getSampleAppData, DEFAULT_DEPARTMENTS, DEFAULT_RESOURCE_TYPES, ORG_ID, pruneActivityLogs, canonicalKey, normalizeLoadedSubject, normalizeLoadedOrganizationSettings } from './api';
 import { isParentGrade as checkIsParentGradeUtil, getParentGradeLevelId, getChildGradeLevelIds, isChildOf } from './components/scheduleUtils';
 import { useAppAuth } from './hooks/useAppAuth';
 import { useBackupRestore } from './hooks/useBackupRestore';
@@ -262,7 +262,9 @@ const App: React.FC = () => {
           const rawData = parsedData.data || parsedData;
           
           if (appData && rawData) {
-            const restoredOrgSettings = rawData.organizationSettings || parsedData.organizationSettings || appData.organizationSettings;
+            const restoredOrgSettings = normalizeLoadedOrganizationSettings(
+              rawData.organizationSettings || parsedData.organizationSettings || appData.organizationSettings
+            );
             
             const newAppData: AppData = {
                 departments: rawData.departments && rawData.departments.length > 0 ? rawData.departments : (appData.departments || [...DEFAULT_DEPARTMENTS]),

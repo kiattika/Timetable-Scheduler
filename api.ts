@@ -4,9 +4,9 @@ import { db, auth, functions } from './lib/firebase';
 import { doc, getDoc, setDoc, deleteDoc, collection, getDocs, writeBatch, query, orderBy, limit, deleteField, runTransaction } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { computeOrgChanges, diffById, diffAssistantEntities, canonicalKey, failureKey, classifySaveError, describeSaveError, reconcileServerWithLocal, ORG_ARRAY_FIELDS, cleanUndefined as cleanUndefinedShared } from './lib/orgChangesClient';
-import { normalizeLoadedSubject, normalizeLoadedSubjects } from './lib/normalizeAppData';
+import { normalizeLoadedSubject, normalizeLoadedSubjects, normalizeLoadedOrganizationSettings, CURRENT_ORG_SCHEMA_VERSION } from './lib/normalizeAppData';
 
-export { computeOrgChanges, diffById, diffAssistantEntities, canonicalKey, failureKey, classifySaveError, describeSaveError, reconcileServerWithLocal, ORG_ARRAY_FIELDS, normalizeLoadedSubject, normalizeLoadedSubjects };
+export { computeOrgChanges, diffById, diffAssistantEntities, canonicalKey, failureKey, classifySaveError, describeSaveError, reconcileServerWithLocal, ORG_ARRAY_FIELDS, normalizeLoadedSubject, normalizeLoadedSubjects, normalizeLoadedOrganizationSettings, CURRENT_ORG_SCHEMA_VERSION };
 
 export const ORG_ID = import.meta.env.VITE_ORG_ID || 'utd';
 
@@ -95,6 +95,7 @@ export const getSampleAppData = (): AppData => {
 
   const defaultOrgSettings: OrganizationSettings = {
     name: "โรงเรียนอุตรดิตถ์",
+    schemaVersion: CURRENT_ORG_SCHEMA_VERSION,
     semester: "1",
     academicYear: "2569",
     operatingDays: [DayOfWeek.Monday, DayOfWeek.Tuesday, DayOfWeek.Wednesday, DayOfWeek.Thursday, DayOfWeek.Friday] as DayOfWeek[],
@@ -207,7 +208,7 @@ export const fetchAppData = async (orgId: string = ORG_ID): Promise<AppData> => 
         scheduleEntries: finalScheduleEntries,
         periodSettings: parsedData.periodSettings || defaultInitialData.periodSettings,
         teacherSubjectAssignments: parsedData.teacherSubjectAssignments || [],
-        organizationSettings: parsedData.organizationSettings || defaultInitialData.organizationSettings,
+        organizationSettings: normalizeLoadedOrganizationSettings(parsedData.organizationSettings || defaultInitialData.organizationSettings),
         users: parsedData.users && parsedData.users.length > 0 ? parsedData.users : defaultInitialData.users,
         activityLogs: finalActivityLogs,
         authorizedAdmins: parsedData.authorizedAdmins || [],

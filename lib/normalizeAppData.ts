@@ -37,3 +37,30 @@ export const normalizeLoadedSubject = (s: any): any => {
 
 export const normalizeLoadedSubjects = (subjects: any): any[] =>
   Array.isArray(subjects) ? subjects.map(normalizeLoadedSubject) : [];
+
+/**
+ * The schema version this client writes / expects for the `apps/{orgId}` document.
+ *
+ *   1 — monolithic document: every entity array (teachers, subjects, gradeLevels,
+ *       physicalRooms, teacherSubjectAssignments, periodSettings, users, …) lives
+ *       inline on the one `apps/{orgId}` doc. `scheduleEntries` / `activityLogs`
+ *       are already mirrored to subcollections.
+ *
+ * The subcollection migration (a later phase) bumps this. Until then every load
+ * path stamps `schemaVersion: 1` onto settings that predate the field so the rest
+ * of the app can branch on a value that is always present ("migration-on-read").
+ */
+export const CURRENT_ORG_SCHEMA_VERSION = 1;
+
+/**
+ * Migration-on-read for `organizationSettings`. Guarantees `schemaVersion` is a
+ * positive integer on every non-null settings object, without a server write.
+ * `null` (a brand-new / unloaded org) is passed through untouched — its default
+ * comes from `getSampleAppData()`.
+ */
+export const normalizeLoadedOrganizationSettings = (s: any): any => {
+  if (!s || typeof s !== 'object') return s ?? null;
+  const v = s.schemaVersion;
+  const valid = typeof v === 'number' && Number.isInteger(v) && v > 0;
+  return valid ? s : { ...s, schemaVersion: CURRENT_ORG_SCHEMA_VERSION };
+};

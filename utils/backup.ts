@@ -1,5 +1,8 @@
 import { AppData, ActivityLog } from '../types';
-import { pruneActivityLogs } from '../api';
+
+// Mirrors api.ts's ORG_ID without importing it — utils/backup.ts is deliberately
+// free of the Firebase-SDK import chain so it stays unit-testable in plain Node.
+const ORG_ID: string = (import.meta as any).env?.VITE_ORG_ID || 'utd';
 
 export interface BackupEnvelope {
   backupVersion: number;
@@ -53,7 +56,11 @@ export const buildTimetableBackupPayload = (appData: AppData): { backupData: Bac
     ? `${orgSettings?.semester || '1'}_${orgSettings.academicYear}` 
     : "1_2569";
 
-  const prunedLogs = pruneActivityLogs(appData.activityLogs || [], 7);
+  // Back up the full activity-log snapshot the app currently holds (fetchAppData
+  // already caps this at the 100 most-recent entries). This used to be pruned to
+  // 7 days here, which silently dropped older history from what is meant to be a
+  // complete pre-migration safety copy.
+  const allLogs = Array.isArray(appData.activityLogs) ? appData.activityLogs : [];
 
   const backupData: BackupEnvelope = {
     backupVersion: 2,
@@ -99,10 +106,10 @@ export const buildTimetableBackupPayload = (appData: AppData): { backupData: Bac
         email: u.email,
         role: u.role,
         assignedDepartments: u.assignedDepartments || [],
-        organizationId: u.organizationId || 'default'
+        organizationId: u.organizationId || ORG_ID
       })),
       authorizedAdmins: appData.authorizedAdmins || [],
-      activityLogs: prunedLogs
+      activityLogs: allLogs
     }
   };
 

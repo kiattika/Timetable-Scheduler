@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, type MutableRefObject } from 'react';
-import { fetchAppData, registerCurrentUser, safeUpsert, DEFAULT_DEPARTMENTS, DEFAULT_RESOURCE_TYPES, ORG_ID, normalizeLoadedSubjects, reconcileServerWithLocal } from '../api';
+import { fetchAppData, registerCurrentUser, safeUpsert, DEFAULT_DEPARTMENTS, DEFAULT_RESOURCE_TYPES, ORG_ID, normalizeLoadedSubjects, normalizeLoadedOrganizationSettings, reconcileServerWithLocal } from '../api';
 import { AppData, User, ScheduleEntry, ActivityLog, Teacher } from '../types';
 import { db, auth } from '../lib/firebase';
 import { doc, collection, onSnapshot, query, orderBy, limit, type Query, type DocumentReference } from 'firebase/firestore';
@@ -198,7 +198,7 @@ export const useAppAuth = (
             scheduleEntries: finalScheduleEntries,
             periodSettings: md.periodSettings || DEFAULT_PERIOD_SETTINGS,
             teacherSubjectAssignments: md.teacherSubjectAssignments || [],
-            organizationSettings: md.organizationSettings || null,
+            organizationSettings: normalizeLoadedOrganizationSettings(md.organizationSettings || null),
             users: newUsers,
             activityLogs: finalActivityLogs,
             currentUser: appUser,

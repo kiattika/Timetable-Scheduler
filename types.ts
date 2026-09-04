@@ -129,6 +129,10 @@ export interface OrganizationSettings {
   reviewerName?: string; // ชื่อผู้ตรวจสอบ (หัวหน้ากลุ่มงานวิชาการ)
   reviewerPosition?: string; // ตำแหน่งผู้ตรวจสอบ เช่น "หัวหน้ากลุ่มงานวิชาการและหลักสูตร"
   legalBasisText?: string; // อำนาจตามกฎหมาย (ข้อความยาว)
+  schemaVersion?: number; // Shape of apps/{orgId}. 1 = monolithic document (all entity
+                          // arrays inline). Incremented by the subcollection migration
+                          // so a client can tell old-shape from new-shape data during
+                          // the dual-write transition. Absent === 1 (migration-on-read).
 }
 
 export type UserRole = 'admin' | 'manager' | 'teacher' | 'assistant' | 'guest';
