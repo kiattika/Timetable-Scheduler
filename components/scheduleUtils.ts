@@ -1,4 +1,4 @@
-import { GradeLevel } from '../types';
+import { GradeLevel, PhysicalRoom, ScheduleEntry, DayOfWeek } from '../types';
 
 export const isSharable = (subject: any) => Boolean(
   subject?.allowPhysicalRoomSharing === true || 
@@ -40,4 +40,22 @@ export const isParentGrade = (gradeLevelId: string, allGradeLevels: GradeLevel[]
 export const isChildOf = (childGradeLevelId: string, parentGradeLevelId: string, allGradeLevels: GradeLevel[]): boolean => {
     const parentIdFromName = getParentGradeLevelId(childGradeLevelId, allGradeLevels);
     return parentIdFromName === parentGradeLevelId;
+};
+
+// Excludes rooms already booked by a DIFFERENT schedule entry at the same day+period.
+// `excludeEntryId` lets an in-progress edit keep showing its own current room as available.
+export const getAvailablePhysicalRooms = (
+    allRooms: PhysicalRoom[],
+    scheduleEntries: ScheduleEntry[],
+    day: DayOfWeek,
+    period: number,
+    excludeEntryId?: string | null
+): PhysicalRoom[] => {
+    const bookedRoomIds = new Set<string>();
+    scheduleEntries.forEach(e => {
+        if (e.day === day && e.period === period && e.id !== excludeEntryId && e.physicalRoomId) {
+            bookedRoomIds.add(e.physicalRoomId);
+        }
+    });
+    return allRooms.filter(r => !bookedRoomIds.has(r.id));
 };

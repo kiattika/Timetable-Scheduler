@@ -12,7 +12,7 @@ import ContextMenu from './ContextMenu';
 import GradeLevelPlannerView from './GradeLevelPlannerView'; 
 import SlotAvailabilityInspectorModal from './SlotAvailabilityInspectorModal'; 
 import { AuditModal } from './AuditModal';
-import { getParentGradeLevelId, getChildGradeLevelIds, isParentGrade, isChildOf, isSharable } from './scheduleUtils';
+import { getParentGradeLevelId, getChildGradeLevelIds, isParentGrade, isChildOf, isSharable, getAvailablePhysicalRooms } from './scheduleUtils';
 import { useTouchDrag } from '../hooks/useTouchDrag';
 import { ReviewWizardModal, Discrepancy } from './ReviewWizardModal';
 
@@ -1923,7 +1923,14 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
       return ((a?.code) || '').localeCompare((b?.code) || '', undefined, { numeric: true, sensitivity: 'base' });
     });
   }, [physicalRooms]);
-  
+
+  // Excludes rooms already booked by a DIFFERENT entry at the modal's target day+period.
+  const modalRooms = useMemo(() => {
+    if (!assignmentModalContext) return modalPhysicalRooms;
+    const { day: targetDay, period: targetPeriod } = assignmentModalContext;
+    return getAvailablePhysicalRooms(modalPhysicalRooms, scheduleEntries, targetDay, targetPeriod, editingEntryId);
+  }, [assignmentModalContext, modalPhysicalRooms, scheduleEntries, editingEntryId]);
+
   const getModalTitle = () => {
     if (!assignmentModalContext) return "Assign Slot";
     const { day, period } = assignmentModalContext;
@@ -1999,6 +2006,232 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
     });
     return count;
   }, [currentAssignment.gradeLevelId, currentSubjectDetailsForModal, scheduleEntries, editingEntryId, gradeLevels]);
+
+  // Assignment modal fields, extracted so Task 2 can reorder them per viewType without
+  // duplicating the modal into separate components. Filtering logic for each field is
+  // unchanged from before this extraction (modalSubjects / modalTeachers / modalRooms).
+  const subjectField = (
+    <div>
+      <label htmlFor="subjectId_modal" className="block text-sm font-medium text-slate-700 mb-1">Subject (รายวิชา)</label>
+      <select
+        id="subjectId_modal"
+        name="subjectId"
+        value={currentAssignment.subjectId || ''}
+        onChange={handleAssignmentChange}
+        className="w-full p-2 border border-slate-300 rounded-md focus:ring-blue-500 focus:border-blue-500 shadow-sm"
+        required
+      >
+        <option value="" disabled>Select Subject</option>
+        {modalSubjects.map(s => (
+          <option key={s.id} value={s.id} style={{ color: s.color }}>
+            {s.name} {s.subjectCode && `(${s.subjectCode})`}
+            {s.type && s.type !== 'STANDARD' && ` [${s.type}]`}
+            {s.isBroadAssignment && "(Broad)"}
+            {s.isHomeroomAdvisorySubject && "(Advisory)"}
+          </option>
+        ))}
+      </select>
+      {currentAssignment.gradeLevelId && modalSubjects.length === 0 && (
+        <p className="text-xs text-amber-600 mt-1">
+            No subjects found based on current criteria or all subjects have met their weekly period limit for {gradeLevels.find(gl=>gl.id===currentAssignment.gradeLevelId)?.name || 'this grade'}.
+        </p>
+      )}
+      {currentSubjectDetailsForModal && currentSubjectDetailsForModal.periodsPerWeek !== undefined && (
+        <p className="text-xs text-slate-500 mt-1">
+          Scheduled: {scheduledPeriodsForSubjectInModal} / {currentSubjectDetailsForModal.periodsPerWeek} periods for this grade scope (excluding current if editing).
+        </p>
+      )}
+      {currentSubjectDetailsForModal?.schedulingPattern && (
+        <p className="text-xs text-slate-500 mt-1">
+          Pattern: {currentSubjectDetailsForModal.schedulingPattern}
+        </p>
+      )}
+    </div>
+  );
+
+  const gradeLevelField = currentSubjectDetailsForModal?.type === 'TEACHER_ONLY' ? (
+    <div>
+      <label className="block text-sm font-medium text-slate-700 mb-1">Grade Level</label>
+      <div className="p-2 bg-slate-100 border border-slate-300 rounded-md text-slate-600 text-sm">
+        Non-Student (Teacher-Only Slot)
+      </div>
+    </div>
+  ) : (
+    <div>
+      <label htmlFor="gradeLevelId_modal" className="block text-sm font-medium text-slate-700 mb-1">Grade Level</label>
+      <select
+        id="gradeLevelId_modal"
+        name="gradeLevelId"
+        value={currentAssignment.gradeLevelId || ''}
+        onChange={handleAssignmentChange}
+        className="w-full p-2 border border-slate-300 rounded-md focus:ring-blue-500 focus:border-blue-500 shadow-sm"
+        required
+        disabled={!!assignmentModalContext?.fixedGradeLevelId || (!!currentAssignment.gradeLevelId && isParentGrade(currentAssignment.gradeLevelId, gradeLevels) && !permissions.canPerformManagerActions && !!editingEntryId)}
+      >
+        <option value="" disabled>Select Grade Level</option>
+        {modalGradeLevels.map(gl => (
+          <option key={gl.id} value={gl.id}>{gl.name}</option>
+        ))}
+      </select>
+    </div>
+  );
+
+  const cohortField = currentSubjectDetailsForModal?.type !== 'TEACHER_ONLY' ? (
+    <div>
+      <label htmlFor="cohort_modal" className="block text-sm font-medium text-slate-700 mb-1">Student Cohort (กลุ่มเรียน) <span className="text-xs font-normal text-slate-500">(Optional for split classes)</span></label>
+      <input
+        type="text"
+        id="cohort_modal"
+        name="cohort"
+        placeholder="e.g., กลุ่มภาษาจีน, กลุ่มภาษาญี่ปุ่น"
+        value={currentAssignment.cohort || ''}
+        onChange={handleAssignmentChange}
+        className="w-full p-2 border border-slate-300 rounded-md focus:ring-blue-500 focus:border-blue-500 shadow-sm"
+      />
+    </div>
+  ) : null;
+
+  const durationField = !editingEntryId ? (
+    <div>
+      <label htmlFor="assignmentDuration_modal" className="block text-sm font-medium text-slate-700 mb-1">Duration (periods)</label>
+      <input
+        type="number"
+        id="assignmentDuration_modal"
+        name="assignmentDuration"
+        value={currentAssignment.assignmentDuration || 1}
+        onChange={handleAssignmentChange}
+        min="1"
+        max={periodSettings.length - (assignmentModalContext?.period || 0) }
+        className="w-full p-2 border border-slate-300 rounded-md focus:ring-blue-500 focus:border-blue-500 shadow-sm"
+        required
+      />
+      <p className="text-xs text-slate-500 mt-1">Set to 1 for a single period, or more for a consecutive block.</p>
+    </div>
+  ) : null;
+
+  const teacherField = currentSubjectDetailsForModal?.type === 'STUDENT_ONLY' ? (
+    <div>
+      <label className="block text-sm font-medium text-slate-700 mb-1">Teacher(s)</label>
+      <div className="p-2 bg-slate-100 border border-slate-300 rounded-md text-slate-600 text-sm">
+        No Teacher Assigned (Student-Only Slot)
+      </div>
+    </div>
+  ) : (
+    <div>
+      <label htmlFor="teacherIds_modal" className="block text-sm font-medium text-slate-700 mb-1">Teacher(s)</label>
+      <select
+        id="teacherIds_modal"
+        name="teacherIds"
+        value={
+          currentSubjectDetailsForModal?.teachingMode === 'multiple' ||
+          isModalGradeParentForBroadSubject ||
+          currentSubjectDetailsForModal?.isHomeroomAdvisorySubject ||
+          currentSubjectDetailsForModal?.type === 'TEACHER_ONLY'
+          ? (currentAssignment.teacherIds || [])
+          : (currentAssignment.teacherIds?.[0] || '')
+        }
+        onChange={handleAssignmentChange}
+        multiple={
+          currentSubjectDetailsForModal?.teachingMode === 'multiple' ||
+          isModalGradeParentForBroadSubject ||
+          currentSubjectDetailsForModal?.isHomeroomAdvisorySubject ||
+          currentSubjectDetailsForModal?.type === 'TEACHER_ONLY'
+        }
+        className="w-full p-2 border border-slate-300 rounded-md focus:ring-blue-500 focus:border-blue-500 shadow-sm"
+        required
+        disabled={isTeacherSelectDisabledInModal}
+        size={
+          (currentSubjectDetailsForModal?.teachingMode === 'multiple' ||
+           isModalGradeParentForBroadSubject ||
+           currentSubjectDetailsForModal?.isHomeroomAdvisorySubject ||
+           currentSubjectDetailsForModal?.type === 'TEACHER_ONLY')
+          ? Math.min(5, modalTeachers.length || 1)
+          : 1
+        }
+      >
+        {(!currentAssignment.subjectId || !currentAssignment.gradeLevelId) && modalTeachers.length === 0 && <option value="" disabled>Select Grade & Subject First</option>}
+        {(currentAssignment.subjectId && currentAssignment.gradeLevelId && modalTeachers.length === 0) && <option value="" disabled>No teachers for this subject/grade combination</option>}
+
+        {currentSubjectDetailsForModal?.teachingMode !== 'multiple' &&
+         !isModalGradeParentForBroadSubject &&
+         !currentSubjectDetailsForModal?.isHomeroomAdvisorySubject &&
+         currentSubjectDetailsForModal?.type !== 'TEACHER_ONLY' &&
+         (!currentAssignment.teacherIds || currentAssignment.teacherIds.length === 0) && (
+            <option value="" disabled>Select Teacher</option>
+        )}
+
+        {modalTeachers.map(t => (
+          <option key={t.id} value={t.id}>{t.name} {t.teacherCode && `(${t.teacherCode})`}</option>
+        ))}
+      </select>
+      {currentAssignment.subjectId && currentAssignment.gradeLevelId && modalTeachers.length === 0 && !currentSubjectDetailsForModal?.isHomeroomAdvisorySubject &&
+        <p className="text-xs text-amber-600 mt-1">
+            No teachers are linked to teach {subjects.find(s=>s.id === currentAssignment.subjectId)?.name || 'this subject'} to {gradeLevels.find(gl=>gl.id===currentAssignment.gradeLevelId)?.name || 'this grade scope'}.
+        </p>
+       }
+       {(currentSubjectDetailsForModal?.teachingMode === 'multiple' || isModalGradeParentForBroadSubject || currentSubjectDetailsForModal?.isHomeroomAdvisorySubject) &&
+        <p className="text-xs text-slate-500 mt-1">
+          {currentSubjectDetailsForModal?.isHomeroomAdvisorySubject
+            ? "Teachers auto-assigned based on homeroom duties."
+            : (isModalGradeParentForBroadSubject
+                ? "Teachers pre-selected for broad assignments; selection can be adjusted."
+                : "Hold Ctrl/Cmd to select multiple teachers."
+              )
+          }
+        </p>
+       }
+    </div>
+  );
+
+  // NOTE: pre-existing bug found during this task, left as-is (out of scope — see summary).
+  // This block is mislabeled "Student Cohort" but is actually a second <select name="physicalRoomId">
+  // rendering the same room list as physicalRoomField below, both bound to the same state field.
+  const legacyMislabeledRoomField = currentSubjectDetailsForModal?.type !== 'TEACHER_ONLY' ? (
+    <div>
+      <label htmlFor="physicalRoomId_modal" className="block text-sm font-medium text-slate-700 mb-1">Student Cohort (กลุ่มเรียน)</label>
+      <select
+        id="physicalRoomId_modal"
+        name="physicalRoomId"
+        value={currentAssignment.physicalRoomId || ''}
+        onChange={handleAssignmentChange}
+        className="w-full p-2 border border-slate-300 rounded-md focus:ring-blue-500 focus:border-blue-500 shadow-sm"
+        required
+        disabled={isPhysicalRoomSelectDisabledInModal}
+      >
+        <option value="" disabled>Select Student Cohort</option>
+        {modalPhysicalRooms.map(c => (
+          <option key={c.id} value={c.id}>{formatRoomDisplay(c)}</option>
+        ))}
+      </select>
+      {isPhysicalRoomSelectDisabledInModal && currentAssignment.physicalRoomId && currentSubjectDetailsForModal?.isHomeroomAdvisorySubject && !isSharable(currentSubjectDetailsForModal) &&
+        !assignmentModalContext?.editingFromChildPerspectiveOfParentEntry && currentAssignment.gradeLevelId && !isParentGrade(currentAssignment.gradeLevelId, gradeLevels) &&
+        <p className="text-xs text-slate-500 mt-1">Cohort auto-assigned based on grade's homeroom for this advisory subject.</p>
+      }
+    </div>
+  ) : null;
+
+  const physicalRoomField = currentSubjectDetailsForModal?.type !== 'TEACHER_ONLY' ? (
+    <div>
+      <label htmlFor="physicalRoomId_modal_actual" className="block text-sm font-medium text-slate-700 mb-1">Physical Room (สถานที่เรียน)</label>
+      <select
+        id="physicalRoomId_modal_actual"
+        name="physicalRoomId"
+        value={currentAssignment.physicalRoomId || ''}
+        onChange={handleAssignmentChange}
+        className="w-full p-2 border border-slate-300 rounded-md focus:ring-blue-500 focus:border-blue-500 shadow-sm"
+      >
+        <option value="">Select Room (Optional)</option>
+        {modalRooms.map(r => (
+          <option key={r.id} value={r.id}>{formatRoomDisplay(r)} ({r.type})</option>
+        ))}
+      </select>
+      {modalPhysicalRooms.length > 0 && modalRooms.length === 0 && (
+        <p className="text-xs text-amber-600 mt-1">
+            No rooms available — every room is already booked for this day and period.
+        </p>
+      )}
+    </div>
+  ) : null;
 
 
   const commonPlannerProps = {
@@ -2193,219 +2426,42 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
               </div>
             )}
             {conflictError && <p className="text-sm text-red-600 bg-red-50 p-3 rounded-md border border-red-200">{conflictError}</p>}
-            
-            <div>
-              <label htmlFor="subjectId_modal" className="block text-sm font-medium text-slate-700 mb-1">Subject (รายวิชา)</label>
-              <select
-                id="subjectId_modal"
-                name="subjectId"
-                value={currentAssignment.subjectId || ''}
-                onChange={handleAssignmentChange}
-                className="w-full p-2 border border-slate-300 rounded-md focus:ring-blue-500 focus:border-blue-500 shadow-sm"
-                required
-              >
-                <option value="" disabled>Select Subject</option>
-                {modalSubjects.map(s => (
-                  <option key={s.id} value={s.id} style={{ color: s.color }}>
-                    {s.name} {s.subjectCode && `(${s.subjectCode})`} 
-                    {s.type && s.type !== 'STANDARD' && ` [${s.type}]`}
-                    {s.isBroadAssignment && "(Broad)"}
-                    {s.isHomeroomAdvisorySubject && "(Advisory)"}
-                  </option>
-                ))}
-              </select>
-              {currentAssignment.gradeLevelId && modalSubjects.length === 0 && (
-                <p className="text-xs text-amber-600 mt-1">
-                    No subjects found based on current criteria or all subjects have met their weekly period limit for {gradeLevels.find(gl=>gl.id===currentAssignment.gradeLevelId)?.name || 'this grade'}.
-                </p>
-              )}
-              {currentSubjectDetailsForModal && currentSubjectDetailsForModal.periodsPerWeek !== undefined && (
-                <p className="text-xs text-slate-500 mt-1">
-                  Scheduled: {scheduledPeriodsForSubjectInModal} / {currentSubjectDetailsForModal.periodsPerWeek} periods for this grade scope (excluding current if editing).
-                </p>
-              )}
-              {currentSubjectDetailsForModal?.schedulingPattern && (
-                <p className="text-xs text-slate-500 mt-1">
-                  Pattern: {currentSubjectDetailsForModal.schedulingPattern}
-                </p>
-              )}
-            </div>
 
-            {currentSubjectDetailsForModal?.type === 'TEACHER_ONLY' ? (
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Grade Level</label>
-                <div className="p-2 bg-slate-100 border border-slate-300 rounded-md text-slate-600 text-sm">
-                  Non-Student (Teacher-Only Slot)
-                </div>
-              </div>
-            ) : (
-              <div>
-                <label htmlFor="gradeLevelId_modal" className="block text-sm font-medium text-slate-700 mb-1">Grade Level</label>
-                <select
-                  id="gradeLevelId_modal"
-                  name="gradeLevelId"
-                  value={currentAssignment.gradeLevelId || ''}
-                  onChange={handleAssignmentChange}
-                  className="w-full p-2 border border-slate-300 rounded-md focus:ring-blue-500 focus:border-blue-500 shadow-sm"
-                  required
-                  disabled={!!assignmentModalContext.fixedGradeLevelId || (!!currentAssignment.gradeLevelId && isParentGrade(currentAssignment.gradeLevelId, gradeLevels) && !permissions.canPerformManagerActions && !!editingEntryId)}
-                >
-                  <option value="" disabled>Select Grade Level</option>
-                  {modalGradeLevels.map(gl => (
-                    <option key={gl.id} value={gl.id}>{gl.name}</option>
-                  ))}
-                </select>
-              </div>
-            )}
-            
-            {currentSubjectDetailsForModal?.type !== 'TEACHER_ONLY' && (
-              <div>
-                <label htmlFor="cohort_modal" className="block text-sm font-medium text-slate-700 mb-1">Student Cohort (กลุ่มเรียน) <span className="text-xs font-normal text-slate-500">(Optional for split classes)</span></label>
-                <input
-                  type="text"
-                  id="cohort_modal"
-                  name="cohort"
-                  placeholder="e.g., กลุ่มภาษาจีน, กลุ่มภาษาญี่ปุ่น"
-                  value={currentAssignment.cohort || ''}
-                  onChange={handleAssignmentChange}
-                  className="w-full p-2 border border-slate-300 rounded-md focus:ring-blue-500 focus:border-blue-500 shadow-sm"
-                />
-              </div>
-            )}
-
-            {!editingEntryId && (
-              <div>
-                <label htmlFor="assignmentDuration_modal" className="block text-sm font-medium text-slate-700 mb-1">Duration (periods)</label>
-                <input
-                  type="number"
-                  id="assignmentDuration_modal"
-                  name="assignmentDuration"
-                  value={currentAssignment.assignmentDuration || 1}
-                  onChange={handleAssignmentChange}
-                  min="1"
-                  max={periodSettings.length - (assignmentModalContext.period || 0) } 
-                  className="w-full p-2 border border-slate-300 rounded-md focus:ring-blue-500 focus:border-blue-500 shadow-sm"
-                  required
-                />
-                <p className="text-xs text-slate-500 mt-1">Set to 1 for a single period, or more for a consecutive block.</p>
-              </div>
-            )}
-
-            {currentSubjectDetailsForModal?.type === 'STUDENT_ONLY' ? (
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Teacher(s)</label>
-                <div className="p-2 bg-slate-100 border border-slate-300 rounded-md text-slate-600 text-sm">
-                  No Teacher Assigned (Student-Only Slot)
-                </div>
-              </div>
-            ) : (
-              <div>
-                <label htmlFor="teacherIds_modal" className="block text-sm font-medium text-slate-700 mb-1">Teacher(s)</label>
-                <select
-                  id="teacherIds_modal"
-                  name="teacherIds"
-                  value={
-                    currentSubjectDetailsForModal?.teachingMode === 'multiple' || 
-                    isModalGradeParentForBroadSubject || 
-                    currentSubjectDetailsForModal?.isHomeroomAdvisorySubject ||
-                    currentSubjectDetailsForModal?.type === 'TEACHER_ONLY'
-                    ? (currentAssignment.teacherIds || [])
-                    : (currentAssignment.teacherIds?.[0] || '')
-                  }
-                  onChange={handleAssignmentChange}
-                  multiple={
-                    currentSubjectDetailsForModal?.teachingMode === 'multiple' || 
-                    isModalGradeParentForBroadSubject || 
-                    currentSubjectDetailsForModal?.isHomeroomAdvisorySubject ||
-                    currentSubjectDetailsForModal?.type === 'TEACHER_ONLY'
-                  }
-                  className="w-full p-2 border border-slate-300 rounded-md focus:ring-blue-500 focus:border-blue-500 shadow-sm"
-                  required
-                  disabled={isTeacherSelectDisabledInModal}
-                  size={
-                    (currentSubjectDetailsForModal?.teachingMode === 'multiple' || 
-                     isModalGradeParentForBroadSubject || 
-                     currentSubjectDetailsForModal?.isHomeroomAdvisorySubject ||
-                     currentSubjectDetailsForModal?.type === 'TEACHER_ONLY') 
-                    ? Math.min(5, modalTeachers.length || 1) 
-                    : 1
-                  }
-                >
-                  {(!currentAssignment.subjectId || !currentAssignment.gradeLevelId) && modalTeachers.length === 0 && <option value="" disabled>Select Grade & Subject First</option>}
-                  {(currentAssignment.subjectId && currentAssignment.gradeLevelId && modalTeachers.length === 0) && <option value="" disabled>No teachers for this subject/grade combination</option>}
-                  
-                  {currentSubjectDetailsForModal?.teachingMode !== 'multiple' && 
-                   !isModalGradeParentForBroadSubject && 
-                   !currentSubjectDetailsForModal?.isHomeroomAdvisorySubject && 
-                   currentSubjectDetailsForModal?.type !== 'TEACHER_ONLY' && 
-                   (!currentAssignment.teacherIds || currentAssignment.teacherIds.length === 0) && (
-                      <option value="" disabled>Select Teacher</option>
-                  )}
-
-                  {modalTeachers.map(t => (
-                    <option key={t.id} value={t.id}>{t.name} {t.teacherCode && `(${t.teacherCode})`}</option>
-                  ))}
-                </select>
-                {currentAssignment.subjectId && currentAssignment.gradeLevelId && modalTeachers.length === 0 && !currentSubjectDetailsForModal?.isHomeroomAdvisorySubject &&
-                  <p className="text-xs text-amber-600 mt-1">
-                      No teachers are linked to teach {subjects.find(s=>s.id === currentAssignment.subjectId)?.name || 'this subject'} to {gradeLevels.find(gl=>gl.id===currentAssignment.gradeLevelId)?.name || 'this grade scope'}.
-                  </p>
-                 }
-                 {(currentSubjectDetailsForModal?.teachingMode === 'multiple' || isModalGradeParentForBroadSubject || currentSubjectDetailsForModal?.isHomeroomAdvisorySubject) && 
-                  <p className="text-xs text-slate-500 mt-1">
-                    {currentSubjectDetailsForModal?.isHomeroomAdvisorySubject 
-                      ? "Teachers auto-assigned based on homeroom duties."
-                      : (isModalGradeParentForBroadSubject 
-                          ? "Teachers pre-selected for broad assignments; selection can be adjusted." 
-                          : "Hold Ctrl/Cmd to select multiple teachers."
-                        )
-                    }
-                  </p>
-                 }
-              </div>
-            )}
-
-            {currentSubjectDetailsForModal?.type !== 'TEACHER_ONLY' && (
+            {assignmentModalContext.viewType === 'teacherSchedules' ? (
+              // Teacher schedule view: teacher is fixed, so the flow is Subject -> Room -> everything else.
               <>
-                <div>
-                  <label htmlFor="physicalRoomId_modal" className="block text-sm font-medium text-slate-700 mb-1">Student Cohort (กลุ่มเรียน)</label>
-                  <select
-                    id="physicalRoomId_modal"
-                    name="physicalRoomId"
-                    value={currentAssignment.physicalRoomId || ''}
-                    onChange={handleAssignmentChange}
-                    className="w-full p-2 border border-slate-300 rounded-md focus:ring-blue-500 focus:border-blue-500 shadow-sm"
-                    required
-                    disabled={isPhysicalRoomSelectDisabledInModal}
-                  >
-                    <option value="" disabled>Select Student Cohort</option>
-                    {modalPhysicalRooms.map(c => (
-                      <option key={c.id} value={c.id}>{formatRoomDisplay(c)}</option>
-                    ))}
-                  </select>
-                  {isPhysicalRoomSelectDisabledInModal && currentAssignment.physicalRoomId && currentSubjectDetailsForModal?.isHomeroomAdvisorySubject && !isSharable(currentSubjectDetailsForModal) &&
-                    !assignmentModalContext?.editingFromChildPerspectiveOfParentEntry && currentAssignment.gradeLevelId && !isParentGrade(currentAssignment.gradeLevelId, gradeLevels) &&
-                    <p className="text-xs text-slate-500 mt-1">Cohort auto-assigned based on grade's homeroom for this advisory subject.</p>
-                  }
-                </div>
-                
-                <div>
-                  <label htmlFor="physicalRoomId_modal_actual" className="block text-sm font-medium text-slate-700 mb-1">Physical Room (สถานที่เรียน)</label>
-                  <select
-                    id="physicalRoomId_modal_actual"
-                    name="physicalRoomId"
-                    value={currentAssignment.physicalRoomId || ''}
-                    onChange={handleAssignmentChange}
-                    className="w-full p-2 border border-slate-300 rounded-md focus:ring-blue-500 focus:border-blue-500 shadow-sm"
-                  >
-                    <option value="">Select Room (Optional)</option>
-                    {appData.physicalRooms?.map(r => (
-                      <option key={r.id} value={r.id}>{formatRoomDisplay(r)} ({r.type})</option>
-                    ))}
-                  </select>
-                </div>
+                {subjectField}
+                {physicalRoomField}
+                {gradeLevelField}
+                {cohortField}
+                {durationField}
+                {teacherField}
+                {legacyMislabeledRoomField}
+              </>
+            ) : assignmentModalContext.viewType === 'gradeLevelPlanner' ? (
+              // Grade-level planner view: grade is fixed by context, so it leads the flow: Grade -> Subject -> Teacher(s).
+              <>
+                {gradeLevelField}
+                {subjectField}
+                {cohortField}
+                {durationField}
+                {teacherField}
+                {legacyMislabeledRoomField}
+                {physicalRoomField}
+              </>
+            ) : (
+              // roomUsage / default: unchanged original order.
+              <>
+                {subjectField}
+                {gradeLevelField}
+                {cohortField}
+                {durationField}
+                {teacherField}
+                {legacyMislabeledRoomField}
+                {physicalRoomField}
               </>
             )}
+
             <div className="flex justify-end space-x-3 pt-2">
               <button
                 type="button"
