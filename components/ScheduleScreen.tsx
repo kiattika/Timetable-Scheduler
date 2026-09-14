@@ -2434,15 +2434,15 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
             {conflictError && <p className="text-sm text-red-600 bg-red-50 p-3 rounded-md border border-red-200">{conflictError}</p>}
 
             {assignmentModalContext.viewType === 'teacherSchedules' ? (
-              // Teacher schedule view: teacher is fixed, so the flow is Subject -> Room -> everything else.
+              // Teacher schedule view: teacher is fixed. Room fields render last, same as gradeLevelPlanner.
               <>
                 {subjectField}
-                {physicalRoomField}
                 {gradeLevelField}
                 {cohortField}
                 {durationField}
                 {teacherField}
                 {legacyMislabeledRoomField}
+                {physicalRoomField}
               </>
             ) : assignmentModalContext.viewType === 'gradeLevelPlanner' ? (
               // Grade-level planner view: grade is fixed by context, so it leads the flow: Grade -> Subject -> Teacher(s).
