@@ -1800,7 +1800,13 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
             return scheduledCount < subject.periodsPerWeek;
         });
     }
-    
+
+    // TEACHER_ONLY subjects have no student attendance and aren't selectable from the
+    // grade-level planner (they're always shown from teacherSchedules, which is per-teacher).
+    if (viewType === 'gradeLevelPlanner') {
+        resultSubjects = resultSubjects.filter(s => s.type !== 'TEACHER_ONLY');
+    }
+
     return filterByRoomType(resultSubjects);
   }, [
     assignmentModalContext, 
