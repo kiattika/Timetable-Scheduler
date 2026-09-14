@@ -2199,7 +2199,7 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
         disabled={isPhysicalRoomSelectDisabledInModal}
       >
         <option value="" disabled>Select Student Cohort</option>
-        {modalPhysicalRooms.map(c => (
+        {modalRooms.map(c => (
           <option key={c.id} value={c.id}>{formatRoomDisplay(c)}</option>
         ))}
       </select>
