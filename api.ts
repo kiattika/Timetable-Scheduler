@@ -189,10 +189,14 @@ export const fetchAppData = async (orgId: string = ORG_ID): Promise<AppData> => 
       const parsedData = docSnap.data() as any;
       const subjectsWithDefaults = normalizeLoadedSubjects(parsedData.subjects);
       
-      // If subcollection was empty but main document has scheduleEntries, use main document
-      const finalScheduleEntries: ScheduleEntry[] = Array.isArray(loadedScheduleEntries) && loadedScheduleEntries.length > 0 
-        ? loadedScheduleEntries 
-        : (Array.isArray(parsedData.scheduleEntries) ? parsedData.scheduleEntries : []);
+      // Phase 1 dual-write: apps/{orgId}.scheduleEntries stays authoritative for
+      // reads — the scheduleEntries subcollection fetched above is a write-only
+      // mirror during this phase (see functions/src/orgWrites.ts's Phase 1
+      // comment). Preferring it here raced the mirror sync against a
+      // just-committed main-doc write, so a just-deleted entry could still show
+      // as present. loadedScheduleEntries is still used below as a last-resort
+      // fallback when the main doc itself doesn't exist at all.
+      const finalScheduleEntries: ScheduleEntry[] = Array.isArray(parsedData.scheduleEntries) ? parsedData.scheduleEntries : [];
 
       const finalActivityLogs: ActivityLog[] = Array.isArray(loadedActivityLogs) && loadedActivityLogs.length > 0
         ? loadedActivityLogs
