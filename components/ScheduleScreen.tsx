@@ -1789,10 +1789,18 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
                 subjectIdsFromLinks.has(s.id)
             );
         } else if (isChildGradeByName) { // Child Grade (e.g., M.1/1)
-            resultSubjects = subjects.filter(s => 
-                !isSharable(s) && // Must NOT share for child grades
-                subjectIdsFromLinks.has(s.id)
-            );
+            resultSubjects = subjects.filter(s => {
+                // A sharable subject is normally managed once at the parent's own row (see
+                // the isActualParentGrade branch above) — but if a teacherSubjectAssignments
+                // record links it directly to THIS child grade (not just inherited via the
+                // parent), that link expresses explicit intent for this specific section, so
+                // don't gate it out. A sharable subject with no such direct link still must
+                // be assigned from the parent's row, unchanged.
+                const hasDirectLinkToThisChild = teacherSubjectAssignments.some(tsa =>
+                    tsa.subjectId === s.id && tsa.gradeLevelId === currentSelectedGradeId
+                );
+                return (hasDirectLinkToThisChild || !isSharable(s)) && subjectIdsFromLinks.has(s.id);
+            });
             if (parentIdOfCurrent) { 
                 const parentEntryInSlot = scheduleEntries.find(e => 
                     e.gradeLevelId === parentIdOfCurrent && 
