@@ -998,6 +998,44 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
             updated = { ...prev, [name]: value };
         }
 
+        // Grade Level changed in teacherSchedules mode: if the previously-selected subject
+        // has no teacherSubjectAssignments link tying this teacher to the new grade, it would
+        // silently fall out of modalSubjects's option list, leaving the Subject <select> pointing
+        // at a value with no matching <option> (the browser then displays whichever option
+        // renders first, which the user never actually chose). Clear the subject explicitly
+        // instead of leaving that stale mismatch. Mirrors the same relevant-grade-id + link
+        // check modalSubjects itself uses, so the two stay in sync.
+        if (
+            name === 'gradeLevelId' &&
+            assignmentModalContext?.viewType === 'teacherSchedules' &&
+            assignmentModalContext.fixedTeacherId &&
+            prev.subjectId
+        ) {
+            const prevSubjectDetailsForGradeCheck = subjects.find(s => s.id === prev.subjectId);
+            const keepableRegardlessOfLink = prevSubjectDetailsForGradeCheck?.type === 'STUDENT_ONLY' || prevSubjectDetailsForGradeCheck?.type === 'TEACHER_ONLY';
+            if (prevSubjectDetailsForGradeCheck && !keepableRegardlessOfLink) {
+                let relevantGradeIdsForCheck: string[] = value ? [value] : [];
+                if (value) {
+                    const parentOfNewGrade = getParentGradeLevelId(value, gradeLevels);
+                    if (parentOfNewGrade) relevantGradeIdsForCheck.push(parentOfNewGrade);
+                    if (isParentGrade(value, gradeLevels)) {
+                        relevantGradeIdsForCheck = [...new Set([...relevantGradeIdsForCheck, ...getChildGradeLevelIds(value, gradeLevels)])];
+                    }
+                }
+                const stillLinked = teacherSubjectAssignments.some(tsa =>
+                    tsa.teacherId === assignmentModalContext.fixedTeacherId &&
+                    tsa.subjectId === prev.subjectId &&
+                    relevantGradeIdsForCheck.includes(tsa.gradeLevelId)
+                );
+                if (!stillLinked) {
+                    updated.subjectId = undefined;
+                    updated.teacherIds = [assignmentModalContext.fixedTeacherId];
+                    updated.physicalRoomId = '';
+                    updated.cohort = '';
+                }
+            }
+        }
+
         const newSubjectId = name === 'subjectId' ? value : updated.subjectId;
         const newSubjectDetails = newSubjectId ? subjects.find(s => s.id === newSubjectId) : null;
 
