@@ -2005,10 +2005,21 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
   }, [assignmentModalContext, currentAssignment.subjectId, currentAssignment.gradeLevelId, teachers, subjects, teacherSubjectAssignments, gradeLevels]);
 
   const modalPhysicalRooms = useMemo(() => {
+    // The current grade's homeroom room (if any) sorts first; everything else keeps the
+    // existing code-ascending order. No gradeLevelId selected yet (e.g. teacherSchedules
+    // before Grade Level is picked) -> no special-casing, same as before this change.
+    const homeroomRoomId = currentAssignment.gradeLevelId
+      ? gradeLevels.find(gl => gl.id === currentAssignment.gradeLevelId)?.homeroomPhysicalRoomId
+      : undefined;
+
     return [...(physicalRooms || [])].sort((a, b) => {
+      if (homeroomRoomId) {
+        if (a.id === homeroomRoomId && b.id !== homeroomRoomId) return -1;
+        if (b.id === homeroomRoomId && a.id !== homeroomRoomId) return 1;
+      }
       return ((a?.code) || '').localeCompare((b?.code) || '', undefined, { numeric: true, sensitivity: 'base' });
     });
-  }, [physicalRooms]);
+  }, [physicalRooms, currentAssignment.gradeLevelId, gradeLevels]);
 
   // Excludes rooms already booked by a DIFFERENT entry at the modal's target day+period.
   const modalRooms = useMemo(() => {
