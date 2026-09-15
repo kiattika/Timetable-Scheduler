@@ -1113,7 +1113,16 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
                 if (isLinked) {
                     updated.teacherIds = [assignmentModalContext.fixedTeacherId];
                 } else {
-                    updated.teacherIds = []; 
+                    updated.teacherIds = [];
+                    // Mirror image of the gradeLevelId-change guard above: the subject just
+                    // changed and the grade already selected has no link to it for this
+                    // teacher, so modalGradeLevels would drop it from its option list too.
+                    // Clear it here rather than leave the Grade Level <select> stale.
+                    if (name === 'subjectId' && assignmentModalContext?.viewType === 'teacherSchedules' && newGradeLevelId) {
+                        updated.gradeLevelId = '';
+                        updated.physicalRoomId = '';
+                        updated.cohort = '';
+                    }
                 }
             } else if (assignmentModalContext?.viewType !== 'teacherSchedules' && !newSubjectDetails?.isHomeroomAdvisorySubject && !(newSubjectDetails?.isBroadAssignment && newGradeIsActuallyParent)) {
                  updated.teacherIds = []; 
@@ -1697,8 +1706,29 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
   };
 
   const modalGradeLevels = useMemo(() => {
-    return [...gradeLevels].sort((a,b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
-  }, [gradeLevels]);
+    const sorted = [...gradeLevels].sort((a,b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
+
+    // teacherSchedules only, and only once a subject is picked: restrict Grade Level to grades
+    // this teacher actually has a teacherSubjectAssignments link to for that subject. Uses the
+    // same (exact match OR isChildOf a linked grade) test as handleAssignmentChange's isLinked
+    // check below, so the two never disagree about which grade is valid and leave the <select>
+    // pointing at a value with no matching <option>.
+    if (
+        assignmentModalContext?.viewType === 'teacherSchedules' &&
+        assignmentModalContext.fixedTeacherId &&
+        currentAssignment.subjectId
+    ) {
+        const fixedTeacherId = assignmentModalContext.fixedTeacherId;
+        const subjectId = currentAssignment.subjectId;
+        return sorted.filter(gl => teacherSubjectAssignments.some(tsa =>
+            tsa.teacherId === fixedTeacherId &&
+            tsa.subjectId === subjectId &&
+            (tsa.gradeLevelId === gl.id || isChildOf(gl.id, tsa.gradeLevelId, gradeLevels))
+        ));
+    }
+
+    return sorted;
+  }, [gradeLevels, assignmentModalContext, currentAssignment.subjectId, teacherSubjectAssignments]);
   
   const modalSubjects = useMemo(() => {
     if (!assignmentModalContext) return subjects;
