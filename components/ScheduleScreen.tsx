@@ -1785,6 +1785,18 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
             }
         });
 
+        // Broad-assignment / homeroom-advisory subjects can restrict themselves to specific
+        // parent grades via applicableParentGradeLevelIds (empty/undefined = applies to all —
+        // same convention EntityManagementScreen uses). This wasn't enforced here before, so a
+        // subject scoped to e.g. M.4-M.6 could still surface for M.1 if a teacherSubjectAssignments
+        // record happened to link it there. Grade-level planner only, per the reported bug.
+        if (viewType === 'gradeLevelPlanner') {
+            resultSubjects = resultSubjects.filter(s => {
+                if (!s.applicableParentGradeLevelIds || s.applicableParentGradeLevelIds.length === 0) return true;
+                return s.applicableParentGradeLevelIds.some(id => relevantGradeIdsForSubjectLinks.includes(id));
+            });
+        }
+
     } else {
         if (viewType === 'teacherSchedules' && fixedTeacherId) {
             const teacherSubjectIds = new Set(
