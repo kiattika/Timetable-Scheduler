@@ -2522,7 +2522,6 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
                 </button>
               </div>
             )}
-            {conflictError && <p className="text-sm text-red-600 bg-red-50 p-3 rounded-md border border-red-200">{conflictError}</p>}
 
             {assignmentModalContext.viewType === 'teacherSchedules' ? (
               // Teacher schedule view: teacher is fixed. Room fields render last, same as gradeLevelPlanner.
@@ -2598,6 +2597,17 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
         message={"Are you sure you want to clear this schedule entry?\nIf it's part of a block, the entire block will be removed."}
         confirmButtonText="Clear Entry"
         icon={Icons.Warning}
+      />
+      <ConfirmationModal
+        isOpen={!!conflictError}
+        onClose={() => setConflictError(null)}
+        onConfirm={() => setConflictError(null)}
+        title="ไม่สามารถบันทึกได้ (Cannot Save)"
+        message={conflictError || ''}
+        confirmButtonText="ตกลง (OK)"
+        confirmButtonVariant="primary"
+        icon={Icons.Warning}
+        hideCancelButton={true}
       />
       {isSlotInspectorModalOpen && slotInspectorModalContext && (
         <SlotAvailabilityInspectorModal
