@@ -139,7 +139,7 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
       timestamp: new Date().toISOString(),
       action,
       user: prevData.currentUser?.name || prevData.currentUser?.email || 'Unknown User',
-      description: `${subjectName} for ${gradeName} (${entry.day} P${entry.period + 1})`
+      description: `${subjectName} for ${gradeName} (${entry.day} ${prevData.periodSettings?.[entry.period]?.label || `P${entry.period}`})`
     };
   }, []);
 
@@ -201,7 +201,8 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
 
       if (!subject) continue;
 
-      const componentLabel = `${DAY_LABELS_TH[entry.day] || entry.day} คาบ P${entry.period + 1} (${gradeLevel?.name || 'Unknown'})`;
+      const periodLabelForDiscrepancy = periodSettings[entry.period]?.label || `P${entry.period}`;
+      const componentLabel = `${DAY_LABELS_TH[entry.day] || entry.day} คาบ ${periodLabelForDiscrepancy} (${gradeLevel?.name || 'Unknown'})`;
 
       // Check 1: Teacher's homeroom changed
       if (subject.isHomeroomAdvisorySubject && teacher) {
