@@ -180,16 +180,9 @@ export const useAppAuth = (
             };
           }
 
-          // Phase 1 dual-write: apps/{orgId}.scheduleEntries stays authoritative for
-          // reads — the scheduleEntries subcollection listener below is a write-only
-          // mirror during this phase (functions/src/orgWrites.ts's Phase 1 comment:
-          // mirror sync isn't atomic with the main-doc write, and the "a lag is
-          // invisible" safety argument only holds if nothing reads the mirror).
-          // Preferring the mirror here raced that sync against a just-committed
-          // main-doc write, so a just-deleted entry could still show as present
-          // until the mirror caught up. currentScheduleEntries is intentionally
-          // unused now; see the listener registration below.
-          const finalScheduleEntries: ScheduleEntry[] = Array.isArray(md.scheduleEntries) ? md.scheduleEntries : [];
+          const finalScheduleEntries: ScheduleEntry[] = Array.isArray(currentScheduleEntries) && currentScheduleEntries.length > 0
+            ? currentScheduleEntries
+            : (Array.isArray(md.scheduleEntries) ? md.scheduleEntries : []);
 
           const finalActivityLogs: ActivityLog[] = Array.isArray(currentActivityLogs) && currentActivityLogs.length > 0
             ? currentActivityLogs
@@ -249,12 +242,6 @@ export const useAppAuth = (
         );
 
         // 2. Real-time listener for subcollection (apps/{ORG_ID}/scheduleEntries).
-        // NOTE: kept subscribed (currentScheduleEntries still updates, still
-        // triggers updateCombinedAppData) but its value is no longer read into
-        // finalScheduleEntries above — apps/{ORG_ID}.scheduleEntries is the sole
-        // read source during Phase 1. Left running rather than torn down here to
-        // keep this fix scoped to the read-preference bug; removing the listener
-        // entirely is a reasonable follow-up cleanup.
         unsubSchedule = makeRetryingListener(
           'scheduleEntries',
           () => collection(db, 'apps', ORG_ID, 'scheduleEntries'),
