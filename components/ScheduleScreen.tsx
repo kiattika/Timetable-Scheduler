@@ -1823,6 +1823,10 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
         // record happened to link it there. Grade-level planner only, per the reported bug.
         if (viewType === 'gradeLevelPlanner') {
             resultSubjects = resultSubjects.filter(s => {
+                // The field is only meaningful for these two types (App.tsx:377 disables
+                // editing it otherwise) — an ordinary subject can still carry a stale/leftover
+                // value here, which must NOT scope-restrict it.
+                if (!s.isBroadAssignment && !s.isHomeroomAdvisorySubject) return true;
                 if (!s.applicableParentGradeLevelIds || s.applicableParentGradeLevelIds.length === 0) return true;
                 return s.applicableParentGradeLevelIds.some(id => relevantGradeIdsForSubjectLinks.includes(id));
             });
