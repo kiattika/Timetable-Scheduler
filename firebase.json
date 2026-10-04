@@ -1,7 +1,7 @@
 {
   "firestore": [
     {
-      "database": "ai-studio-ddf61d33-4a5f-4aed-a5a9-5bc34b3c98da",
+      "database": "smartschool",
       "rules": "firestore.rules"
     }
   ],
