@@ -308,8 +308,15 @@ export const ImportDataModal: React.FC<ImportDataModalProps> = ({
       if (selectedEntityType === 'teachers') {
         if (newItemData.department) discoveredDepartments.add(newItemData.department);
         if (newItemData.homeroomGradeLevelIds && Array.isArray(newItemData.homeroomGradeLevelIds)) {
-          // Match class names ignoring case and any spaces (e.g. "ม. 6/4" == "ม.6/4")
-          const normGl = (s: string) => String(s ?? '').replace(/\s+/g, '').toLowerCase();
+          // Match class names ignoring case/spaces and treating Thai/Latin level prefixes as equal:
+          // "ม.6/4" == "M.6/4" == "m 6/4" ; "ป.1" == "P.1"
+          const normGl = (s: string) =>
+            String(s ?? '')
+              .replace(/\s+/g, '')
+              .toLowerCase()
+              .replace(/^ม\.?(?=\d)/, 'm.')
+              .replace(/^ป\.?(?=\d)/, 'p.')
+              .replace(/^([mp])(?=\d)/, '$1.');
           const notFound: string[] = [];
           const ids: string[] = [];
           newItemData.homeroomGradeLevelIds.forEach((name: string) => {
