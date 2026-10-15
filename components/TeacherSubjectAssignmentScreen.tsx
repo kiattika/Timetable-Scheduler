@@ -80,9 +80,15 @@ const TeacherSubjectAssignmentScreen: React.FC<TeacherSubjectAssignmentScreenPro
 
   const IconComponent = getIcon();
 
+  // Links added during this open session of the dialog (the dialog stays open for the same teacher)
+  const [addedThisSession, setAddedThisSession] = useState<string[]>([]);
+  const [modalNotice, setModalNotice] = useState<string | null>(null);
+
   const openModal = () => {
     setNewAssignment({ teacherId: '', subjectId: '', selectedGradeLevelIds: [] }); 
     setError(null);
+    setAddedThisSession([]);
+    setModalNotice(null);
     setIsModalOpen(true);
   };
 
@@ -212,12 +218,15 @@ const TeacherSubjectAssignmentScreen: React.FC<TeacherSubjectAssignmentScreenPro
       finalMessage += `ตรวจพบข้อมูลเดิมรายการซ้ำ ข้ามจำนวน ${skippedMessages.length} รายการ.`;
     }
     
-    if (finalMessage) {
-      alert(finalMessage.trim()); 
-    }
-    
     if (newEntriesToAdd.length > 0) {
-        closeModal(); 
+        // Keep the dialog open on the SAME teacher so several subjects can be added in a row.
+        // Only the subject and the classes are cleared; close with the Close button / X.
+        setError(null);
+        setModalNotice(finalMessage.trim());
+        const subjLabel = getSubjectName(newAssignment.subjectId);
+        const gradeNames = newEntriesToAdd.map(en => getGradeLevelName(en.gradeLevelId)).join(', ');
+        setAddedThisSession(prev => [...prev, `${subjLabel} → ${gradeNames}`]);
+        setNewAssignment(prev => ({ ...prev, subjectId: '', selectedGradeLevelIds: [] }));
     } else if (skippedMessages.length === selectedGradeLevelIdsVal.length && selectedGradeLevelIdsVal.length > 0) {
         setError("ประวัติข้อมูลเชื่อมโยงนี้ได้รับจัดคู่ทั้งหมดแล้วในระบบ");
     }
@@ -801,6 +810,11 @@ const TeacherSubjectAssignmentScreen: React.FC<TeacherSubjectAssignmentScreenPro
               </div>
             </div>
           )}
+          {modalNotice && !error && (
+            <div className="bg-emerald-50 border-l-4 border-emerald-500 p-3 rounded-md shadow-sm text-sm text-emerald-800">
+              ✓ {modalNotice}
+            </div>
+          )}
           {modalFields.map(field => {
             const isGradeLevelField = field.name === 'gradeLevelId' && field.optionsSource === 'gradeLevels';
             return renderSelectField(field, isGradeLevelField);
@@ -810,13 +824,21 @@ const TeacherSubjectAssignmentScreen: React.FC<TeacherSubjectAssignmentScreenPro
                     Selected {newAssignment.selectedGradeLevelIds.length} grade level(s).
                 </p>
             )}
+          {addedThisSession.length > 0 && (
+            <div className="text-xs text-slate-600 border border-slate-200 rounded-md p-2 bg-slate-50">
+              <p className="font-semibold mb-1">เพิ่มแล้วในครั้งนี้ ({addedThisSession.length} วิชา) สำหรับ {getTeacherName(newAssignment.teacherId)}</p>
+              <ul className="list-disc list-inside space-y-0.5 max-h-24 overflow-y-auto">
+                {addedThisSession.map((t, i) => <li key={i}>{t}</li>)}
+              </ul>
+            </div>
+          )}
           <div className="sticky bottom-0 -mx-4 md:-mx-6 -mb-4 md:-mb-6 px-4 md:px-6 py-4 bg-white border-t border-slate-100 flex justify-end gap-3 z-10">
             <button
               type="button"
               onClick={closeModal}
               className="px-4 py-2 text-sm font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-md border border-slate-300 transition-colors"
             >
-              Cancel
+              {addedThisSession.length > 0 ? 'ปิด (Close)' : 'Cancel'}
             </button>
             <button
               type="submit"
