@@ -6,6 +6,8 @@ import * as XLSX from 'xlsx';
 // Fix: Ensure all types used from appData for optionsSource are correctly typed to have a 'name' property.
 import { AppData, Entity, EntityType, FormField, Identifiable, Subject as SubjectType, Teacher as TeacherType, SubjectTeachingMode, ScreenAccessProps, GradeLevel as GradeLevelType, PhysicalRoom as ClassroomType, TeacherSubjectAssignment, Teacher, Subject, GradeLevel, PhysicalRoom, ScheduleEntry } from '../types'; // Renamed Subject to avoid conflict
 import Modal from './Modal';
+import SearchableSelect from './SearchableSelect';
+import { thaiGradeName } from '../utils/subjectCode';
 import ConfirmationModal from './ConfirmationModal'; // Import ConfirmationModal
 import { Icons, PREDEFINED_SUBJECT_COLORS } from '../constants';
 import { getParentGradeLevelId, isParentGrade as checkIsParentGradeUtil, getChildGradeLevelIds } from './scheduleUtils'; // Import from new utils file
@@ -45,6 +47,8 @@ const EntityManagementScreen = <T extends Identifiable,>({
   const [colorMode, setColorMode] = useState<SubjectColorMode>('gradient');
   const [colorBase, setColorBase] = useState('#3B82F6');
   const [selectedRoomType, setSelectedRoomType] = useState('');
+  const [selectedTeacherDept, setSelectedTeacherDept] = useState('');
+  const [selectedTeacherHomeroom, setSelectedTeacherHomeroom] = useState('');
   
   const [isConfirmDeleteModalOpen, setIsConfirmDeleteModalOpen] = useState(false);
   const [itemToDeleteId, setItemToDeleteId] = useState<string | null>(null);
@@ -635,6 +639,15 @@ const EntityManagementScreen = <T extends Identifiable,>({
       }
     }
 
+    if (entityType === 'teachers') {
+      const t = item as any;
+      if (selectedTeacherDept && t.department !== selectedTeacherDept) return false;
+      if (selectedTeacherHomeroom) {
+        const ids: string[] = t.homeroomGradeLevelIds || [];
+        if (selectedTeacherHomeroom === '__none__' ? ids.length > 0 : !ids.includes(selectedTeacherHomeroom)) return false;
+      }
+    }
+
     if (entityType === 'subjects' && selectedDepartmentFilter) {
       if ((item as any).department !== selectedDepartmentFilter) {
         return false;
@@ -754,6 +767,11 @@ const EntityManagementScreen = <T extends Identifiable,>({
   // Subjects table shows only the key columns so it fits the screen; everything else is in the edit form
   const SUBJECT_TABLE_FIELDS = ['name', 'subjectCode', 'department', 'periodsPerWeek', 'color', 'type', 'applicableParentGradeLevelIds', 'applicableSemesters'];
   const tableFields = entityType === 'subjects' ? formFields.filter(f => SUBJECT_TABLE_FIELDS.includes(f.name as string)) : formFields;
+  const teacherDepartments = useMemo(() => {
+    if (entityType !== 'teachers') return [] as string[];
+    return Array.from(new Set((items as any[]).map(t => t.department).filter(Boolean))).sort((a, b) => String(a).localeCompare(String(b), 'th')) as string[];
+  }, [items, entityType]);
+
   const subjectDepartments = useMemo(() => {
     if (entityType !== 'subjects') return [] as string[];
     return Array.from(new Set((items as unknown as SubjectType[]).map(s => s.department).filter(Boolean) as string[])).sort((a, b) => a.localeCompare(b, 'th'));
@@ -879,14 +897,12 @@ const EntityManagementScreen = <T extends Identifiable,>({
         {entityType === 'subjects' && (
           <>
             <div className="sm:w-64">
-              <select
+              <SearchableSelect
                 value={selectedDepartmentFilter}
-                onChange={(e) => setSelectedDepartmentFilter(e.target.value)}
-                className="w-full p-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors bg-white font-medium text-slate-700"
-              >
-                <option value="">ทุกกลุ่มสาระฯ (All Departments)</option>
-                {subjectDepartments.map(d => <option key={d} value={d}>{d}</option>)}
-              </select>
+                onChange={setSelectedDepartmentFilter}
+                placeholder="ค้นหากลุ่มสาระฯ"
+                options={[{ value: '', label: 'ทุกกลุ่มสาระฯ (All Departments)' }, ...subjectDepartments.map(d => ({ value: d, label: d }))]}
+              />
             </div>
             <button
               type="button"
@@ -901,19 +917,40 @@ const EntityManagementScreen = <T extends Identifiable,>({
         )}
         {entityType === 'physicalRooms' && (
           <div className="sm:w-64">
-            <select
+            <SearchableSelect
               value={selectedRoomType}
-              onChange={(e) => setSelectedRoomType(e.target.value)}
-              className="w-full p-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors bg-white font-medium text-slate-700"
-            >
-              <option value="">All Room Types (ทุกประเภทห้อง)</option>
-              {(appData.resourceTypes || []).map((rt: any) => (
-                <option key={rt.id} value={rt.name}>
-                  {rt.name}
-                </option>
-              ))}
-            </select>
+              onChange={setSelectedRoomType}
+              placeholder="ค้นหาประเภทห้อง"
+              options={[{ value: '', label: 'All Room Types (ทุกประเภทห้อง)' }, ...(appData.resourceTypes || []).map((rt: any) => ({ value: rt.name, label: rt.name }))]}
+            />
           </div>
+        )}
+        {entityType === 'teachers' && (
+          <>
+            <div className="sm:w-64">
+              <SearchableSelect
+                value={selectedTeacherDept}
+                onChange={setSelectedTeacherDept}
+                placeholder="ค้นหากลุ่มสาระฯ"
+                options={[{ value: '', label: 'ทุกกลุ่มสาระฯ (All Departments)' }, ...teacherDepartments.map(d => ({ value: d, label: d }))]}
+              />
+            </div>
+            <div className="sm:w-56">
+              <SearchableSelect
+                value={selectedTeacherHomeroom}
+                onChange={setSelectedTeacherHomeroom}
+                placeholder="ค้นหาห้องประจำชั้น"
+                options={[
+                  { value: '', label: 'ทุกห้องประจำชั้น' },
+                  { value: '__none__', label: 'ไม่ได้เป็นครูที่ปรึกษา' },
+                  ...[...appData.gradeLevels]
+                    .filter(g => g.name.includes('/'))
+                    .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))
+                    .map(g => ({ value: g.id, label: thaiGradeName(g.name), searchText: `${g.name} ${thaiGradeName(g.name)}` })),
+                ]}
+              />
+            </div>
+          </>
         )}
       </div>
 

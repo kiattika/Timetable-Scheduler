@@ -7,6 +7,7 @@ import { Icons } from '../constants';
 import { ArrowUp, ArrowDown, Search, X } from 'lucide-react';
 import { getChildGradeLevelIds } from './scheduleUtils';
 import SearchableSelect from './SearchableSelect';
+import { thaiGradeName } from '../utils/subjectCode';
 import { computeHomeroomLinkDrift, applyHomeroomLinkDrift } from '../utils/homeroomLinks';
 
 interface TeacherSubjectAssignmentScreenProps extends ScreenAccessProps {
@@ -620,53 +621,48 @@ const TeacherSubjectAssignmentScreen: React.FC<TeacherSubjectAssignmentScreenPro
           {/* Grade Level Filter */}
           <div>
             <label className="block text-xs font-semibold text-slate-500 mb-1">ระดับชั้นเรียน (Grade Level)</label>
-            <select
+            <SearchableSelect
               value={selectedGradeLevelId}
-              onChange={(e) => setSelectedGradeLevelId(e.target.value)}
-              className="w-full py-2 px-3 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white"
-            >
-              <option value="">ทั้งหมด (Show All)</option>
-              {appData.gradeLevels.map(gl => (
-                <option key={gl.id} value={gl.id}>{gl.name}</option>
-              ))}
-            </select>
+              onChange={setSelectedGradeLevelId}
+              placeholder="พิมพ์ค้นหาระดับชั้น เช่น ม.4/3"
+              options={[
+                { value: '', label: 'ทั้งหมด (Show All)' },
+                ...[...appData.gradeLevels]
+                  .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))
+                  .map(gl => ({ value: gl.id, label: thaiGradeName(gl.name), searchText: `${gl.name} ${thaiGradeName(gl.name)}` })),
+              ]}
+            />
           </div>
 
           {/* Department Filter */}
           <div>
             <label className="block text-xs font-semibold text-slate-500 mb-1">กลุ่มสาระการเรียนรู้ (Department)</label>
-            <select
+            <SearchableSelect
               value={selectedDepartment}
-              onChange={(e) => {
-                setSelectedDepartment(e.target.value);
-                setSelectedSubjectId('');
-              }}
-              className="w-full py-2 px-3 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white"
-            >
-              <option value="">ทั้งหมด (Show All)</option>
-              {departments.map(dept => (
-                <option key={dept} value={dept}>{dept}</option>
-              ))}
-            </select>
+              onChange={(v) => { setSelectedDepartment(v); setSelectedSubjectId(''); }}
+              placeholder="พิมพ์ค้นหากลุ่มสาระฯ"
+              options={[{ value: '', label: 'ทั้งหมด (Show All)' }, ...departments.map(dept => ({ value: dept, label: dept }))]}
+            />
           </div>
 
           {/* Subject Filter */}
           <div>
             <label className="block text-xs font-semibold text-slate-500 mb-1">รายวิชา (Subject)</label>
-            <select
+            <SearchableSelect
               value={selectedSubjectId}
-              onChange={(e) => setSelectedSubjectId(e.target.value)}
-              className="w-full py-2 px-3 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white"
-            >
-              <option value="">ทั้งหมด (Show All)</option>
-              {appData.subjects
-                .filter(s => !selectedDepartment || s.department === selectedDepartment)
-                .map(sub => (
-                  <option key={sub.id} value={sub.id}>
-                    {sub.subjectCode ? `[${sub.subjectCode}] ${sub.name}` : sub.name}
-                  </option>
-                ))}
-            </select>
+              onChange={setSelectedSubjectId}
+              placeholder="พิมพ์ค้นหาชื่อหรือรหัสวิชา"
+              options={[
+                { value: '', label: 'ทั้งหมด (Show All)' },
+                ...appData.subjects
+                  .filter(s => !selectedDepartment || s.department === selectedDepartment)
+                  .map(sub => ({
+                    value: sub.id,
+                    label: sub.subjectCode ? `[${sub.subjectCode}] ${sub.name}` : sub.name,
+                    searchText: `${sub.subjectCode || ''} ${sub.name}`,
+                  })),
+              ]}
+            />
           </div>
         </div>
 
