@@ -1,5 +1,5 @@
 import type { Teacher, Subject, GradeLevel, ScheduleEntry, TeacherSubjectAssignment } from '../types';
-import { parseSubjectCode, levelFromGradeName, UNKNOWN_GROUP, type SubjectLevel } from './subjectCode';
+import { parseSubjectCode, levelFromGradeName, subGroupOf, UNKNOWN_GROUP, type SubjectLevel } from './subjectCode';
 
 export interface LoadMetrics {
   lowerBasic: number;   // ม.ต้น พื้นฐาน
@@ -24,15 +24,16 @@ export const addMetrics = (a: LoadMetrics, b: LoadMetrics): LoadMetrics => ({
 
 export type LoadSource = 'schedule' | 'links';
 
+const isActivitySubject = (subject: Subject): boolean =>
+  parseSubjectCode(subject.subjectCode)?.kind === 'activity' || !!subject.isHomeroomAdvisorySubject || !!subject.isBroadAssignment ||
+  subject.type === 'TEACHER_ONLY' || subject.type === 'STUDENT_ONLY';
+
 /** Classify `periods` periods of `subject` taught to `gradeName` into the right bucket. */
 const classify = (m: LoadMetrics, subject: Subject | undefined, gradeName: string | undefined, periods: number) => {
   m.total += periods;
   if (!subject) { m.other += periods; return; }
   const parsed = parseSubjectCode(subject.subjectCode);
-  const isActivity =
-    parsed?.kind === 'activity' || subject.isHomeroomAdvisorySubject || subject.isBroadAssignment ||
-    subject.type === 'TEACHER_ONLY' || subject.type === 'STUDENT_ONLY';
-  if (isActivity) { m.activity += periods; return; }
+  if (isActivitySubject(subject)) { m.activity += periods; return; }
   let level: SubjectLevel = parsed?.level ?? 'unknown';
   if (level === 'unknown') level = levelFromGradeName(gradeName);
   const kind = parsed?.kind ?? 'unknown';
@@ -48,7 +49,7 @@ export interface WorkloadResult {
   byDepartment: { department: string; teacherCount: number; metrics: LoadMetrics }[];
   overall: { teacherCount: number; metrics: LoadMetrics };
   /** by subject group letter (from the subject code) */
-  byGroup: { group: string; subjectCount: number; metrics: LoadMetrics }[];
+  byGroup: { group: string; subjectCount: number; metrics: LoadMetrics; subGroups: { label: string; subjectCount: number; metrics: LoadMetrics }[] }[];
 }
 
 export const computeWorkload = (args: {
@@ -64,7 +65,7 @@ export const computeWorkload = (args: {
   const gradeName = (id: string) => gradeLevels.find(g => g.id === id)?.name;
 
   const teacherMetrics = new Map<string, LoadMetrics>();
-  const groupMetrics = new Map<string, { metrics: LoadMetrics; subjects: Set<string> }>();
+  const groupMetrics = new Map<string, { metrics: LoadMetrics; subjects: Set<string>; subs: Map<string, { metrics: LoadMetrics; subjects: Set<string> }> }>();
   const touch = (teacherId: string, subjectId: string, gradeId: string, periods: number) => {
     if (periods <= 0) return;
     const subject = subjectById.get(subjectId);
@@ -72,11 +73,18 @@ export const computeWorkload = (args: {
     if (!teacherMetrics.has(teacherId)) teacherMetrics.set(teacherId, emptyMetrics());
     classify(teacherMetrics.get(teacherId)!, subject, gName, periods);
 
-    const g = parseSubjectCode(subject?.subjectCode)?.group ?? UNKNOWN_GROUP;
-    if (!groupMetrics.has(g)) groupMetrics.set(g, { metrics: emptyMetrics(), subjects: new Set() });
+    const parsed = parseSubjectCode(subject?.subjectCode);
+    // Activity-type subjects with non-standard codes (e.g. ลส-นน) still belong to the activity group
+    const g = parsed?.group ?? (subject && isActivitySubject(subject) ? 'ก' : UNKNOWN_GROUP);
+    if (!groupMetrics.has(g)) groupMetrics.set(g, { metrics: emptyMetrics(), subjects: new Set(), subs: new Map() });
     const gm = groupMetrics.get(g)!;
     classify(gm.metrics, subject, gName, periods);
     gm.subjects.add(subjectId);
+    const subLabel = subGroupOf(g, subject?.name);
+    if (!gm.subs.has(subLabel)) gm.subs.set(subLabel, { metrics: emptyMetrics(), subjects: new Set() });
+    const sm = gm.subs.get(subLabel)!;
+    classify(sm.metrics, subject, gName, periods);
+    sm.subjects.add(subjectId);
   };
 
   if (source === 'schedule') {
@@ -113,7 +121,14 @@ export const computeWorkload = (args: {
   );
 
   const byGroup = [...groupMetrics.entries()]
-    .map(([group, v]) => ({ group, subjectCount: v.subjects.size, metrics: v.metrics }))
+    .map(([group, v]) => ({
+      group,
+      subjectCount: v.subjects.size,
+      metrics: v.metrics,
+      subGroups: [...v.subs.entries()]
+        .map(([label, sv]) => ({ label, subjectCount: sv.subjects.size, metrics: sv.metrics }))
+        .sort((a, b) => b.metrics.total - a.metrics.total),
+    }))
     .sort((a, b) => (a.group === UNKNOWN_GROUP ? 1 : b.group === UNKNOWN_GROUP ? -1 : a.group.localeCompare(b.group, 'th')));
 
   return { perTeacher, byDepartment, overall, byGroup };

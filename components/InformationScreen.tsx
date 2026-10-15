@@ -79,6 +79,13 @@ const InformationScreen: React.FC<InformationScreenProps> = ({ appData }) => {
       ...workload.perTeacher.map(r => [r.teacher.department || '', r.teacher.teacherCode || '', r.teacher.name, ...mrow(r.metrics)]),
     ];
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(tRows), 'รายคน');
+    const gRows: (string | number)[][] = [['อักษร', 'กลุ่มวิชา', 'กลุ่มย่อย', 'จำนวนวิชา', ...head]];
+    workload.byGroup.forEach(g => {
+      const gl = g.group === UNKNOWN_GROUP ? 'ไม่ระบุ' : (SUBJECT_GROUP_LABELS[g.group] || `กลุ่มอื่น (${g.group})`);
+      gRows.push([g.group === UNKNOWN_GROUP ? '-' : g.group, gl, 'รวม', g.subjectCount, ...mrow(g.metrics)]);
+      if (g.subGroups.length > 1) g.subGroups.forEach(sg => gRows.push(['', gl, sg.label, sg.subjectCount, ...mrow(sg.metrics)]));
+    });
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(gRows), 'ตามกลุ่มวิชา');
     const hRows: (string | number)[][] = [['ห้อง', 'ครูที่ปรึกษา', 'รหัสครู', 'ห้องประจำชั้น']];
     roster.levels.forEach(l => l.rooms.forEach(r => {
       if (r.advisors.length === 0) hRows.push([thaiGradeName(r.name), '(ยังไม่มีครูที่ปรึกษา)', '', r.room]);
@@ -265,17 +272,27 @@ const InformationScreen: React.FC<InformationScreenProps> = ({ appData }) => {
                 </thead>
                 <tbody>
                   {workload.byGroup.map(g => (
-                    <tr key={g.group} className="hover:bg-slate-50">
-                      <td className={td}>{g.group === UNKNOWN_GROUP ? '-' : g.group}</td>
-                      <td className={tdl}>{g.group === UNKNOWN_GROUP ? 'ไม่ระบุ/รหัสไม่ตามโครงสร้าง' : (SUBJECT_GROUP_LABELS[g.group] || `กลุ่มอื่น (${g.group})`)}</td>
-                      <td className={td}>{g.subjectCount}</td>
-                      <MetricCells m={g.metrics} />
-                    </tr>
+                    <React.Fragment key={g.group}>
+                      <tr className="bg-slate-50 font-semibold">
+                        <td className={td}>{g.group === UNKNOWN_GROUP ? '-' : g.group}</td>
+                        <td className={tdl}>{g.group === UNKNOWN_GROUP ? 'ไม่ระบุ/รหัสไม่ตามโครงสร้าง' : (SUBJECT_GROUP_LABELS[g.group] || `กลุ่มอื่น (${g.group})`)}</td>
+                        <td className={td}>{g.subjectCount}</td>
+                        <MetricCells m={g.metrics} />
+                      </tr>
+                      {g.subGroups.length > 1 && g.subGroups.map(sg => (
+                        <tr key={g.group + sg.label} className="hover:bg-slate-50 text-slate-700">
+                          <td className={td}></td>
+                          <td className={`${tdl} pl-6`}>└ {sg.label}</td>
+                          <td className={td}>{sg.subjectCount}</td>
+                          <MetricCells m={sg.metrics} />
+                        </tr>
+                      ))}
+                    </React.Fragment>
                   ))}
                 </tbody>
               </table>
             </div>
-            <p className="text-xs text-slate-500 mt-1">คาบรวมของทุกครูที่สอน (วิชาที่สอนร่วมกันหลายคนนับตามจำนวนครู)</p>
+            <p className="text-xs text-slate-500 mt-1">กลุ่มย่อย (เช่น ฟิสิกส์ เคมี ดนตรีไทย คหกรรม) จำแนกจากชื่อวิชา · คาบรวมของทุกครูที่สอน (วิชาที่สอนร่วมกันหลายคนนับตามจำนวนครู)</p>
           </section>
 
           {/* 3) Per teacher */}

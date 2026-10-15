@@ -67,3 +67,49 @@ export const levelFromGradeName = (name?: string): SubjectLevel => {
   if (/[Pปp]/.test(m[1])) return 'primary';
   return n <= 3 ? 'lower' : 'upper';
 };
+
+/**
+ * Sub-group inside a learning area. The code letter is the same for e.g. ฟิสิกส์/เคมี/ชีววิทยา,
+ * so the sub-group is recognised from the subject NAME. First matching rule wins.
+ */
+const SUBGROUP_RULES: Record<string, { label: string; re: RegExp }[]> = {
+  'ว': [
+    { label: 'ฟิสิกส์', re: /ฟิสิกส์/ },
+    { label: 'เคมี', re: /เคมี/ },
+    { label: 'ชีววิทยา', re: /ชีววิทยา|ชีวะ/ },
+    { label: 'โลก ดาราศาสตร์ และอวกาศ', re: /ดาราศาสตร์|อวกาศ|โลก/ },
+    { label: 'เทคโนโลยี (คอมพิวเตอร์/วิทยาการคำนวณ/การออกแบบ)', re: /เทคโนโลยี|คอมพิวเตอร์|วิทยาการคำนวณ|การออกแบบ|โปรแกรม|หุ่นยนต์|ดิจิทัล/ },
+    { label: 'วิทยาศาสตร์กายภาพ', re: /กายภาพ/ },
+    { label: 'วิทยาศาสตร์ชีวภาพ', re: /ชีวภาพ/ },
+  ],
+  'ศ': [
+    { label: 'ดนตรีไทย', re: /ดนตรีไทย/ },
+    { label: 'ดนตรีสากล', re: /ดนตรีสากล|ดนตรี/ },
+    { label: 'นาฏศิลป์', re: /นาฏศิลป/ },
+    { label: 'ทัศนศิลป์', re: /ทัศนศิลป|ศิลปะ|วาด|ปั้น/ },
+  ],
+  'พ': [
+    { label: 'สุขศึกษาและพลศึกษา', re: /สุขศึกษาและพลศึกษา|สุขศึกษา.*พลศึกษา/ },
+    { label: 'พลศึกษา', re: /พลศึกษา|กีฬา|ฟุตบอล|บาสเกตบอล|วอลเลย์บอล|แบดมินตัน|ว่ายน้ำ/ },
+    { label: 'สุขศึกษา', re: /สุขศึกษา/ },
+  ],
+  'ง': [
+    { label: 'คหกรรม', re: /คหกรรม|อาหาร|ตัดเย็บ|เสื้อผ้า/ },
+    { label: 'เกษตรกรรม', re: /เกษตร|พืช|สัตว์|ปลูก/ },
+    { label: 'อุตสาหกรรม', re: /อุตสาหกรรม|ช่าง|ไฟฟ้า|อิเล็กทรอนิกส์|ยนต์|เครื่องกล/ },
+  ],
+  'ก': [
+    { label: 'ลูกเสือ-เนตรนารี-ยุวกาชาด', re: /ลูกเสือ|เนตรนารี|ยุวกาชาด|ผู้บำเพ็ญ/ },
+    { label: 'ชุมนุม', re: /ชุมนุม/ },
+    { label: 'แนะแนว', re: /แนะแนว/ },
+    { label: 'โฮมรูม', re: /โฮมรูม|homeroom/i },
+    { label: 'กิจกรรมเพื่อสังคมและสาธารณประโยชน์', re: /สาธารณประโยชน์|บำเพ็ญประโยชน์|เพื่อสังคม/ },
+  ],
+};
+
+export const subGroupOf = (group: string, subjectName?: string): string => {
+  const name = subjectName || '';
+  const hit = (SUBGROUP_RULES[group] || []).find(r => r.re.test(name));
+  if (hit) return hit.label;
+  return group === 'ว' ? 'วิทยาศาสตร์ทั่วไป' : 'ทั่วไป/อื่นๆ';
+};
