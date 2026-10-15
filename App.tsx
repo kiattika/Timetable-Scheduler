@@ -16,6 +16,7 @@ import LoginScreen from './components/LoginScreen';
 import Modal from './components/Modal'; 
 import PrintWithOptionsModal from './components/PrintWithOptionsModal'; 
 import { TeacherLoadReportScreen } from './components/TeacherLoadReportScreen';
+import InformationScreen from './components/InformationScreen';
 import { AdminSettingsScreen } from './components/AdminSettingsScreen';
 import { SystemHealthScreen } from './components/SystemHealthScreen';
 import { exportScheduleGridPdf } from './utils/schedulePdfExport';
@@ -32,7 +33,7 @@ import { db } from './lib/firebase';
 import { doc, getDoc, getDocFromServer } from 'firebase/firestore';
 
 type View = 'schedule' | 'manageData' | 'importData'; 
-type ManageDataSubView = EntityType | TeacherAssignmentType | PeriodSettingsType | 'organizationSettings' | UserManagementType | AcademicStructureType | TeacherLoadReportType | 'adminSettings' | 'departments' | 'resourceTypes' | 'systemHealth';
+type ManageDataSubView = EntityType | TeacherAssignmentType | PeriodSettingsType | 'organizationSettings' | UserManagementType | AcademicStructureType | TeacherLoadReportType | 'informationReports' | 'adminSettings' | 'departments' | 'resourceTypes' | 'systemHealth';
 
 const MAX_EXCEL_CELL_LENGTH = 32000; 
 
@@ -455,6 +456,11 @@ const App: React.FC = () => {
       plural: 'จัดการผู้ใช้งาน',
       getIcon: () => Icons.Users,
     },
+    informationReports: {
+      singular: 'Information',
+      plural: 'สารสนเทศ (ครูที่ปรึกษา/ภาระงานสอน)',
+      getIcon: () => Icons.FileText,
+    },
     teacherLoadReport: {
       singular: 'Report',
       plural: 'รายงานสรุปภาระงานสอน',
@@ -689,6 +695,8 @@ const App: React.FC = () => {
                     departments={departments}
                     {...screenAccessProps}
                  />;
+        case 'informationReports':
+             return <InformationScreen appData={appData} />;
         case 'teacherLoadReport':
              return <TeacherLoadReportScreen appData={appData} />;
         case 'adminSettings':
@@ -833,6 +841,7 @@ const App: React.FC = () => {
     'gradeLevels',
     'physicalRooms',
     'teacherSubjectAssignments',
+    'informationReports',
     'teacherLoadReport',
     'users',
     'adminSettings',

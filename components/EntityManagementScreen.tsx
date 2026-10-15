@@ -592,6 +592,11 @@ const EntityManagementScreen = <T extends Identifiable,>({
     }
     if (entityType === 'teachers') {
       return [...items].sort((a, b) => {
+        // Department first (Thai collation), then teacher code, then name
+        const deptA = (a as any).department || '';
+        const deptB = (b as any).department || '';
+        if (!deptA !== !deptB) return deptA ? -1 : 1; // teachers without a department go last
+        if (deptA !== deptB) return String(deptA).localeCompare(String(deptB), 'th', { sensitivity: 'base' });
         const codeA = (a as any).teacherCode || '';
         const codeB = (b as any).teacherCode || '';
         if (codeA !== codeB) {
