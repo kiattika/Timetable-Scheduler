@@ -46,7 +46,8 @@ export const AuditModal: React.FC<AuditModalProps> = ({ isOpen, onClose, appData
        const stats = allocationCounts.get(key) || { count: 0, lastPhysicalRoomId: null };
        
        const subject = appData.subjects.find(s => s.id === link.subjectId);
-       const required = link.periodsPerWeek || subject?.periodsPerWeek || 0;
+       // The subject is the source of truth; the link only keeps an older snapshot
+       const required = subject?.periodsPerWeek ?? link.periodsPerWeek ?? 0;
        
        const teacher = appData.teachers.find(t => t.id === link.teacherId);
        const gradeLevel = appData.gradeLevels.find(g => g.id === link.gradeLevelId);
@@ -66,6 +67,11 @@ export const AuditModal: React.FC<AuditModalProps> = ({ isOpen, onClose, appData
        });
     });
     
+    results.sort((a, b) =>
+      a.teacherName.localeCompare(b.teacherName, 'th') ||
+      a.subjectName.localeCompare(b.subjectName, 'th') ||
+      a.gradeLevelName.localeCompare(b.gradeLevelName, 'th', { numeric: true })
+    );
     return results;
   }, [appData, currentUser]);
 

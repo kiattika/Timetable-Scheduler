@@ -419,6 +419,15 @@ const EntityManagementScreen = <T extends Identifiable,>({
 
     if (entityType === 'subjects' && setAppData && appData && newId) {
         const savedSubject = { ...processedItem, id: newId } as unknown as SubjectType;
+        // Keep the periods-per-week snapshot stored on this subject's links in sync with the subject
+        if (editingId && typeof savedSubject.periodsPerWeek === 'number') {
+            const ppw = savedSubject.periodsPerWeek;
+            setAppData(prev => prev ? ({
+                ...prev,
+                teacherSubjectAssignments: prev.teacherSubjectAssignments.map(l =>
+                    l.subjectId === newId && l.periodsPerWeek !== ppw ? { ...l, periodsPerWeek: ppw } : l)
+            }) : prev);
+        }
         if (savedSubject.autoLinkToHomeroomTeachers && savedSubject.applicableParentGradeLevelIds && savedSubject.applicableParentGradeLevelIds.length > 0) {
             // Make this subject's links match the current homeroom advisors: add missing, remove stale
             const drift = computeHomeroomLinkDrift({

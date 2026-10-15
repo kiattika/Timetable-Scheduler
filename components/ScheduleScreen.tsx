@@ -92,7 +92,7 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
       const prevCount = prevAllocationRef.current[key] || 0;
       
       const subject = subjects.find(s => s.id === link.subjectId);
-      const required = link.periodsPerWeek || subject?.periodsPerWeek || 0;
+      const required = subject?.periodsPerWeek ?? link.periodsPerWeek ?? 0;
 
       if (required > 0 && currentCount === required && prevCount < required) {
         newlyCompletedKey = key;
