@@ -68,7 +68,10 @@ export const ImportDataModal: React.FC<ImportDataModalProps> = ({
     if (!config || !config.fields) {
       return [];
     }
-    const fields = config.fields;
+    // Teachers: homeroom grade levels are NOT imported from Excel (managed in the app).
+    const fields = selectedEntityType === 'teachers'
+      ? config.fields.filter(f => f.name !== 'homeroomGradeLevelIds')
+      : config.fields;
     return fields.map(field => {
       let note = field.placeholder || `ระบุ ${field.label}`;
       if (field.type === 'number' && field.name === 'periodsPerWeek') note = 'ตัวเลขจำนวนคาบต่อสัปดาห์ (เช่น 3 หรือ 2)';
@@ -105,8 +108,8 @@ export const ImportDataModal: React.FC<ImportDataModalProps> = ({
     
     // Add realistic sample data rows
     if (selectedEntityType === 'teachers') {
-      data.push(["นายสมชาย ใจดี", "T001", "somchai.j@utd.ac.th", "วิทยาศาสตร์และเทคโนโลยี", "ม.1/1, ม.1/2"]);
-      data.push(["นางสาวสมหญิง สดใส", "T002", "somying.s@utd.ac.th", "คณิตศาสตร์", "ม.2/1"]);
+      data.push(["นายสมชาย ใจดี", "T001", "somchai.j@utd.ac.th", "วิทยาศาสตร์และเทคโนโลยี"]);
+      data.push(["นางสาวสมหญิง สดใส", "T002", "somying.s@utd.ac.th", "คณิตศาสตร์"]);
     } else if (selectedEntityType === 'subjects') {
       data.push(["คณิตศาสตร์พื้นฐาน 1", "ค21101", 3, "คณิตศาสตร์", "#3B82F6", "single", "2/1", false, false, false, false, "ม.1"]);
       data.push(["วิทยาศาสตร์กายภาพ 1", "ว21101", 3, "วิทยาศาสตร์และเทคโนโลยี", "#10B981", "single", "2/1", false, false, false, false, "ม.1"]);
@@ -205,6 +208,8 @@ export const ImportDataModal: React.FC<ImportDataModalProps> = ({
 
     const fieldProcessingOrder: { internalField: string, colIndexInFile: number, config: FormField }[] = [];
     configForSelectedType.fields.forEach(fieldConfig => {
+      // Teachers: ignore the homeroom column entirely (never imported, never overwritten)
+      if (selectedEntityType === 'teachers' && fieldConfig.name === 'homeroomGradeLevelIds') return;
       const matchingHeaderIndex = headersFromFile.findIndex(fh => isHeaderMatch(fh, fieldConfig));
       if (matchingHeaderIndex !== -1) {
         fieldProcessingOrder.push({
@@ -217,7 +222,11 @@ export const ImportDataModal: React.FC<ImportDataModalProps> = ({
 
     const newItemsToPush: any[] = [];
     let importedCount = 0;
+    let updatedCount = 0;
+    let unchangedCount = 0;
     let skippedCount = 0;
+    // Teachers re-import: patches to apply to existing teachers, keyed by teacher id
+    const teacherUpdates = new Map<string, Record<string, any>>();
     const messages: string[] = [];
     const dataRows = jsonData.slice(1);
 
@@ -303,12 +312,6 @@ export const ImportDataModal: React.FC<ImportDataModalProps> = ({
       // Foreign key / identifier resolution
       if (selectedEntityType === 'teachers') {
         if (newItemData.department) discoveredDepartments.add(newItemData.department);
-        if (newItemData.homeroomGradeLevelIds && Array.isArray(newItemData.homeroomGradeLevelIds)) {
-          newItemData.homeroomGradeLevelIds = newItemData.homeroomGradeLevelIds.map((name: string) => {
-            const match = appData.gradeLevels.find(gl => gl.name.toLowerCase() === name.toLowerCase());
-            return match ? match.id : null;
-          }).filter(Boolean);
-        }
       }
 
       if (selectedEntityType === 'subjects') {
@@ -398,8 +401,51 @@ export const ImportDataModal: React.FC<ImportDataModalProps> = ({
         finalNewItem.homeroomGradeLevelIds = [];
       }
 
+      // Teachers: upsert by Teacher Code or Email (re-import safe). Homeroom is never touched.
+      if (selectedEntityType === 'teachers') {
+        const norm = (v: any) => String(v ?? '').trim().toLowerCase();
+        const codeNorm = norm(finalNewItem.teacherCode);
+        const emailNorm = norm(finalNewItem.email);
+        const nameNorm = norm(finalNewItem.name);
+        const isMatch = (t: any) =>
+          (!!codeNorm && norm(t.teacherCode) === codeNorm) ||
+          (!!emailNorm && norm(t.email) === emailNorm) ||
+          // Row has neither code nor email: fall back to exact name match to avoid duplicates
+          (!codeNorm && !emailNorm && norm(t.name) === nameNorm);
+
+        const patch: Record<string, any> = {};
+        (['name', 'teacherCode', 'email', 'department'] as const).forEach(k => {
+          const v = finalNewItem[k];
+          if (v !== undefined && v !== null && String(v).trim() !== '') patch[k] = v;
+        });
+        const label = finalNewItem.name || finalNewItem.teacherCode || 'รายการนี้';
+
+        const pending = newItemsToPush.find(isMatch);
+        if (pending) {
+          Object.assign(pending, patch); // same teacher repeated within this file
+          messages.push(`แถวที่ ${rowIndex + 2}: ข้าม - Teacher '${label}' ซ้ำกับแถวก่อนหน้าในไฟล์ (รวมข้อมูลให้แล้ว)`);
+          skippedCount++;
+          return;
+        }
+
+        const existing = appData.teachers.find(isMatch);
+        if (existing) {
+          const merged = { ...existing, ...(teacherUpdates.get(existing.id) || {}) };
+          const changedKeys = Object.keys(patch).filter(k => (merged as any)[k] !== patch[k]);
+          if (changedKeys.length === 0) {
+            unchangedCount++;
+          } else {
+            teacherUpdates.set(existing.id, { ...(teacherUpdates.get(existing.id) || {}), ...patch });
+            updatedCount++;
+            messages.push(`แถวที่ ${rowIndex + 2}: อัปเดต - Teacher '${label}' (${changedKeys.join(', ')})`);
+          }
+          return;
+        }
+        // No match → falls through and is added as a new teacher
+      }
+
       // Check duplicates
-      let isDuplicate = false; 
+      let isDuplicate = false;
       switch (selectedEntityType) {
         case 'teachers': {
           const tItem = finalNewItem as Teacher;
@@ -467,7 +513,7 @@ export const ImportDataModal: React.FC<ImportDataModalProps> = ({
       }
     });
 
-    if (newItemsToPush.length > 0) {
+    if (newItemsToPush.length > 0 || teacherUpdates.size > 0) {
       setAppData((prevAppData: AppData | null) => {
         if (!prevAppData) return prevAppData as any;
 
@@ -497,8 +543,13 @@ export const ImportDataModal: React.FC<ImportDataModalProps> = ({
           };
         }
 
-        const currentEntityList = (prevAppData[selectedEntityType as keyof AppData] as any[]) || [];
-        return { 
+        let currentEntityList = (prevAppData[selectedEntityType as keyof AppData] as any[]) || [];
+        if (selectedEntityType === 'teachers' && teacherUpdates.size > 0) {
+          currentEntityList = currentEntityList.map((t: any) =>
+            teacherUpdates.has(t.id) ? { ...t, ...teacherUpdates.get(t.id) } : t
+          );
+        }
+        return {
           ...prevAppData, 
           [selectedEntityType]: [...currentEntityList, ...newItemsToPush],
           departments: updatedDepartments,
@@ -507,8 +558,11 @@ export const ImportDataModal: React.FC<ImportDataModalProps> = ({
       });
     }
 
-    messages.unshift(`นำเข้าข้อมูลจาก Excel เสร็จสิ้น: นำเข้าสำเร็จ ${importedCount} รายการ, ข้าม ${skippedCount} รายการ`);
-    return { source: 'excel', importedCount, skippedCount, errorCount: 0, messages };
+    const extra = selectedEntityType === 'teachers'
+      ? `, อัปเดต ${updatedCount} รายการ, ไม่เปลี่ยนแปลง ${unchangedCount} รายการ`
+      : '';
+    messages.unshift(`นำเข้าข้อมูลจาก Excel เสร็จสิ้น: นำเข้าสำเร็จ ${importedCount} รายการ${extra}, ข้าม ${skippedCount} รายการ`);
+    return { source: 'excel', importedCount: importedCount + updatedCount, skippedCount, errorCount: 0, messages };
   };
 
   const processExcelImport = async () => {
