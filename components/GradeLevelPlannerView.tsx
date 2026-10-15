@@ -5,7 +5,7 @@ import { thaiGradeName } from '../utils/subjectCode';
 import React, { useState, useMemo, useEffect, DragEvent, MouseEvent as ReactMouseEvent } from 'react';
 import { AppData, DayOfWeek, PeriodSetting, ScheduleEntry, Subject, Teacher, PhysicalRoom, GradeLevel, AssignmentModalContext, ContextMenuTargetInfo, ScreenAccessProps, OrganizationSettings, SingleScheduleTableProps, PrintWithOptionsModalProps } from '../types';
 import { DAYS_OF_WEEK_ORDERED, Icons } from '../constants';
-import { isParentGrade as checkIsParentGradeUtil, getParentGradeLevelId as getParentIdUtil } from './scheduleUtils';
+import { isParentGrade as checkIsParentGradeUtil, getParentGradeLevelId as getParentIdUtil, isLunchPeriodForGrade } from './scheduleUtils';
 import Modal from './Modal';
 
 export const THAI_DAYS: Record<string, string> = {
@@ -101,6 +101,23 @@ export const GradeLevelScheduleTable: React.FC<SingleScheduleTableProps & {
     const periodInfo = periodSettings[periodIndex];
     const periodLabel = periodInfo?.label || `P${periodIndex}`; 
     const periodTimeTooltip = periodInfo ? `${periodInfo.startTime} - ${periodInfo.endTime}` : '';
+
+    if (cellEntries.length === 0 && isLunchPeriodForGrade(periodInfo, selectedGradeLevelId, gradeLevels)) {
+        return (
+            <td
+              key={`${day}-${periodIndex}`}
+              data-day={day}
+              data-period={periodIndex}
+              className={`p-1 border border-slate-300 align-middle text-center bg-amber-50 ${tableView === 'daysAsCols' ? 'min-h-[80px] h-auto' : 'h-28 min-h-[7rem]'}`}
+              style={{ userSelect: 'none' }}
+              title={`พักกลางวัน (${periodTimeTooltip})`}
+              aria-label={`พักกลางวัน ${day} ${periodLabel}`}
+              role="gridcell"
+            >
+              <span className="text-xs font-semibold text-amber-700">🍽️ พักกลางวัน</span>
+            </td>
+        );
+    }
 
     const isLocked = !!appData.organizationSettings?.isLocked;
     const isAssistant = appData.currentUser?.role === 'assistant';

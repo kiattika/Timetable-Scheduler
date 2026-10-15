@@ -75,6 +75,7 @@ export interface PeriodSetting {
   label: string; // e.g., "P0", "P1" (shortened)
   startTime: string; // e.g., "08:00"
   endTime: string; // e.g., "08:50"
+  lunchGradeLevelIds?: string[]; // Parent grade levels (e.g. M.1) for which this period is lunch break (children included)
 }
 
 export interface ScheduleEntry {

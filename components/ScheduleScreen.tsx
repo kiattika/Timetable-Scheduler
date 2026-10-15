@@ -14,7 +14,7 @@ import ContextMenu from './ContextMenu';
 import GradeLevelPlannerView from './GradeLevelPlannerView'; 
 import SlotAvailabilityInspectorModal from './SlotAvailabilityInspectorModal'; 
 import { AuditModal } from './AuditModal';
-import { getParentGradeLevelId, getChildGradeLevelIds, isParentGrade, isChildOf, isSharable, getAvailablePhysicalRooms } from './scheduleUtils';
+import { getParentGradeLevelId, getChildGradeLevelIds, isParentGrade, isChildOf, isSharable, getAvailablePhysicalRooms, isLunchPeriodForGrade } from './scheduleUtils';
 import { useTouchDrag } from '../hooks/useTouchDrag';
 import { ReviewWizardModal, Discrepancy } from './ReviewWizardModal';
 
@@ -576,6 +576,17 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
       }
     }
 
+    // Lunch break: never allow teaching in a grade level's lunch period
+    if (gradeLevelIdToCheck !== 'Non-Student') {
+        for (let offset = 0; offset < Math.max(1, entryTotalInBlock); offset++) {
+            const p = periodSettings[periodIndex + offset];
+            if (isLunchPeriodForGrade(p, gradeLevelIdToCheck, gradeLevels)) {
+                const g = gradeLevels.find(gl => gl.id === gradeLevelIdToCheck);
+                return `คาบ ${p?.label || periodIndex + offset} เป็นเวลาพักกลางวันของ ${g?.name || 'ระดับชั้นนี้'} ไม่สามารถจัดการเรียนการสอนได้`;
+            }
+        }
+    }
+
     for (const entry of scheduleEntries) {
         // Skip conflict check if 'entry' is the one being edited, or part of the same block being edited.
         const isSelfOrSameBlock = currentEditingEntryId === entry.id || 
@@ -658,7 +669,7 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
         }
     }
     return null;
-  }, [scheduleEntries, gradeLevels, subjects, teachers, physicalRooms, editingEntryId]); // Added editingEntryId to dependency array
+  }, [scheduleEntries, gradeLevels, subjects, teachers, physicalRooms, editingEntryId, periodSettings]); // Added editingEntryId to dependency array
 
   const handlePasteEntry = useCallback((targetSlotInfo: ContextMenuTargetInfo) => {
     if (appData.organizationSettings?.isLocked) {

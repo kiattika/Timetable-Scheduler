@@ -59,3 +59,16 @@ export const getAvailablePhysicalRooms = (
     });
     return allRooms.filter(r => !bookedRoomIds.has(r.id));
 };
+
+/** True when the given period is the lunch break of the grade level (or of its parent grade level). */
+export const isLunchPeriodForGrade = (
+    period: { lunchGradeLevelIds?: string[] } | undefined | null,
+    gradeLevelId: string | undefined | null,
+    allGradeLevels: GradeLevel[]
+): boolean => {
+    const ids = period?.lunchGradeLevelIds;
+    if (!ids || ids.length === 0 || !gradeLevelId) return false;
+    if (ids.includes(gradeLevelId)) return true;
+    const parentId = getParentGradeLevelId(gradeLevelId, allGradeLevels);
+    return !!parentId && ids.includes(parentId);
+};

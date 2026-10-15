@@ -618,6 +618,7 @@ const App: React.FC = () => {
         case 'periodSettings':
           return <PeriodSettingsManagementScreen
                     periodSettings={appData.periodSettings}
+                    gradeLevels={appData.gradeLevels}
                     setPeriodSettings={(updater) => setAppData(prev => prev ? ({...prev, periodSettings: typeof updater === 'function' ? updater(prev.periodSettings) : updater}) : null)}
                     deletePeriodSetting={handleDeletePeriodSetting}
                     {...screenAccessProps}

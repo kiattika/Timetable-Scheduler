@@ -1,18 +1,21 @@
 
 import React, { useState } from 'react';
-import { PeriodSetting, ScreenAccessProps } from '../types';
+import { PeriodSetting, GradeLevel, ScreenAccessProps } from '../types';
+import { thaiGradeName } from '../utils/subjectCode';
 import Modal from './Modal';
 import ConfirmationModal from './ConfirmationModal';
 import { Icons } from '../constants';
 
 interface PeriodSettingsManagementScreenProps extends ScreenAccessProps {
   periodSettings: PeriodSetting[];
+  gradeLevels: GradeLevel[];
   setPeriodSettings: React.Dispatch<React.SetStateAction<PeriodSetting[]>>;
   deletePeriodSetting: (periodId: string) => void;
 }
 
 const PeriodSettingsManagementScreen: React.FC<PeriodSettingsManagementScreenProps> = ({
   periodSettings,
+  gradeLevels,
   setPeriodSettings,
   deletePeriodSetting,
   permissions,
@@ -35,6 +38,24 @@ const PeriodSettingsManagementScreen: React.FC<PeriodSettingsManagementScreenPro
   const [genBreakAfter, setGenBreakAfter] = useState<number>(4);
 
   const IconComponent = Icons.Settings;
+
+  // Parent grade levels (e.g. M.1) – lunch is set per parent level and applies to all its classrooms
+  const parentGrades = React.useMemo(
+    () => gradeLevels.filter(g => !g.name.includes('/')).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true })),
+    [gradeLevels]
+  );
+  const gradeNameById = (id: string) => thaiGradeName(gradeLevels.find(g => g.id === id)?.name || '');
+  const toggleLunchGrade = (gid: string) => {
+    setCurrentPeriod(prev => {
+      const cur = prev.lunchGradeLevelIds || [];
+      return { ...prev, lunchGradeLevelIds: cur.includes(gid) ? cur.filter(x => x !== gid) : [...cur, gid] };
+    });
+  };
+  // Grades already used as lunch by another period (a grade can have only one lunch period)
+  const lunchTakenBy = (gid: string): string | null => {
+    const other = periodSettings.find(p => p.id !== editingId && (p.lunchGradeLevelIds || []).includes(gid));
+    return other ? other.label : null;
+  };
 
   const openModalForNew = () => {
     setCurrentPeriod({ label: '', startTime: '08:00', endTime: '08:50' });
@@ -103,9 +124,16 @@ const PeriodSettingsManagementScreen: React.FC<PeriodSettingsManagementScreenPro
     }
 
 
+    const lunchIds = currentPeriod.lunchGradeLevelIds || [];
+    const withLunch = <T extends PeriodSetting>(obj: T): T => {
+      const copy = { ...obj } as T;
+      if (lunchIds.length > 0) copy.lunchGradeLevelIds = lunchIds; else delete copy.lunchGradeLevelIds;
+      return copy;
+    };
+
     if (editingId) {
       setPeriodSettings(prev =>
-        prev.map(p => (p.id === editingId ? { ...p, ...currentPeriod, id: editingId } as PeriodSetting : p))
+        prev.map(p => (p.id === editingId ? withLunch({ ...p, ...currentPeriod, id: editingId } as PeriodSetting) : p))
       );
     } else {
       const newPeriod: PeriodSetting = {
@@ -114,7 +142,7 @@ const PeriodSettingsManagementScreen: React.FC<PeriodSettingsManagementScreenPro
         startTime: currentPeriod.startTime!,
         endTime: currentPeriod.endTime!,
       };
-      setPeriodSettings(prev => [...prev, newPeriod]);
+      setPeriodSettings(prev => [...prev, withLunch(newPeriod)]);
     }
     closeModal();
   };
@@ -231,6 +259,7 @@ const PeriodSettingsManagementScreen: React.FC<PeriodSettingsManagementScreenPro
                 <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">ชื่อเรียก (Label)</th>
                 <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">เวลาเริ่มต้น</th>
                 <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">เวลาสิ้นสุด</th>
+                <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">พักกลางวันของ</th>
                 <th scope="col" className="px-4 py-3 text-right text-xs font-medium text-slate-500 uppercase tracking-wider">ดำเนินการ</th>
               </tr>
             </thead>
@@ -240,6 +269,11 @@ const PeriodSettingsManagementScreen: React.FC<PeriodSettingsManagementScreenPro
                   <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-700">{period.label}</td>
                   <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-700">{period.startTime}</td>
                   <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-700">{period.endTime}</td>
+                  <td className="px-4 py-3 text-sm text-slate-700">
+                    {(period.lunchGradeLevelIds || []).length > 0
+                      ? <span className="inline-flex flex-wrap gap-1">{(period.lunchGradeLevelIds || []).map(id => <span key={id} className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 text-xs font-medium">🍽️ {gradeNameById(id)}</span>)}</span>
+                      : <span className="text-slate-300">-</span>}
+                  </td>
                   <td className="px-4 py-3 whitespace-nowrap text-right text-sm font-medium space-x-2">
                     <button
                       onClick={() => openModalForEdit(period)}
@@ -317,6 +351,23 @@ const PeriodSettingsManagementScreen: React.FC<PeriodSettingsManagementScreenPro
               required
             />
           </div>
+          <fieldset className="border border-amber-200 bg-amber-50/50 p-3 rounded-md min-w-0 w-full">
+            <legend className="text-sm font-medium text-amber-800 px-1">🍽️ คาบนี้เป็นพักกลางวันของระดับชั้น</legend>
+            <p className="text-xs text-slate-500 mb-2">ระดับชั้นที่เลือกจะแสดงข้อความ "พักกลางวัน" ในตารางชั้นเรียนของคาบนี้ และระบบจะไม่อนุญาตให้จัดคาบสอนลงไป (ใช้กับทุกห้อง เช่น เลือก ม.1 = ม.1/1 ถึง ม.1/n)</p>
+            <div className="grid grid-cols-3 gap-2">
+              {parentGrades.map(g => {
+                const taken = lunchTakenBy(g.id);
+                const checked = (currentPeriod.lunchGradeLevelIds || []).includes(g.id);
+                return (
+                  <label key={g.id} className={`flex items-center text-sm ${taken && !checked ? 'text-slate-400' : 'text-slate-700'}`} title={taken && !checked ? `ระดับชั้นนี้ตั้งพักกลางวันที่คาบ ${taken} แล้ว` : undefined}>
+                    <input type="checkbox" checked={checked} onChange={() => toggleLunchGrade(g.id)} className="rounded text-amber-600 focus:ring-amber-500 mr-1.5" />
+                    {thaiGradeName(g.name)}{taken && !checked ? ` (${taken})` : ''}
+                  </label>
+                );
+              })}
+            </div>
+            {parentGrades.length === 0 && <p className="text-xs text-slate-400">ยังไม่มีระดับชั้นหลัก (เช่น ม.1) ในโครงสร้างระดับชั้น</p>}
+          </fieldset>
           <div className="sticky bottom-0 -mx-4 md:-mx-6 -mb-4 md:-mb-6 px-4 md:px-6 py-4 bg-white border-t border-slate-100 flex justify-end gap-3 z-10">
             <button
               type="button"
