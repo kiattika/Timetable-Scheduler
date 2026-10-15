@@ -1,7 +1,7 @@
 import { formatRoomDisplay } from "../utils/stringUtils";
 
 import React, { useState, useMemo, DragEvent, useCallback, useEffect, MouseEvent as ReactMouseEvent } from 'react';
-import { History, Lock } from 'lucide-react';
+import { Lock } from 'lucide-react';
 import { AppData, DayOfWeek, GradeLevel, ScheduleEntry, Subject, Teacher, PhysicalRoom, PeriodSetting, TeacherSubjectAssignment, ScheduleViewType, AssignmentModalContext, CurrentAssignmentState, SubjectTeachingMode, ContextMenuState, ContextMenuItemAction, ContextMenuTargetInfo, CopiedScheduleEntryData, ScreenAccessProps, SlotAvailabilityInspectorModalProps, PrintOptions, PrintWithOptionsModalProps } from '../types';
 import { DAYS_OF_WEEK_ORDERED, Icons } from '../constants';
 import Modal from './Modal';
@@ -2504,44 +2504,6 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
           </div>
         )}
       </div>
-
-      {appData.currentUser?.role === 'admin' && (
-      <div className="w-full xl:w-72 shrink-0 space-y-4 non-printable sticky top-6">
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
-          <h3 className="text-sm font-semibold text-gray-900 flex items-center mb-4">
-            <History className="w-4 h-4 mr-2" />
-            Recent Activity
-          </h3>
-          <div className="space-y-4 max-h-[32rem] overflow-y-auto pr-2">
-            {appData.activityLogs && appData.activityLogs.length > 0 ? (
-              appData.activityLogs.map(log => (
-                <div key={log.id} className="text-sm pb-3 border-b border-gray-100 last:border-0 last:pb-0">
-                  <div className="flex justify-between items-center mb-1">
-                    <span className={`text-[10px] uppercase tracking-wider font-semibold px-2 py-0.5 rounded-full ${
-                      log.action === 'Added' ? 'bg-green-100 text-green-700' :
-                      (log.action === 'Removed' || log.action === 'Cleared') ? 'bg-red-100 text-red-700' :
-                      log.action === 'Logged In' ? 'bg-indigo-100 text-indigo-700' :
-                      'bg-blue-100 text-blue-700'
-                    }`}>
-                      {log.action}
-                    </span>
-                    <span className="text-xs text-gray-400">
-                      {new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                    </span>
-                  </div>
-                  <p className="text-gray-700 leading-tight text-xs mt-1">
-                    {log.user ? <span className="font-medium text-slate-900 border-r border-slate-300 pr-1 mr-1">{log.user}</span> : null}
-                    {log.description}
-                  </p>
-                </div>
-              ))
-            ) : (
-              <p className="text-xs text-gray-500 text-center py-6">No recent changes.</p>
-            )}
-          </div>
-        </div>
-      </div>
-      )}
 
       {isAssignmentModalOpen && assignmentModalContext && (
         <Modal
