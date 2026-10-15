@@ -5,6 +5,7 @@ import Modal from './Modal';
 import ConfirmationModal from './ConfirmationModal'; // Import ConfirmationModal
 import { Icons } from '../constants';
 import { ArrowUp, ArrowDown, Search, X } from 'lucide-react';
+import { computeHomeroomLinkDrift, applyHomeroomLinkDrift } from '../utils/homeroomLinks';
 
 interface TeacherSubjectAssignmentScreenProps extends ScreenAccessProps {
   appData: AppData; // Pass full AppData
@@ -38,6 +39,40 @@ const TeacherSubjectAssignmentScreen: React.FC<TeacherSubjectAssignmentScreenPro
   const [selectedGradeLevelId, setSelectedGradeLevelId] = useState('');
   const [selectedDepartment, setSelectedDepartment] = useState('');
   const [selectedSubjectId, setSelectedSubjectId] = useState('');
+
+  // Links of auto-link (homeroom) subjects that no longer match the homeroom advisors.
+  // Assistants only see / fix teachers in their own departments.
+  const homeroomDrift = useMemo(() => {
+    const user = appData.currentUser;
+    const isAssistant = user?.role === 'assistant';
+    const depts = user?.assignedDepartments || [];
+    return computeHomeroomLinkDrift({
+      teachers: appData.teachers,
+      subjects: appData.subjects,
+      gradeLevels: appData.gradeLevels,
+      links: appData.teacherSubjectAssignments || [],
+      includeTeacher: isAssistant ? (t => !!t.department && depts.includes(t.department)) : undefined
+    });
+  }, [appData.teachers, appData.subjects, appData.gradeLevels, appData.teacherSubjectAssignments, appData.currentUser]);
+  const homeroomDriftCount = homeroomDrift.missing.length + homeroomDrift.stale.length;
+
+  const describeLink = (teacherId: string, subjectId: string, gradeLevelId: string) => {
+    const t = appData.teachers.find(x => x.id === teacherId)?.name || teacherId;
+    const s = appData.subjects.find(x => x.id === subjectId)?.name || subjectId;
+    const g = appData.gradeLevels.find(x => x.id === gradeLevelId)?.name || gradeLevelId;
+    return `${t} — ${s} — ${g}`;
+  };
+
+  const handleSyncHomeroomLinks = () => {
+    const ok = window.confirm(
+      `ซิงค์ลิงก์วิชาที่เชื่อมกับครูที่ปรึกษาอัตโนมัติให้ตรงกับห้องที่ปรึกษาปัจจุบัน\n` +
+      `• เพิ่มลิงก์ที่ขาด ${homeroomDrift.missing.length} รายการ\n` +
+      `• ลบลิงก์ที่ครูไม่ได้เป็นที่ปรึกษาห้องนั้น ${homeroomDrift.stale.length} รายการ\n\nดำเนินการต่อหรือไม่?`
+    );
+    if (!ok) return;
+    const drift = homeroomDrift;
+    setAssignments(prev => applyHomeroomLinkDrift(prev, drift));
+  };
   const [sortField, setSortField] = useState<'teacher' | 'subject' | 'gradeLevel'>('teacher');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
 
@@ -458,6 +493,43 @@ const TeacherSubjectAssignmentScreen: React.FC<TeacherSubjectAssignmentScreenPro
           </button>
         </div>
       </div>
+
+      {/* Homeroom advisor ↔ link mismatch notice */}
+      {permissions.canModifyTeacherSubjectLinks && homeroomDriftCount > 0 && (
+        <div className="mb-6 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <div className="font-semibold">ลิงก์วิชาประจำชั้นไม่ตรงกับครูที่ปรึกษาปัจจุบัน {homeroomDriftCount} รายการ</div>
+              <div className="text-xs text-amber-800 mt-0.5">
+                ขาด {homeroomDrift.missing.length} รายการ · เกิน {homeroomDrift.stale.length} รายการ
+                (เฉพาะวิชาที่ตั้งค่า "เชื่อมโยงกับครูที่ปรึกษาอัตโนมัติ")
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={handleSyncHomeroomLinks}
+              className="shrink-0 bg-amber-600 hover:bg-amber-700 text-white font-semibold py-2 px-4 rounded-md shadow-sm text-sm transition-colors"
+            >
+              ซิงค์ลิงก์ตอนนี้
+            </button>
+          </div>
+          <details className="mt-2 text-xs">
+            <summary className="cursor-pointer text-amber-800">ดูรายละเอียด</summary>
+            <ul className="mt-1 max-h-40 overflow-y-auto list-disc list-inside space-y-0.5">
+              {homeroomDrift.missing.map(m => (
+                <li key={`m-${m.teacherId}-${m.subjectId}-${m.gradeLevelId}`} className="text-emerald-800">
+                  เพิ่ม: {describeLink(m.teacherId, m.subjectId, m.gradeLevelId)}
+                </li>
+              ))}
+              {homeroomDrift.stale.map(l => (
+                <li key={`s-${l.id}`} className="text-red-800">
+                  ลบ: {describeLink(l.teacherId, l.subjectId, l.gradeLevelId)}
+                </li>
+              ))}
+            </ul>
+          </details>
+        </div>
+      )}
 
       {/* Advanced Filtering Toolbar */}
       <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 mb-6 shadow-sm">
