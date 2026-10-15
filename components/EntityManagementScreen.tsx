@@ -1,3 +1,4 @@
+import { computeHomeroomLinkDrift, applyHomeroomLinkDrift } from '../utils/homeroomLinks';
 import { formatRoomDisplay } from "../utils/stringUtils";
 import React, { useState, useEffect, useMemo } from 'react';
 import * as XLSX from 'xlsx';
@@ -401,44 +402,19 @@ const EntityManagementScreen = <T extends Identifiable,>({
     if (entityType === 'subjects' && setAppData && appData && newId) {
         const savedSubject = { ...processedItem, id: newId } as unknown as SubjectType;
         if (savedSubject.autoLinkToHomeroomTeachers && savedSubject.applicableParentGradeLevelIds && savedSubject.applicableParentGradeLevelIds.length > 0) {
-            let newTeacherAssignments: TeacherSubjectAssignment[] = [...appData.teacherSubjectAssignments];
-            const linksMade = new Set<string>();
-
-            savedSubject.applicableParentGradeLevelIds.forEach(selectedParentId => {
-                const parentGrade = appData.gradeLevels.find(g => g.id === selectedParentId);
-                if (parentGrade) {
-                    const childGradeIdsOfSelectedParent = getChildGradeLevelIds(selectedParentId, appData.gradeLevels);
-                    
-                    appData.teachers.forEach(teacher => {
-                        const isHomeroomForAnyChildOfSelectedParent = teacher.homeroomGradeLevelIds?.some(hgId => 
-                            childGradeIdsOfSelectedParent.includes(hgId)
-                        );
-
-                        if (isHomeroomForAnyChildOfSelectedParent) {
-                            // Link for the SPECIFIC CHILD grades this teacher is homeroom for UNDER THIS PARENT
-                            teacher.homeroomGradeLevelIds?.forEach(homeroomChildId => {
-                                if (childGradeIdsOfSelectedParent.includes(homeroomChildId)) { // Ensure this child belongs to the current selectedParent
-                                    const childLinkKey = `${teacher.id}-${savedSubject.id}-${homeroomChildId}`;
-                                    if (!linksMade.has(childLinkKey)) {
-                                         if (!newTeacherAssignments.some(tsa => tsa.teacherId === teacher.id && tsa.subjectId === savedSubject.id && tsa.gradeLevelId === homeroomChildId)) {
-                                            newTeacherAssignments.push({
-                                                id: crypto.randomUUID(),
-                                                teacherId: teacher.id,
-                                                subjectId: savedSubject.id,
-                                                gradeLevelId: homeroomChildId,
-                                            });
-                                        }
-                                        linksMade.add(childLinkKey);
-                                    }
-                                }
-                            });
-                        }
-                    });
-                }
+            // Make this subject's links match the current homeroom advisors: add missing, remove stale
+            const drift = computeHomeroomLinkDrift({
+                teachers: appData.teachers,
+                subjects: [savedSubject],
+                gradeLevels: appData.gradeLevels,
+                links: appData.teacherSubjectAssignments,
             });
-            // Remove duplicates just in case, though linksMade should prevent functional duplicates
-            const uniqueAssignments = Array.from(new Map(newTeacherAssignments.map(item => [`${item.teacherId}-${item.subjectId}-${item.gradeLevelId}`, item])).values());
-            setAppData(prev => prev ? ({ ...prev, teacherSubjectAssignments: uniqueAssignments }) : prev);
+            let applyStale = true;
+            if (drift.stale.length > 0) {
+                applyStale = window.confirm(`พบลิงก์ของวิชานี้ ${drift.stale.length} รายการที่ครูไม่ได้เป็นที่ปรึกษาห้องนั้น\nต้องการลบลิงก์เหล่านี้ด้วยหรือไม่?\n(ตกลง = ลบและเพิ่มลิงก์ให้ตรงกับครูที่ปรึกษา, ยกเลิก = เพิ่มอย่างเดียว)`);
+            }
+            const toApply = { missing: drift.missing, stale: applyStale ? drift.stale : [] };
+            setAppData(prev => prev ? ({ ...prev, teacherSubjectAssignments: applyHomeroomLinkDrift(prev.teacherSubjectAssignments, toApply) }) : prev);
         }
     }
 
