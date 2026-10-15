@@ -6,6 +6,7 @@ import ConfirmationModal from './ConfirmationModal'; // Import ConfirmationModal
 import { Icons } from '../constants';
 import { ArrowUp, ArrowDown, Search, X } from 'lucide-react';
 import { getChildGradeLevelIds } from './scheduleUtils';
+import SearchableSelect from './SearchableSelect';
 import { computeHomeroomLinkDrift, applyHomeroomLinkDrift } from '../utils/homeroomLinks';
 
 interface TeacherSubjectAssignmentScreenProps extends ScreenAccessProps {
@@ -407,6 +408,10 @@ const TeacherSubjectAssignmentScreen: React.FC<TeacherSubjectAssignmentScreenPro
         sourceData = [...sourceData].sort((a, b) => ((a as any).name || '').localeCompare((b as any).name || '', undefined, { numeric: true, sensitivity: 'base' }));
     } else if (field.optionsSource === 'teachers') {
         sourceData = [...sourceData].sort((a, b) => {
+            const deptA = (a as any).department || '';
+            const deptB = (b as any).department || '';
+            if (!deptA !== !deptB) return deptA ? -1 : 1;
+            if (deptA !== deptB) return deptA.localeCompare(deptB, 'th', { sensitivity: 'base' });
             const codeA = (a as any).teacherCode || '';
             const codeB = (b as any).teacherCode || '';
             if (codeA !== codeB) {
@@ -426,7 +431,12 @@ const TeacherSubjectAssignmentScreen: React.FC<TeacherSubjectAssignmentScreenPro
             // Updated Format consistent with column
             label = `[${(item as any).subjectCode}] ${(item as any).name}`;
         }
-        return { value: item.id, label };
+        return {
+          value: item.id,
+          label,
+          group: (item as any).department || undefined,
+          searchText: `${(item as any).teacherCode || ''} ${(item as any).subjectCode || ''} ${(item as any).department || ''}`,
+        };
     });
     
     const fieldName = isMultiSelect ? 'selectedGradeLevelIds' : (field.name as string);
@@ -443,6 +453,15 @@ const TeacherSubjectAssignmentScreen: React.FC<TeacherSubjectAssignmentScreenPro
             {field.optionsSource === 'gradeLevels' && (selectedSub?.applicableParentGradeLevelIds?.length || 0) > 0 && (
               <p className="text-xs text-slate-500 mb-1">แสดงเฉพาะระดับชั้นที่วิชานี้เปิดสอน</p>
             )}
+            {!isMultiSelect && (field.optionsSource === 'teachers' || field.optionsSource === 'subjects') ? (
+              <SearchableSelect
+                id={fieldName}
+                value={String(fieldValue || '')}
+                options={options}
+                placeholder={field.optionsSource === 'teachers' ? 'พิมพ์ชื่อ รหัส หรือกลุ่มสาระฯ เพื่อค้นหาครู...' : 'พิมพ์ชื่อวิชา รหัส หรือกลุ่มสาระฯ เพื่อค้นหา...'}
+                onChange={(v) => handleInputChange({ target: { name: fieldName, value: v, options: [] } } as unknown as React.ChangeEvent<HTMLSelectElement>)}
+              />
+            ) : (
             <select
               id={fieldName}
               name={fieldName}
@@ -458,6 +477,7 @@ const TeacherSubjectAssignmentScreen: React.FC<TeacherSubjectAssignmentScreenPro
                 <option key={opt.value} value={opt.value}>{opt.label}</option>
             ))}
             </select>
+            )}
         </div>
     );
   };
