@@ -1078,15 +1078,17 @@ const OrganizationSettingsScreen: React.FC<OrganizationSettingsScreenProps> = ({
       )}
 
       {toast && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 pointer-events-none print:hidden">
         <div
           role="status"
-          className={`fixed bottom-6 right-6 z-[60] max-w-sm w-[calc(100%-3rem)] sm:w-auto flex items-start gap-3 px-4 py-3 rounded-lg shadow-xl border text-sm animate-in fade-in slide-in-from-bottom-4 duration-300 ${
+          className={`pointer-events-auto w-full max-w-md flex items-start gap-3 px-4 py-3 rounded-lg shadow-2xl border text-sm animate-in fade-in zoom-in-95 duration-200 ${
             toast.type === 'success' ? 'bg-emerald-600 text-white border-emerald-700' : 'bg-red-600 text-white border-red-700'
           }`}
         >
           <span className="font-semibold">{toast.type === 'success' ? '✓' : '⚠'}</span>
-          <span className="flex-1">{toast.text}</span>
+          <span className="flex-1 min-w-0 break-words">{toast.text}</span>
           <button type="button" onClick={() => setToast(null)} className="opacity-80 hover:opacity-100" aria-label="ปิด">✕</button>
+        </div>
         </div>
       )}
 

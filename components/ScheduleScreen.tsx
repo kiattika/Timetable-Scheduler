@@ -2646,8 +2646,8 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
       )}
 
       {completionToast?.isVisible && (
-        <div className="fixed bottom-6 right-6 z-50 animate-in slide-in-from-bottom-5 fade-in duration-300">
-           <div className="bg-white border-l-4 border-green-500 rounded-lg shadow-xl p-4 flex items-start gap-4 max-w-sm">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 pointer-events-none print:hidden">
+           <div className="pointer-events-auto w-full max-w-sm bg-white border-l-4 border-green-500 rounded-lg shadow-2xl p-4 flex items-start gap-4 animate-in fade-in zoom-in-95 duration-200">
               <div className="bg-green-100 text-green-600 rounded-full p-2 flex-shrink-0 mt-0.5">
                   <span className="text-xl">✅</span>
               </div>

@@ -981,8 +981,8 @@ const App: React.FC = () => {
   return (
     <div className="flex flex-col md:flex-row min-h-screen bg-slate-100 print:block">
       {saveErrorToast && (
-        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[100] max-w-md w-[92%] print:hidden" role="alert">
-          <div className="bg-red-600 text-white px-4 py-3 rounded-lg shadow-xl flex items-start gap-3">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 pointer-events-none print:hidden" role="alert">
+          <div className="pointer-events-auto w-full max-w-md bg-red-600 text-white px-4 py-3 rounded-lg shadow-xl flex items-start gap-3 animate-in fade-in zoom-in-95 duration-200">
             <Icons.Warning size={20} className="shrink-0 mt-0.5" />
             <span className="text-sm font-medium flex-1">{saveErrorToast}</span>
             <button onClick={() => setSaveErrorToast(null)} className="shrink-0 text-white/80 hover:text-white" aria-label="ปิด">✕</button>

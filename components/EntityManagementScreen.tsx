@@ -826,9 +826,11 @@ const EntityManagementScreen = <T extends Identifiable,>({
   return (
     <div className="p-4 md:p-6 bg-white shadow-lg rounded-lg relative">
       {toastMessage && (
-          <div className="fixed bottom-4 right-4 bg-slate-800 text-white px-4 py-3 rounded-md shadow-lg z-50 flex items-center gap-3 animate-in fade-in slide-in-from-bottom-4 duration-300">
-              <Icons.CheckCircle className="w-5 h-5 text-emerald-400" />
-              <span className="font-medium">{toastMessage}</span>
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 pointer-events-none print:hidden">
+            <div className="pointer-events-auto w-full max-w-sm bg-slate-800 text-white px-4 py-3 rounded-lg shadow-2xl flex items-center gap-3 animate-in fade-in zoom-in-95 duration-200">
+              <Icons.CheckCircle className="w-5 h-5 shrink-0 text-emerald-400" />
+              <span className="font-medium min-w-0 break-words">{toastMessage}</span>
+            </div>
           </div>
       )}
       <div className="flex flex-col sm:flex-row justify-between items-center mb-6 gap-4">
