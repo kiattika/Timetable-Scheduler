@@ -129,7 +129,7 @@ const AcademicStructureScreen: React.FC<AcademicStructureScreenProps> = ({
 
 
   return (
-    <div className="p-4 md:p-6 bg-white shadow-lg rounded-lg max-w-3xl mx-auto">
+    <div className="p-4 md:p-6 bg-white shadow-lg rounded-lg w-full">
       <div className="flex items-center mb-6">
         <Icons.Layers size={32} className="mr-3 text-blue-600" />
         <h2 className="text-2xl font-semibold text-slate-800">กำหนดโครงสร้างระดับชั้นและห้องเรียน</h2>
@@ -143,13 +143,20 @@ const AcademicStructureScreen: React.FC<AcademicStructureScreenProps> = ({
           ระบุจำนวนห้องเรียนสำหรับแต่ละระดับชั้นหลัก (เช่น M.1, M.2) ระบบจะสร้างระดับชั้นหลักและระดับชั้นย่อย (ห้องเรียน) ให้อัตโนมัติ
           ตัวอย่าง: หากระบุ M.1 จำนวน 3 ห้อง จะมีการสร้าง "M.1", "M.1/1", "M.1/2", และ "M.1/3".
         </p>
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
         {BASE_GRADE_LEVELS.map(baseGrade => {
-          const childGrades = appData.gradeLevels.filter(gl => gl.name.startsWith(`${baseGrade}/`));
+          const childGrades = appData.gradeLevels
+            .filter(gl => gl.name.startsWith(`${baseGrade}/`))
+            .sort((x, y) => x.name.localeCompare(y.name, undefined, { numeric: true }));
           return (
-          <div key={baseGrade} className="space-y-2">
-            <div className="flex flex-col sm:flex-row items-center sm:space-x-4 space-y-2 sm:space-y-0">
-              <label htmlFor={`rooms_${baseGrade}`} className="text-sm font-medium text-slate-700 sm:w-1/4">
-                จำนวนห้องสำหรับ {baseGrade}:
+          <div key={baseGrade} className="flex flex-col border border-slate-200 rounded-lg bg-white shadow-sm overflow-hidden">
+            <div className="px-3 py-2 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+              <span className="font-semibold text-slate-800">{baseGrade}</span>
+              <span className="text-xs text-slate-500">{childGrades.length} ห้อง</span>
+            </div>
+            <div className="p-3 space-y-2">
+              <label htmlFor={`rooms_${baseGrade}`} className="block text-xs font-medium text-slate-600">
+                จำนวนห้อง
               </label>
               <input
                 type="number"
@@ -158,31 +165,35 @@ const AcademicStructureScreen: React.FC<AcademicStructureScreenProps> = ({
                 value={roomCounts[baseGrade] || 0}
                 onChange={(e) => handleRoomCountChange(baseGrade, e.target.value)}
                 min="0"
-                className="w-full sm:w-1/4 p-2 border border-slate-300 rounded-md focus:ring-blue-500 focus:border-blue-500 shadow-sm"
+                className="w-full p-2 border border-slate-300 rounded-md focus:ring-blue-500 focus:border-blue-500 shadow-sm"
                 disabled={isProcessing}
               />
+              {childGrades.length > 0 ? (
+                <div className="flex flex-wrap gap-1.5 pt-1">
+                  {childGrades.map(child => (
+                    <span key={child.id} className="px-2 py-0.5 text-xs font-medium text-slate-700 bg-slate-100 border border-slate-200 rounded">
+                      {child.name}
+                    </span>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-slate-400 pt-1">ยังไม่มีห้องเรียน</p>
+              )}
+            </div>
+            <div className="mt-auto px-3 pb-3">
               <button
                   type="button"
                   onClick={() => requestClearChildGrades(baseGrade)}
                   disabled={isProcessing || (roomCounts[baseGrade] || 0) === 0}
-                  className="text-xs text-red-500 hover:text-red-700 underline disabled:text-slate-400 disabled:no-underline disabled:cursor-not-allowed sm:ml-auto"
-                  title={`ลบห้องเรียนทั้งหมดของ ${baseGrade} (เช่น M.1/1, M.1/2, ...)`}
+                  className="text-xs text-red-500 hover:text-red-700 underline disabled:text-slate-400 disabled:no-underline disabled:cursor-not-allowed"
+                  title={`ลบห้องเรียนทั้งหมดของ ${baseGrade} (เช่น ${baseGrade}/1, ${baseGrade}/2, ...)`}
               >
                   ล้างห้องของ {baseGrade}
               </button>
             </div>
-            
-            {childGrades.length > 0 && (
-              <div className="ml-0 sm:ml-[25%] mt-2 space-y-2 border-l-2 border-blue-200 pl-4 py-1">
-                {childGrades.map(child => (
-                  <div key={child.id} className="flex flex-col sm:flex-row items-center sm:space-x-2 space-y-2 sm:space-y-0 bg-slate-50 p-2 rounded border border-slate-100">
-                    <span className="w-full sm:w-24 font-medium text-slate-700 text-sm">{child.name}</span>
-                  </div>
-                ))}
-              </div>
-            )}
           </div>
         )})}
+        </div>
 
         <div className="flex justify-end pt-4">
           <button
