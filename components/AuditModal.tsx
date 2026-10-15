@@ -77,41 +77,41 @@ export const AuditModal: React.FC<AuditModalProps> = ({ isOpen, onClose, appData
 
   return (
     <Modal isOpen={isOpen} onClose={onClose} title="🔍 ตรวจสอบความถูกต้องของตารางสอน (Global Audit)">
-      <div className="flex flex-col space-y-4 font-sans text-slate-800" style={{ maxHeight: '70vh', minWidth: '600px' }}>
+      <div className="flex flex-col space-y-4 font-sans text-slate-800 w-full max-w-full min-w-0 overflow-x-hidden" style={{ maxHeight: '70vh' }}>
         
         {/* Tabs */}
-        <div className="flex space-x-2 border-b border-slate-200">
+        <div className="flex flex-wrap gap-x-1 border-b border-slate-200">
            <button 
              onClick={() => setActiveTab('incomplete')}
-             className={`px-4 py-2 font-medium text-sm transition-all border-b-2 ${activeTab === 'incomplete' ? 'border-red-500 text-red-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
+             className={`px-3 py-2 font-medium text-sm transition-all whitespace-nowrap border-b-2 ${activeTab === 'incomplete' ? 'border-red-500 text-red-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
            >
               🔴 ยังไม่ครบ ({incomplete.length})
            </button>
            <button 
              onClick={() => setActiveTab('completed')}
-             className={`px-4 py-2 font-medium text-sm transition-all border-b-2 ${activeTab === 'completed' ? 'border-green-500 text-green-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
+             className={`px-3 py-2 font-medium text-sm transition-all whitespace-nowrap border-b-2 ${activeTab === 'completed' ? 'border-green-500 text-green-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
            >
               🟢 ครบถ้วนแล้ว ({completed.length})
            </button>
            <button 
              onClick={() => setActiveTab('over')}
-             className={`px-4 py-2 font-medium text-sm transition-all border-b-2 ${activeTab === 'over' ? 'border-amber-500 text-amber-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
+             className={`px-3 py-2 font-medium text-sm transition-all whitespace-nowrap border-b-2 ${activeTab === 'over' ? 'border-amber-500 text-amber-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
            >
               ⚠️ จัดเกินโควตา ({over.length})
            </button>
         </div>
 
         {/* Content */}
-        <div className="overflow-y-auto flex-1 pr-2 space-y-3 pb-4">
+        <div className="overflow-y-auto overflow-x-hidden flex-1 min-w-0 pr-2 space-y-3 pb-4">
            {activeTab === 'incomplete' && (
               incomplete.length === 0 ? <p className="text-sm text-slate-500 p-4 text-center">ไม่มีรายการที่ยังจัดไม่ครบ</p> :
               incomplete.map((d, idx) => (
-                 <div key={idx} className="bg-red-50 border border-red-200 p-3 rounded-lg flex justify-between items-center">
-                    <div>
+                 <div key={idx} className="bg-red-50 border border-red-200 p-3 rounded-lg flex flex-wrap justify-between items-center gap-2">
+                    <div className="min-w-0 flex-1 break-words">
                         <div className="font-semibold text-slate-800">{d.teacherName} {d.teacherCode && `(${d.teacherCode})`}</div>
                         <div className="text-sm text-slate-600">{d.subjectName} {d.subjectCode && `[${d.subjectCode}]`} • ระดับชั้น: {d.gradeLevelName} • ห้อง: {d.roomName}</div>
                     </div>
-                    <div className="text-right whitespace-nowrap">
+                    <div className="text-right shrink-0">
                         <span className="bg-white border border-red-200 text-red-600 px-3 py-1 rounded-full text-xs font-bold shadow-sm">
                             จัดแล้ว {d.allocated}/{d.required} คาบ (ขาดอีก {d.required - d.allocated} คาบ)
                         </span>
@@ -123,14 +123,14 @@ export const AuditModal: React.FC<AuditModalProps> = ({ isOpen, onClose, appData
            {activeTab === 'completed' && (
               completed.length === 0 ? <p className="text-sm text-slate-500 p-4 text-center">ไม่มีรายการที่จัดครบถ้วน</p> :
               completed.map((d, idx) => (
-                 <div key={idx} className="bg-green-50 border border-green-200 p-3 rounded-lg flex justify-between items-center">
-                    <div>
+                 <div key={idx} className="bg-green-50 border border-green-200 p-3 rounded-lg flex flex-wrap justify-between items-center gap-2">
+                    <div className="min-w-0 flex-1 break-words">
                         <div className="font-semibold text-slate-800 flex items-center gap-2">
                            {d.teacherName} {d.teacherCode && `(${d.teacherCode})`}
                         </div>
                         <div className="text-sm text-slate-600">{d.subjectName} {d.subjectCode && `[${d.subjectCode}]`} • ระดับชั้น: {d.gradeLevelName} • ห้อง: {d.roomName}</div>
                     </div>
-                    <div className="text-right whitespace-nowrap">
+                    <div className="text-right shrink-0">
                         <span className="bg-white border border-green-200 text-green-600 px-3 py-1 rounded-full text-xs font-bold shadow-sm flex items-center gap-1">
                             ✅ สมบูรณ์ {d.allocated}/{d.required} คาบ
                         </span>
@@ -142,12 +142,12 @@ export const AuditModal: React.FC<AuditModalProps> = ({ isOpen, onClose, appData
            {activeTab === 'over' && (
               over.length === 0 ? <p className="text-sm text-slate-500 p-4 text-center">ไม่มีรายการจัดเกินโควตา</p> :
               over.map((d, idx) => (
-                 <div key={idx} className="bg-amber-50 border border-amber-300 p-3 rounded-lg flex justify-between items-center">
-                    <div>
+                 <div key={idx} className="bg-amber-50 border border-amber-300 p-3 rounded-lg flex flex-wrap justify-between items-center gap-2">
+                    <div className="min-w-0 flex-1 break-words">
                         <div className="font-semibold text-slate-800">{d.teacherName} {d.teacherCode && `(${d.teacherCode})`}</div>
                         <div className="text-sm text-slate-600">{d.subjectName} {d.subjectCode && `[${d.subjectCode}]`} • ระดับชั้น: {d.gradeLevelName} • ห้อง: {d.roomName}</div>
                     </div>
-                    <div className="text-right whitespace-nowrap">
+                    <div className="text-right shrink-0">
                         <span className="bg-white border border-amber-300 text-amber-700 px-3 py-1 rounded-full text-xs font-bold shadow-sm">
                             จัดเกิน {d.allocated}/{d.required} คาบ (เกินมา {d.allocated - d.required} คาบ)
                         </span>
