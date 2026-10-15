@@ -2434,12 +2434,14 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
             </h1>
           </div>
           <div className="mt-2 md:mt-0 flex items-center gap-3">
+             {appData.currentUser?.role !== 'teacher' && appData.currentUser?.role !== 'guest' && (
              <button 
                onClick={() => setIsAuditModalOpen(true)} 
                className="bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium px-4 py-1.5 rounded-full border border-indigo-400 shadow-sm transition-colors flex items-center gap-2"
              >
                 🔍 ตรวจสอบความถูกต้อง (Audit)
              </button>
+             )}
              <div className="text-indigo-100 text-sm font-medium bg-white/10 px-3 py-1.5 rounded-full border border-white/20">
                ภาคเรียนที่ {appData.organizationSettings?.semester || '-'} / {appData.organizationSettings?.academicYear || '-'}
              </div>
@@ -2453,7 +2455,7 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
             </div>
         )}
 
-        {discrepancies.length > 0 && (
+        {discrepancies.length > 0 && appData.currentUser?.role !== 'teacher' && appData.currentUser?.role !== 'guest' && (
           <div className="bg-rose-50 border border-rose-200 rounded-lg p-3.5 flex flex-col sm:flex-row items-center justify-between gap-3 text-rose-800 shadow-sm non-printable">
             <div className="flex items-center gap-2">
               <span className="text-xl">⚠️</span>

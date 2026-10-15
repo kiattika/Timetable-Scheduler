@@ -564,7 +564,7 @@ const App: React.FC = () => {
         return <LoginScreen onLoginSuccess={handleLoginSuccess} />;
     }
 
-    if (currentView === 'schedule') {
+    if (currentView === 'schedule' || isViewerRole) {
       return <ScheduleScreen 
                 appData={appData} 
                 setAppData={setAppData} 
@@ -905,7 +905,13 @@ const App: React.FC = () => {
     }
   };
 
-  if (appData.currentUser.role === 'guest') {
+  // A guest who has something to claim (legacy role, or first-admin bootstrap) still gets the activation page.
+  const guestNeedsActivation = appData.currentUser.role === 'guest' &&
+    (!!appData.currentUser.legacyUnclaimedRole || !hasExistingAdmins || isBootstrapAdmin);
+  // Teachers and approved-less guests are read-only viewers of the schedule page only.
+  const isViewerRole = appData.currentUser.role === 'teacher' || (appData.currentUser.role === 'guest' && !guestNeedsActivation);
+
+  if (guestNeedsActivation) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-slate-50 p-6 text-center font-sans" id="waiting-approval-lander">
         <div className="max-w-md w-full bg-white rounded-2xl shadow-xl border border-slate-200 p-8 space-y-6">
@@ -998,7 +1004,7 @@ const App: React.FC = () => {
           {appData.currentUser && ( 
               <div className="mb-4 p-3 bg-slate-50 rounded-md border border-slate-200 text-sm overflow-hidden opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity duration-300 mx-1">
                   <p className="text-slate-700 font-semibold truncate" title={appData.currentUser.name}>ผู้ใช้ปัจจุบัน: {appData.currentUser.name}</p>
-                  <p className="text-slate-500">บทบาท: {appData.currentUser.role === 'admin' ? 'ผู้ดูแลระบบ' : appData.currentUser.role === 'manager' ? 'ผู้จัดการ' : appData.currentUser.role === 'assistant' ? 'ผู้ช่วยจัดตาราง' : 'แขก'}</p>
+                  <p className="text-slate-500">บทบาท: {appData.currentUser.role === 'admin' ? 'ผู้ดูแลระบบ' : appData.currentUser.role === 'manager' ? 'ผู้จัดการ' : appData.currentUser.role === 'assistant' ? 'ผู้ช่วยจัดตาราง' : appData.currentUser.role === 'teacher' ? 'ครูผู้สอน' : 'แขก'}</p>
               </div>
           )}
           <ul className="space-y-1.5">
@@ -1011,6 +1017,8 @@ const App: React.FC = () => {
                 onClick={() => setCurrentView('schedule')}
               />
             </li>
+            {!isViewerRole && (
+            <>
             <li>
               <NavButton
                   viewName="manageData"
@@ -1124,6 +1132,8 @@ const App: React.FC = () => {
                   />
                 </li>
               </>
+            )}
+            </>
             )}
           </ul>
         </div>
