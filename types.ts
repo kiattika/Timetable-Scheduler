@@ -41,6 +41,7 @@ export interface Subject extends Identifiable {
   isHomeroomAdvisorySubject?: boolean; // Added: For subjects like Homeroom period linked to homeroom teacher
   autoLinkToHomeroomTeachers?: boolean; // Added: If true and isHomeroomAdvisorySubject, auto-link to homeroom teachers
   applicableParentGradeLevelIds?: string[]; // Added: IDs of parent grade levels this subject applies to (for homeroom linking)
+  applicableSemesters?: string[]; // Semesters this subject is offered in (e.g. ['1'] or ['2']); empty/undefined = every semester
   type?: SubjectType; // Added: Subject Type for special periods (PLC, Independent Study)
   restrictedRoomTypes?: string[]; // Added: Room types (ResourceTypes) this subject is restricted to use
 }

@@ -700,6 +700,10 @@ const EntityManagementScreen = <T extends Identifiable,>({
       if (shortType[String(value)]) return shortType[String(value)];
     }
 
+    if (entityType === 'subjects' && fieldName === 'applicableSemesters' && Array.isArray(value)) {
+      return value.map(v => `ภาค ${v}`).join(', ');
+    }
+
     if (fieldConfig?.type === 'select') {
       if (fieldConfig.optionsSource && appData) {
         // Fix: Cast sourceData to a more specific type array.
@@ -734,7 +738,7 @@ const EntityManagementScreen = <T extends Identifiable,>({
 
 
   // Subjects table shows only the key columns so it fits the screen; everything else is in the edit form
-  const SUBJECT_TABLE_FIELDS = ['name', 'subjectCode', 'department', 'periodsPerWeek', 'color', 'type'];
+  const SUBJECT_TABLE_FIELDS = ['name', 'subjectCode', 'department', 'periodsPerWeek', 'color', 'type', 'applicableParentGradeLevelIds', 'applicableSemesters'];
   const tableFields = entityType === 'subjects' ? formFields.filter(f => SUBJECT_TABLE_FIELDS.includes(f.name as string)) : formFields;
   const subjectDepartments = useMemo(() => {
     if (entityType !== 'subjects') return [] as string[];
@@ -770,7 +774,7 @@ const EntityManagementScreen = <T extends Identifiable,>({
       const headers = [
         "ชื่อวิชา", "รหัสวิชา", "จำนวนคาบ/สัปดาห์", "กลุ่มสาระการเรียนรู้", "สีประจำวิชา",
         "รูปแบบการสอน", "รูปแบบการจัดคาบ", "อนุญาตให้ใช้ห้องร่วม", "วิชาเรียนรวม",
-        "วิชาโฮมรูม/แนะแนว", "ผูกกับครูประจำชั้นอัตโนมัติ", "ระดับชั้นที่เปิดสอน", "ประเภทห้องที่จำกัด"
+        "วิชาโฮมรูม/แนะแนว", "ผูกกับครูประจำชั้นอัตโนมัติ", "ระดับชั้นที่เปิดสอน", "ประเภทห้องที่จำกัด", "ภาคเรียนที่เปิดสอน"
       ];
       const rows = (filteredItems as unknown as Subject[]).map(s => {
         const applicableGrades = (s.applicableParentGradeLevelIds || [])
@@ -785,7 +789,8 @@ const EntityManagementScreen = <T extends Identifiable,>({
           s.isHomeroomAdvisorySubject ? 'ใช่' : 'ไม่ใช่',
           s.autoLinkToHomeroomTeachers ? 'ใช่' : 'ไม่ใช่',
           applicableGrades,
-          restrictedRooms
+          restrictedRooms,
+          (s.applicableSemesters || []).join(', ')
         ];
       });
       dataAOA = [headers, ...rows];

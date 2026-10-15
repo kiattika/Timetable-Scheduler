@@ -179,6 +179,7 @@ export const ImportDataModal: React.FC<ImportDataModalProps> = ({
         note = "ระบุ 'true'/'false' หรือ 'ใช่'/'ไม่ใช่'";
       }
       else if (field.name === 'homeroomGradeLevelIds') note = 'ชื่อห้องเรียนคั่นด้วยจุลภาค (เช่น ม.1/1, ม.1/2)';
+      else if (field.name === 'applicableSemesters') note = 'ภาคเรียนที่เปิดสอน คั่นด้วยจุลภาค (เช่น 1 หรือ 2 หรือ 1, 2) เว้นว่าง = ทุกภาคเรียน';
       else if (field.name === 'applicableParentGradeLevelIds') note = 'ชื่อระดับชั้นหลักคั่นด้วยจุลภาค (เช่น ม.1, ม.2, ม.3)';
       else if (field.name === 'homeroomPhysicalRoomId') note = 'ชื่อหรือรหัสห้องประจำ (เช่น ห้อง 931 หรือ 931)';
       else if (field.name === 'type' && selectedEntityType === 'physicalRooms') note = 'ประเภทห้อง (เช่น ห้องเรียนทั่วไป, ห้องปฏิบัติการ, สนาม/ลานกิจกรรม)';
@@ -284,6 +285,7 @@ export const ImportDataModal: React.FC<ImportDataModalProps> = ({
       if (fn === 'isHomeroomAdvisorySubject' && (fh.includes('โฮมรูม') || fh.includes('แนะแนว') || fh === 'homeroom subject')) return true;
       if (fn === 'autoLinkToHomeroomTeachers' && (fh.includes('ผูกกับครู') || fh.includes('auto link') || fh === 'auto link teachers')) return true;
       if (fn === 'applicableParentGradeLevelIds' && (fh.includes('เปิดสอน') || fh.includes('applicable grades') || fh.includes('ระดับชั้นที่เรียน'))) return true;
+      if (fn === 'applicableSemesters' && (fh.includes('ภาคเรียน') || fh.includes('semester'))) return true;
       if (fn === 'restrictedRoomTypes' && (fh.includes('ประเภทห้อง') || fh.includes('restricted room') || fh.includes('ห้องที่จำกัด'))) return true;
       if (fn === 'description' && (fh.includes('คำอธิบาย') || fh.includes('หมายเหตุ') || fh === 'description' || fh === 'notes')) return true;
 
@@ -382,8 +384,8 @@ export const ImportDataModal: React.FC<ImportDataModalProps> = ({
               break;
             case 'multiselect': 
             case 'checkboxgroup':
-              if (internalField === 'homeroomGradeLevelIds' || internalField === 'applicableParentGradeLevelIds' || internalField === 'restrictedRoomTypes') {
-                processedValue = rawValue.split(/[,，\n]/).map(name => name.trim()).filter(Boolean);
+              if (internalField === 'homeroomGradeLevelIds' || internalField === 'applicableParentGradeLevelIds' || internalField === 'restrictedRoomTypes' || internalField === 'applicableSemesters') {
+                processedValue = rawValue.split(/[,，\n]/).map(name => name.trim().replace(/^(ภาคเรียนที่|ภาคเรียน|ภาค|เทอม)\s*/, '')).filter(Boolean);
               }
               break;
             default: 
@@ -395,7 +397,7 @@ export const ImportDataModal: React.FC<ImportDataModalProps> = ({
             else if (fieldConfig.name === 'allowClassroomSharing' || fieldConfig.name === 'isHomeroomAdvisorySubject' || fieldConfig.name === 'autoLinkToHomeroomTeachers' || fieldConfig.name === 'isBroadAssignment') processedValue = false;
             else if (fieldConfig.name === 'color') processedValue = PREDEFINED_SUBJECT_COLORS[appData.subjects.length % PREDEFINED_SUBJECT_COLORS.length];
             else if (fieldConfig.name === 'schedulingPattern') processedValue = '';
-            else if (fieldConfig.name === 'applicableParentGradeLevelIds' || fieldConfig.name === 'restrictedRoomTypes') processedValue = [];
+            else if (fieldConfig.name === 'applicableParentGradeLevelIds' || fieldConfig.name === 'restrictedRoomTypes' || fieldConfig.name === 'applicableSemesters') processedValue = [];
             else processedValue = undefined;
           } else if (selectedEntityType === 'teachers' && fieldConfig.name === 'homeroomGradeLevelIds') {
             processedValue = [];
