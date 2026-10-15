@@ -31,6 +31,22 @@ const OrganizationSettingsScreen: React.FC<OrganizationSettingsScreenProps> = ({
   const [hasDownloadedBackup, setHasDownloadedBackup] = useState(false);
   const [isDownloadingBackup, setIsDownloadingBackup] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
+  // Counts shown in the confirmation dialogs (loaded when a dialog opens)
+  const [resetPreview, setResetPreview] = useState<{ entries: number; links: number; teachers: number; subjects: number; rooms: number; grades: number } | null>(null);
+  const [toast, setToast] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  // Show every success / error message as a toast too — the inline banners sit at the top of a long page.
+  useEffect(() => {
+    if (successMessage) setToast({ type: 'success', text: successMessage });
+  }, [successMessage]);
+  useEffect(() => {
+    if (error) setToast({ type: 'error', text: error });
+  }, [error]);
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 6000);
+    return () => clearTimeout(t);
+  }, [toast]);
   const [fetchedDomain, setFetchedDomain] = useState<string>('');
 
   useEffect(() => {
@@ -221,9 +237,20 @@ const OrganizationSettingsScreen: React.FC<OrganizationSettingsScreenProps> = ({
       alert("กรุณาดาวน์โหลดข้อมูลสำรองก่อนทำรายการ");
       return;
     }
-    setOrganizationSettings(null); // This will trigger useEffect to set default fields
+    setOrganizationSettings(null);
+    // The sync effect ignores null, so reset the form fields here as well
+    setCurrentSettings({
+      name: '', semester: '', academicYear: '', directorName: '', directorPosition: 'ผู้อำนวยการ',
+      deputyDirectorName: '', deputyDirectorPosition: 'รองผู้อำนวยการ', semesterStartDate: '', semesterEndDate: '',
+      schoolHolidays: '', operatingDays: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"] as DayOfWeek[],
+      allowedDomain: '', schoolAdminEmail: '', orderNumber: '', orderDate: '', department: 'กลุ่มบริหารวิชาการ',
+      workGroupName: 'กลุ่มงานวิชาการและหลักสูตร', proposerName: '', proposerPosition: 'หัวหน้างานจัดตารางสอน',
+      reviewerName: '', reviewerPosition: 'หัวหน้ากลุ่มงานวิชาการและหลักสูตร', legalBasisText: '',
+    });
+    setLogoPreview(null);
+    setEmblemPreview(null);
     setError(null);
-    setSuccessMessage('ลบข้อมูลหน่วยงานทั้งหมดแล้ว และได้ตั้งค่าเริ่มต้นให้บางส่วน');
+    setSuccessMessage('ล้างข้อมูลหน่วยงานแล้ว (ข้อมูลครู วิชา ห้อง และตารางสอนไม่ถูกลบ) — กรอกข้อมูลหน่วยงานใหม่แล้วกด "บันทึกการเปลี่ยนแปลง"');
     setIsConfirmClearModalOpen(false);
     setHasDownloadedBackupForClear(false);
   };
@@ -231,7 +258,16 @@ const OrganizationSettingsScreen: React.FC<OrganizationSettingsScreenProps> = ({
   const requestResetSemester = () => {
     if (currentUser?.role !== 'admin') return;
     setHasDownloadedBackup(false);
+    setResetPreview(null);
     setIsResetSemesterModalOpen(true);
+    fetchAppData(ORG_ID).then(d => setResetPreview({
+      entries: d.scheduleEntries?.length || 0,
+      links: d.teacherSubjectAssignments?.length || 0,
+      teachers: d.teachers?.length || 0,
+      subjects: d.subjects?.length || 0,
+      rooms: d.physicalRooms?.length || 0,
+      grades: d.gradeLevels?.length || 0,
+    })).catch(() => setResetPreview(null));
   };
 
   const handleDownloadBackup = async () => {
@@ -261,7 +297,8 @@ const OrganizationSettingsScreen: React.FC<OrganizationSettingsScreenProps> = ({
       const orgId = ORG_ID;
       await resetSemesterTimetable(orgId, currentUser);
       setIsResetSemesterModalOpen(false);
-      alert("รีเซ็ตตารางเรียนสำหรับภาคเรียนใหม่เรียบร้อยแล้ว");
+      setError(null);
+      setSuccessMessage('เริ่มภาคเรียนใหม่เรียบร้อยแล้ว: ล้างตารางสอนและลิงก์ครู-วิชาแล้ว ปลดล็อกตารางแล้ว — อย่าลืมแก้ภาคเรียน/ปีการศึกษาแล้วกดบันทึก (หากหน้าจอยังแสดงข้อมูลเดิม ให้รีเฟรชหน้า)');
     } catch (err) {
       console.error("Failed to reset semester", err);
       alert("เกิดข้อผิดพลาดในการรีเซ็ตตารางเรียน");
@@ -275,7 +312,7 @@ const OrganizationSettingsScreen: React.FC<OrganizationSettingsScreenProps> = ({
   const isAdmin = currentUser?.role === 'admin';
 
   return (
-    <div className="p-4 md:p-6 bg-white shadow-lg rounded-lg max-w-2xl mx-auto">
+    <div className="p-4 md:p-6 bg-white shadow-lg rounded-lg w-full">
       <div className="flex items-center mb-6">
         {IconComponent && <IconComponent size={32} className="mr-3 text-blue-600" />}
         <h2 className="text-2xl font-semibold text-slate-800">ข้อมูลหน่วยงาน</h2>
@@ -285,6 +322,9 @@ const OrganizationSettingsScreen: React.FC<OrganizationSettingsScreenProps> = ({
       {successMessage && <p className="mb-4 text-sm text-green-600 bg-green-50 p-3 rounded-md border border-green-200">{successMessage}</p>}
 
       <form onSubmit={handleSubmit} className="space-y-6">
+        {/* Two columns on wide screens: core settings | official-document data */}
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 items-start">
+        <div className="space-y-6">
         {/* Core System Configuration Section */}
         <div className="bg-slate-50 p-4 rounded-lg border border-slate-200 space-y-4">
           <div className="flex items-center justify-between border-b border-slate-200 pb-2">
@@ -523,6 +563,8 @@ const OrganizationSettingsScreen: React.FC<OrganizationSettingsScreenProps> = ({
             </div>
         </div>
 
+        </div>
+        <div className="space-y-6">
         {/* --- ข้อมูลสำหรับเอกสารราชการและคำสั่ง --- */}
         <fieldset className="border border-slate-200 p-6 rounded-xl bg-slate-50/50 space-y-4">
             <legend className="text-lg font-semibold text-slate-800 px-3 flex items-center bg-white rounded-md border border-slate-200 shadow-sm py-1">
@@ -768,6 +810,9 @@ const OrganizationSettingsScreen: React.FC<OrganizationSettingsScreenProps> = ({
             </div>
         </fieldset>
 
+        </div>
+        </div>
+
         {/* --- Academic Term Settings --- */}
         <fieldset className="border border-slate-200 p-6 rounded-xl bg-slate-50/50">
            <legend className="text-lg font-semibold text-slate-800 px-3 flex items-center bg-white rounded-md border border-slate-200 shadow-sm py-1">
@@ -890,7 +935,7 @@ const OrganizationSettingsScreen: React.FC<OrganizationSettingsScreenProps> = ({
           </div>
         </div>
 
-          <div className="sticky bottom-0 -mx-4 md:-mx-8 -mb-4 md:-mb-8 px-4 md:px-8 py-4 bg-white/90 backdrop-blur-md border-t border-slate-200 flex flex-col sm:flex-row justify-between items-center space-y-3 sm:space-y-0 sm:space-x-3 z-10">
+          <div className="sticky bottom-0 -mx-4 md:-mx-6 -mb-4 md:-mb-6 px-4 md:px-6 py-4 bg-white/90 backdrop-blur-md border-t border-slate-200 flex flex-col sm:flex-row justify-between items-center space-y-3 sm:space-y-0 sm:space-x-3 z-10">
            <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
              <button
               type="button"
@@ -900,9 +945,9 @@ const OrganizationSettingsScreen: React.FC<OrganizationSettingsScreenProps> = ({
                               ? 'text-red-600 bg-red-50 hover:bg-red-100 border border-red-300' 
                               : 'text-slate-400 bg-slate-100 border border-slate-300 cursor-not-allowed'}`}
               disabled={!permissions.canPerformManagerActions}
-              title={permissions.canPerformManagerActions ? "ล้างข้อมูลทั้งหมด" : "ล็อกโดยระบบส่วนกลาง"}
+              title={permissions.canPerformManagerActions ? "ล้างเฉพาะข้อมูลตั้งค่าหน่วยงาน (ไม่ลบครู วิชา ห้อง หรือตารางสอน)" : "ล็อกโดยระบบส่วนกลาง"}
             >
-              ล้างข้อมูลทั้งหมด
+              ล้างข้อมูลหน่วยงาน
             </button>
             {isAdmin && (
               <button
@@ -935,15 +980,37 @@ const OrganizationSettingsScreen: React.FC<OrganizationSettingsScreenProps> = ({
                   <Icons.Warning size={24} />
                 </div>
                 <div>
-                  <h3 className="text-xl font-bold text-slate-900">ยืนยันการลบข้อมูลหน่วยงานทั้งหมด</h3>
-                  <p className="text-sm text-slate-500">ขั้นตอนการล้างข้อมูลและการตั้งค่าหน่วยงาน</p>
+                  <h3 className="text-xl font-bold text-slate-900">ยืนยันการล้างข้อมูลหน่วยงาน</h3>
+                  <p className="text-sm text-slate-500">ล้างเฉพาะ "การตั้งค่าหน่วยงาน" ในหน้านี้เท่านั้น</p>
                 </div>
               </div>
               
               <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
                 <p className="text-sm text-red-800 font-medium">
-                  คำเตือน: คุณแน่ใจหรือไม่ว่าต้องการลบข้อมูลหน่วยงานทั้งหมด? การดำเนินการนี้ไม่สามารถย้อนกลับได้ และจะคืนค่าเริ่มต้นบางส่วน กรุณาสำรองข้อมูลปัจจุบันก่อนทำรายการ
+                  คำเตือน: การดำเนินการนี้ไม่สามารถย้อนกลับได้ กรุณาสำรองข้อมูลปัจจุบันก่อนทำรายการ
                 </p>
+              </div>
+
+              <div className="mb-6 grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                <div className="p-3 rounded-lg border border-red-200 bg-white">
+                  <p className="font-semibold text-red-700 mb-1">สิ่งที่จะถูกล้าง</p>
+                  <ul className="list-disc list-inside space-y-0.5 text-slate-700">
+                    <li>ชื่อ ที่อยู่ อีเมล์ โทรศัพท์ โลโก้ และตราครุฑของหน่วยงาน</li>
+                    <li>ภาคเรียน ปีการศึกษา วันเปิด-ปิดภาคเรียน วันหยุด วันจัดการเรียนการสอน</li>
+                    <li>ชื่อ/ตำแหน่งผู้บริหาร และข้อมูลสำหรับเอกสารคำสั่ง/บันทึกข้อความ</li>
+                    <li>อีเมล์แอดมินโรงเรียนและโดเมนที่อนุญาต</li>
+                    <li>สถานะล็อกตารางเรียน</li>
+                  </ul>
+                </div>
+                <div className="p-3 rounded-lg border border-emerald-200 bg-white">
+                  <p className="font-semibold text-emerald-700 mb-1">สิ่งที่ไม่ถูกลบ</p>
+                  <ul className="list-disc list-inside space-y-0.5 text-slate-700">
+                    <li>ครู วิชา ห้องเรียน ระดับชั้น ห้องกายภาพ</li>
+                    <li>ตารางสอนและลิงก์ครู-วิชา</li>
+                    <li>ผู้ใช้งานและสิทธิ์ ตั้งค่าคาบเรียน</li>
+                  </ul>
+                  <p className="mt-2 text-slate-500">ถ้าต้องการล้างตารางสอน ให้ใช้ปุ่ม "เริ่มภาคเรียนใหม่"</p>
+                </div>
               </div>
 
               <div className="space-y-4">
@@ -982,7 +1049,7 @@ const OrganizationSettingsScreen: React.FC<OrganizationSettingsScreenProps> = ({
 
                 <div className={`flex items-center justify-between p-3 border rounded-lg transition-colors ${hasDownloadedBackupForClear ? 'border-red-200 bg-red-50' : 'border-slate-200 bg-slate-50 opacity-50'}`}>
                   <div>
-                    <p className={`text-sm font-medium ${hasDownloadedBackupForClear ? 'text-red-700' : 'text-slate-500'}`}>ขั้นที่ 2: ยืนยันการลบข้อมูล</p>
+                    <p className={`text-sm font-medium ${hasDownloadedBackupForClear ? 'text-red-700' : 'text-slate-500'}`}>ขั้นที่ 2: ยืนยันการล้างข้อมูลหน่วยงาน</p>
                     <p className="text-xs text-red-500/70">การกระทำนี้ย้อนกลับไม่ได้</p>
                   </div>
                   <button 
@@ -991,7 +1058,7 @@ const OrganizationSettingsScreen: React.FC<OrganizationSettingsScreenProps> = ({
                     disabled={!hasDownloadedBackupForClear}
                     className={`px-4 py-2 text-sm font-medium rounded transition-colors ${hasDownloadedBackupForClear ? 'bg-red-600 hover:bg-red-700 text-white' : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`}
                   >
-                    ลบข้อมูลทั้งหมด
+                    ล้างข้อมูลหน่วยงาน
                   </button>
                 </div>
               </div>
@@ -1007,6 +1074,19 @@ const OrganizationSettingsScreen: React.FC<OrganizationSettingsScreenProps> = ({
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {toast && (
+        <div
+          role="status"
+          className={`fixed bottom-6 right-6 z-[60] max-w-sm w-[calc(100%-3rem)] sm:w-auto flex items-start gap-3 px-4 py-3 rounded-lg shadow-xl border text-sm animate-in fade-in slide-in-from-bottom-4 duration-300 ${
+            toast.type === 'success' ? 'bg-emerald-600 text-white border-emerald-700' : 'bg-red-600 text-white border-red-700'
+          }`}
+        >
+          <span className="font-semibold">{toast.type === 'success' ? '✓' : '⚠'}</span>
+          <span className="flex-1">{toast.text}</span>
+          <button type="button" onClick={() => setToast(null)} className="opacity-80 hover:opacity-100" aria-label="ปิด">✕</button>
         </div>
       )}
 
@@ -1027,9 +1107,31 @@ const OrganizationSettingsScreen: React.FC<OrganizationSettingsScreenProps> = ({
               
               <div className="mb-6 p-4 bg-amber-50 border border-amber-200 rounded-lg">
                 <p className="text-sm text-amber-800 font-medium">
-                  คำเตือน: การดำเนินการนี้จะล้างข้อมูลตารางสอนและการมอบหมายงานทั้งหมดเพื่อเริ่มภาคเรียนใหม่ (รายชื่อครู วิชา ห้องเรียน จะยังคงอยู่) กรุณาสำรองข้อมูลปัจจุบันก่อนทำรายการ
+                  คำเตือน: การดำเนินการนี้ไม่สามารถย้อนกลับได้ กรุณาสำรองข้อมูลปัจจุบันก่อนทำรายการ
                 </p>
               </div>
+
+              <div className="mb-6 grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                <div className="p-3 rounded-lg border border-red-200 bg-white">
+                  <p className="font-semibold text-red-700 mb-1">สิ่งที่จะถูกล้าง</p>
+                  <ul className="list-disc list-inside space-y-0.5 text-slate-700">
+                    <li>รายการในตารางสอนทั้งหมด{resetPreview ? ` (${resetPreview.entries.toLocaleString()} รายการ)` : ' (กำลังนับ...)'}</li>
+                    <li>ลิงก์ครู-วิชา-ห้อง ทั้งหมด{resetPreview ? ` (${resetPreview.links.toLocaleString()} ลิงก์)` : ''}</li>
+                    <li>ปลดล็อกตารางเรียน</li>
+                  </ul>
+                </div>
+                <div className="p-3 rounded-lg border border-emerald-200 bg-white">
+                  <p className="font-semibold text-emerald-700 mb-1">สิ่งที่ยังคงอยู่</p>
+                  <ul className="list-disc list-inside space-y-0.5 text-slate-700">
+                    <li>ครู{resetPreview ? ` ${resetPreview.teachers} คน` : ''} / วิชา{resetPreview ? ` ${resetPreview.subjects} วิชา` : ''}</li>
+                    <li>ห้อง{resetPreview ? ` ${resetPreview.rooms} ห้อง` : ''} / ระดับชั้น-ห้องเรียน{resetPreview ? ` ${resetPreview.grades} รายการ` : ''}</li>
+                    <li>ข้อมูลหน่วยงาน ผู้ใช้ ตั้งค่าคาบเรียน ประวัติการใช้งาน</li>
+                  </ul>
+                </div>
+              </div>
+              <p className="mb-6 text-xs text-slate-500">
+                ระบบจะ<b>ไม่เปลี่ยนเลขภาคเรียน/ปีการศึกษาให้อัตโนมัติ</b> หลังล้างแล้วให้แก้ในหน้านี้และกดบันทึก จากนั้นสร้างลิงก์ครู-วิชาใหม่ (หรือนำเข้า) สำหรับภาคเรียนใหม่
+              </p>
 
               <div className="space-y-4">
                 <div className="flex items-center justify-between p-3 border border-slate-200 rounded-lg">
