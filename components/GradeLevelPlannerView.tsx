@@ -1,4 +1,6 @@
 import { formatRoomDisplay, formatRoomShort } from "../utils/stringUtils";
+import SearchableSelect from './SearchableSelect';
+import { thaiGradeName } from '../utils/subjectCode';
 
 import React, { useState, useMemo, useEffect, DragEvent, MouseEvent as ReactMouseEvent } from 'react';
 import { AppData, DayOfWeek, PeriodSetting, ScheduleEntry, Subject, Teacher, PhysicalRoom, GradeLevel, AssignmentModalContext, ContextMenuTargetInfo, ScreenAccessProps, OrganizationSettings, SingleScheduleTableProps, PrintWithOptionsModalProps } from '../types';
@@ -583,18 +585,19 @@ const GradeLevelPlannerView: React.FC<GradeLevelPlannerViewPropsExtended> = (pro
             </h2>
           </div>
           <div className="flex items-center gap-x-2">
-              <select
+              <SearchableSelect
                   id="gradeLevelSelect"
+                  compact
+                  className="w-48"
                   value={selectedGradeLevelId || ""}
-                  onChange={(e) => setSelectedGradeLevelId(e.target.value)}
-                  className="p-2 border border-slate-300 rounded-md focus:ring-blue-500 focus:border-blue-500 shadow-sm text-sm"
-                  aria-label="Select Grade Level"
-              >
-                  <option value="" disabled>-- Select Grade Level --</option>
-                  {gradeLevels.slice().sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })).map(gl => (
-                      <option key={gl.id} value={gl.id}>{gl.name}</option>
-                  ))}
-                            </select>
+                  onChange={(v) => setSelectedGradeLevelId(v)}
+                  placeholder="ค้นหาระดับชั้น/ห้อง เช่น ม.4/3"
+                  options={gradeLevels.slice().sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })).map(gl => ({
+                      value: gl.id,
+                      label: gl.name,
+                      searchText: thaiGradeName(gl.name),
+                  }))}
+              />
               {selectedGradeLevelId && (
                   <select
                       value={selectedCohort}

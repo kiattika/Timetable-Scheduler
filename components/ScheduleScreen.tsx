@@ -5,6 +5,8 @@ import { History, Lock } from 'lucide-react';
 import { AppData, DayOfWeek, GradeLevel, ScheduleEntry, Subject, Teacher, PhysicalRoom, PeriodSetting, TeacherSubjectAssignment, ScheduleViewType, AssignmentModalContext, CurrentAssignmentState, SubjectTeachingMode, ContextMenuState, ContextMenuItemAction, ContextMenuTargetInfo, CopiedScheduleEntryData, ScreenAccessProps, SlotAvailabilityInspectorModalProps, PrintOptions, PrintWithOptionsModalProps } from '../types';
 import { DAYS_OF_WEEK_ORDERED, Icons } from '../constants';
 import Modal from './Modal';
+import SearchableSelect from './SearchableSelect';
+import { thaiGradeName } from '../utils/subjectCode';
 import ConfirmationModal from './ConfirmationModal'; 
 import TeacherScheduleView from './TeacherScheduleView';
 import RoomUsageView from './RoomUsageView';
@@ -996,6 +998,10 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
     setEditingEntryId(null);
     setConflictError(null);
   };
+
+  // Adapter so SearchableSelect (value-only) can reuse handleAssignmentChange
+  const fireAssignmentChange = (name: string, value: string) =>
+    handleAssignmentChange({ target: { name, value, multiple: false } } as unknown as React.ChangeEvent<HTMLSelectElement>);
 
   const handleAssignmentChange = (e: React.ChangeEvent<HTMLSelectElement | HTMLInputElement>) => { 
     const { name, value } = e.target;
@@ -2149,24 +2155,18 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
   const subjectField = (
     <div>
       <label htmlFor="subjectId_modal" className="block text-sm font-medium text-slate-700 mb-1">Subject (รายวิชา)</label>
-      <select
+      <SearchableSelect
         id="subjectId_modal"
-        name="subjectId"
         value={currentAssignment.subjectId || ''}
-        onChange={handleAssignmentChange}
-        className="w-full p-2 border border-slate-300 rounded-md focus:ring-blue-500 focus:border-blue-500 shadow-sm"
-        required
-      >
-        <option value="" disabled>Select Subject</option>
-        {modalSubjects.map(s => (
-          <option key={s.id} value={s.id} style={{ color: s.color }}>
-            {s.name} {s.subjectCode && `(${s.subjectCode})`}
-            {s.type && s.type !== 'STANDARD' && ` [${s.type}]`}
-            {s.isBroadAssignment && "(Broad)"}
-            {s.isHomeroomAdvisorySubject && "(Advisory)"}
-          </option>
-        ))}
-      </select>
+        onChange={(v) => fireAssignmentChange('subjectId', v)}
+        placeholder="พิมพ์ชื่อวิชาหรือรหัสวิชาเพื่อค้นหา..."
+        options={modalSubjects.map(s => ({
+          value: s.id,
+          label: `${s.name}${s.subjectCode ? ` (${s.subjectCode})` : ''}${s.type && s.type !== 'STANDARD' ? ` [${s.type}]` : ''}${s.isBroadAssignment ? ' (Broad)' : ''}${s.isHomeroomAdvisorySubject ? ' (Advisory)' : ''}`,
+          searchText: `${s.subjectCode || ''} ${s.department || ''}`,
+          group: s.department || undefined,
+        }))}
+      />
       {currentAssignment.gradeLevelId && modalSubjects.length === 0 && (
         <p className="text-xs text-amber-600 mt-1">
             No subjects found based on current criteria or all subjects have met their weekly period limit for {gradeLevels.find(gl=>gl.id===currentAssignment.gradeLevelId)?.name || 'this grade'}.
@@ -2195,20 +2195,14 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
   ) : (
     <div>
       <label htmlFor="gradeLevelId_modal" className="block text-sm font-medium text-slate-700 mb-1">Grade Level</label>
-      <select
+      <SearchableSelect
         id="gradeLevelId_modal"
-        name="gradeLevelId"
         value={currentAssignment.gradeLevelId || ''}
-        onChange={handleAssignmentChange}
-        className="w-full p-2 border border-slate-300 rounded-md focus:ring-blue-500 focus:border-blue-500 shadow-sm"
-        required
+        onChange={(v) => fireAssignmentChange('gradeLevelId', v)}
+        placeholder="ค้นหาระดับชั้น/ห้อง เช่น ม.4/3"
         disabled={!!assignmentModalContext?.fixedGradeLevelId || (!!currentAssignment.gradeLevelId && isParentGrade(currentAssignment.gradeLevelId, gradeLevels) && !permissions.canPerformManagerActions && !!editingEntryId)}
-      >
-        <option value="" disabled>Select Grade Level</option>
-        {modalGradeLevels.map(gl => (
-          <option key={gl.id} value={gl.id}>{gl.name}</option>
-        ))}
-      </select>
+        options={modalGradeLevels.map(gl => ({ value: gl.id, label: gl.name, searchText: thaiGradeName(gl.name) }))}
+      />
     </div>
   );
 
@@ -2255,6 +2249,24 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
   ) : (
     <div>
       <label htmlFor="teacherIds_modal" className="block text-sm font-medium text-slate-700 mb-1">Teacher(s)</label>
+      {!(currentSubjectDetailsForModal?.teachingMode === 'multiple' ||
+          isModalGradeParentForBroadSubject ||
+          currentSubjectDetailsForModal?.isHomeroomAdvisorySubject ||
+          currentSubjectDetailsForModal?.type === 'TEACHER_ONLY') ? (
+        <SearchableSelect
+          id="teacherIds_modal"
+          value={currentAssignment.teacherIds?.[0] || ''}
+          onChange={(v) => fireAssignmentChange('teacherIds', v)}
+          disabled={isTeacherSelectDisabledInModal}
+          placeholder={modalTeachers.length === 0 ? ((!currentAssignment.subjectId || !currentAssignment.gradeLevelId) ? 'เลือกระดับชั้นและวิชาก่อน' : 'ไม่มีครูที่เชื่อมโยงกับวิชา/ห้องนี้') : 'พิมพ์ชื่อหรือรหัสครูเพื่อค้นหา...'}
+          options={modalTeachers.map(t => ({
+            value: t.id,
+            label: `${t.name}${t.teacherCode ? ` (${t.teacherCode})` : ''}`,
+            group: t.department || undefined,
+            searchText: `${t.teacherCode || ''} ${t.department || ''}`,
+          }))}
+        />
+      ) : (
       <select
         id="teacherIds_modal"
         name="teacherIds"
@@ -2300,6 +2312,7 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
           <option key={t.id} value={t.id}>{t.name} {t.teacherCode && `(${t.teacherCode})`}</option>
         ))}
       </select>
+      )}
       {currentAssignment.subjectId && currentAssignment.gradeLevelId && modalTeachers.length === 0 && !currentSubjectDetailsForModal?.isHomeroomAdvisorySubject &&
         <p className="text-xs text-amber-600 mt-1">
             No teachers are linked to teach {subjects.find(s=>s.id === currentAssignment.subjectId)?.name || 'this subject'} to {gradeLevels.find(gl=>gl.id===currentAssignment.gradeLevelId)?.name || 'this grade scope'}.
@@ -2349,18 +2362,17 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
   const physicalRoomField = currentSubjectDetailsForModal?.type !== 'TEACHER_ONLY' ? (
     <div>
       <label htmlFor="physicalRoomId_modal_actual" className="block text-sm font-medium text-slate-700 mb-1">Physical Room (สถานที่เรียน)</label>
-      <select
+      <SearchableSelect
         id="physicalRoomId_modal_actual"
-        name="physicalRoomId"
         value={currentAssignment.physicalRoomId || ''}
-        onChange={handleAssignmentChange}
-        className="w-full p-2 border border-slate-300 rounded-md focus:ring-blue-500 focus:border-blue-500 shadow-sm"
-      >
-        <option value="">Select Room (Optional)</option>
-        {modalRooms.map(r => (
-          <option key={r.id} value={r.id}>{formatRoomDisplay(r)} ({r.type})</option>
-        ))}
-      </select>
+        onChange={(v) => fireAssignmentChange('physicalRoomId', v)}
+        placeholder="ค้นหาห้อง (ชื่อ/รหัส/ประเภท) — ไม่บังคับ"
+        options={[{ value: '', label: '— ไม่ระบุห้อง —' }, ...modalRooms.map(r => ({
+          value: r.id,
+          label: `${formatRoomDisplay(r)} (${r.type})`,
+          searchText: `${(r as any).code || ''} ${(r as any).name || ''} ${r.type || ''}`,
+        }))]}
+      />
       {modalPhysicalRooms.length > 0 && modalRooms.length === 0 && (
         <p className="text-xs text-amber-600 mt-1">
             No rooms available — every room is already booked for this day and period.

@@ -1,4 +1,5 @@
 import { formatRoomDisplay, formatRoomShort } from "../utils/stringUtils";
+import SearchableSelect from './SearchableSelect';
 
 import React, { useState, useMemo, useEffect, DragEvent, MouseEvent as ReactMouseEvent } from 'react';
 import { AppData, DayOfWeek, PeriodSetting, ScheduleEntry, Subject, Teacher, PhysicalRoom, GradeLevel, AssignmentModalContext, ContextMenuTargetInfo, ScreenAccessProps, OrganizationSettings, SingleScheduleTableProps } from '../types';
@@ -432,18 +433,26 @@ const TeacherScheduleView: React.FC<TeacherScheduleViewPropsExtended> = ({
           </h2>
         </div>
          <div className="flex items-center gap-x-2">
-            <select
+            <SearchableSelect
                 id="teacherSelect"
+                compact
+                className="w-64"
                 value={effectiveTeacherId || ""}
-                onChange={(e) => onTeacherIdChange(e.target.value)}
-                className="p-2 border border-slate-300 rounded-md focus:ring-indigo-500 focus:border-indigo-500 shadow-sm text-sm"
-                aria-label="Select Teacher"
-            >
-                <option value="" disabled>-- Select Teacher --</option>
-                {sortedTeachers.map(t => (
-                <option key={t.id} value={t.id}>{t.name} {t.teacherCode && `(${t.teacherCode})`}</option>
-                ))}
-            </select>
+                onChange={(v) => onTeacherIdChange(v)}
+                placeholder="ค้นหาครู (ชื่อ/รหัส/กลุ่มสาระฯ)"
+                options={[...sortedTeachers].sort((a, b) => {
+                  const da = a.department || '', db = b.department || '';
+                  if (!da !== !db) return da ? -1 : 1;
+                  if (da !== db) return da.localeCompare(db, 'th');
+                  const c = (a.teacherCode || '').localeCompare(b.teacherCode || '', undefined, { numeric: true, sensitivity: 'base' });
+                  return c !== 0 ? c : (a.name || '').localeCompare(b.name || '', 'th');
+                }).map(t => ({
+                  value: t.id,
+                  label: `${t.name}${t.teacherCode ? ` (${t.teacherCode})` : ''}`,
+                  group: t.department || undefined,
+                  searchText: `${t.teacherCode || ''} ${t.department || ''}`,
+                }))}
+            />
             <button
                 onClick={() => openPrintOptionsModal('teacher', effectiveTeacherId)}
                 className="flex items-center bg-teal-500 hover:bg-teal-600 text-white font-semibold py-2 px-3 rounded-md shadow-sm transition-colors duration-150 text-sm"

@@ -1,4 +1,5 @@
 import { formatRoomDisplay } from "../utils/stringUtils";
+import SearchableSelect from './SearchableSelect';
 
 import React, { useState, useMemo, useEffect, DragEvent, MouseEvent as ReactMouseEvent } from 'react';
 import { AppData, DayOfWeek, PeriodSetting, ScheduleEntry, Subject, Teacher, PhysicalRoom, GradeLevel, AssignmentModalContext, ContextMenuTargetInfo, ScreenAccessProps, OrganizationSettings, SingleScheduleTableProps } from '../types';
@@ -420,18 +421,19 @@ const RoomUsageView: React.FC<RoomUsageViewPropsExtended> = ({
           </h2>
         </div>
         <div className="flex items-center gap-x-2">
-            <select
+            <SearchableSelect
                 id="physicalRoomSelect"
+                compact
+                className="w-64"
                 value={effectivePhysicalRoomId || ""}
-                onChange={(e) => onPhysicalRoomIdChange(e.target.value)}
-                className="p-2 border border-slate-300 rounded-md focus:ring-teal-500 focus:border-teal-500 shadow-sm text-sm"
-                aria-label="Select PhysicalRoom"
-            >
-                <option value="" disabled>-- Select PhysicalRoom --</option>
-                {sortedPhysicalRooms.map(c => (
-                <option key={c.id} value={c.id}>{formatRoomDisplay(c)}</option>
-                ))}
-            </select>
+                onChange={(v) => onPhysicalRoomIdChange(v)}
+                placeholder="ค้นหาห้อง (ชื่อ/รหัส/ประเภท)"
+                options={sortedPhysicalRooms.map(c => ({
+                  value: c.id,
+                  label: formatRoomDisplay(c),
+                  searchText: `${(c as any).code || ''} ${(c as any).name || ''} ${(c as any).type || ''}`,
+                }))}
+            />
             <button
                 onClick={() => openPrintOptionsModal('physicalRoom', effectivePhysicalRoomId)}
                 className="flex items-center bg-teal-500 hover:bg-teal-600 text-white font-semibold py-2 px-3 rounded-md shadow-sm transition-colors duration-150 text-sm"

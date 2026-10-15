@@ -16,6 +16,10 @@ interface SearchableSelectProps {
   onChange: (value: string) => void;
   placeholder?: string;
   disabled?: boolean;
+  /** Wrapper classes (default: full width) */
+  className?: string;
+  /** Smaller text, for toolbars */
+  compact?: boolean;
 }
 
 const norm = (s: string) => s.toLowerCase().replace(/\s+/g, ' ').trim();
@@ -24,7 +28,7 @@ const norm = (s: string) => s.toLowerCase().replace(/\s+/g, ' ').trim();
  * A select you can type into: filters by every word typed (name, code or group),
  * supports ↑ ↓ Enter Esc, and shows the group of each option.
  */
-const SearchableSelect: React.FC<SearchableSelectProps> = ({ id, value, options, onChange, placeholder = 'พิมพ์เพื่อค้นหา...', disabled }) => {
+const SearchableSelect: React.FC<SearchableSelectProps> = ({ id, value, options, onChange, placeholder = 'พิมพ์เพื่อค้นหา...', disabled, className = 'w-full', compact }) => {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
@@ -73,7 +77,7 @@ const SearchableSelect: React.FC<SearchableSelectProps> = ({ id, value, options,
   };
 
   return (
-    <div ref={rootRef} className="relative">
+    <div ref={rootRef} className={`relative ${className}`}>
       <input
         id={id}
         type="text"
@@ -88,11 +92,11 @@ const SearchableSelect: React.FC<SearchableSelectProps> = ({ id, value, options,
         onClick={() => setOpen(true)}
         onChange={e => { setQuery(e.target.value); setOpen(true); }}
         onKeyDown={onKeyDown}
-        className="w-full p-2 pr-8 border border-slate-300 rounded-md focus:ring-blue-500 focus:border-blue-500 shadow-sm bg-white"
+        className={`w-full p-2 pr-8 border border-slate-300 rounded-md focus:ring-blue-500 focus:border-blue-500 shadow-sm bg-white disabled:bg-slate-50 disabled:cursor-not-allowed ${compact ? 'text-sm' : ''}`}
       />
       <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 text-xs">▾</span>
       {open && (
-        <ul ref={listRef} role="listbox" className="absolute z-30 mt-1 w-full max-h-64 overflow-y-auto bg-white border border-slate-300 rounded-md shadow-lg py-1">
+        <ul ref={listRef} role="listbox" className="absolute z-30 mt-1 min-w-full w-max max-w-[90vw] max-h-64 overflow-y-auto bg-white border border-slate-300 rounded-md shadow-lg py-1">
           {filtered.length === 0 && <li className="px-3 py-2 text-sm text-slate-500">ไม่พบรายการที่ค้นหา</li>}
           {filtered.map((o, i) => {
             const showGroup = o.group && (i === 0 || filtered[i - 1].group !== o.group);
