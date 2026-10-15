@@ -68,10 +68,7 @@ export const ImportDataModal: React.FC<ImportDataModalProps> = ({
     if (!config || !config.fields) {
       return [];
     }
-    // Teachers: homeroom grade levels are NOT imported from Excel (managed in the app).
-    const fields = selectedEntityType === 'teachers'
-      ? config.fields.filter(f => f.name !== 'homeroomGradeLevelIds')
-      : config.fields;
+    const fields = config.fields;
     return fields.map(field => {
       let note = field.placeholder || `ระบุ ${field.label}`;
       if (field.type === 'number' && field.name === 'periodsPerWeek') note = 'ตัวเลขจำนวนคาบต่อสัปดาห์ (เช่น 3 หรือ 2)';
@@ -108,8 +105,8 @@ export const ImportDataModal: React.FC<ImportDataModalProps> = ({
     
     // Add realistic sample data rows
     if (selectedEntityType === 'teachers') {
-      data.push(["นายสมชาย ใจดี", "T001", "somchai.j@utd.ac.th", "วิทยาศาสตร์และเทคโนโลยี"]);
-      data.push(["นางสาวสมหญิง สดใส", "T002", "somying.s@utd.ac.th", "คณิตศาสตร์"]);
+      data.push(["นายสมชาย ใจดี", "T001", "somchai.j@utd.ac.th", "วิทยาศาสตร์และเทคโนโลยี", "ม.1/1, ม.1/2"]);
+      data.push(["นางสาวสมหญิง สดใส", "T002", "somying.s@utd.ac.th", "คณิตศาสตร์", "ม.2/1"]);
     } else if (selectedEntityType === 'subjects') {
       data.push(["คณิตศาสตร์พื้นฐาน 1", "ค21101", 3, "คณิตศาสตร์", "#3B82F6", "single", "2/1", false, false, false, false, "ม.1"]);
       data.push(["วิทยาศาสตร์กายภาพ 1", "ว21101", 3, "วิทยาศาสตร์และเทคโนโลยี", "#10B981", "single", "2/1", false, false, false, false, "ม.1"]);
@@ -208,8 +205,6 @@ export const ImportDataModal: React.FC<ImportDataModalProps> = ({
 
     const fieldProcessingOrder: { internalField: string, colIndexInFile: number, config: FormField }[] = [];
     configForSelectedType.fields.forEach(fieldConfig => {
-      // Teachers: ignore the homeroom column entirely (never imported, never overwritten)
-      if (selectedEntityType === 'teachers' && fieldConfig.name === 'homeroomGradeLevelIds') return;
       const matchingHeaderIndex = headersFromFile.findIndex(fh => isHeaderMatch(fh, fieldConfig));
       if (matchingHeaderIndex !== -1) {
         fieldProcessingOrder.push({
@@ -312,6 +307,21 @@ export const ImportDataModal: React.FC<ImportDataModalProps> = ({
       // Foreign key / identifier resolution
       if (selectedEntityType === 'teachers') {
         if (newItemData.department) discoveredDepartments.add(newItemData.department);
+        if (newItemData.homeroomGradeLevelIds && Array.isArray(newItemData.homeroomGradeLevelIds)) {
+          // Match class names ignoring case and any spaces (e.g. "ม. 6/4" == "ม.6/4")
+          const normGl = (s: string) => String(s ?? '').replace(/\s+/g, '').toLowerCase();
+          const notFound: string[] = [];
+          const ids: string[] = [];
+          newItemData.homeroomGradeLevelIds.forEach((name: string) => {
+            const match = appData.gradeLevels.find(gl => normGl(gl.name) === normGl(name));
+            if (match) { if (!ids.includes(match.id)) ids.push(match.id); }
+            else notFound.push(name);
+          });
+          if (notFound.length > 0) {
+            messages.push(`แถวที่ ${rowIndex + 2}: ไม่พบห้องเรียน '${notFound.join(', ')}' ในระบบ (ไม่ได้ตั้งเป็นห้องที่ปรึกษา — ต้องมีห้องเรียนนี้ในระบบก่อน)`);
+          }
+          newItemData.homeroomGradeLevelIds = ids;
+        }
       }
 
       if (selectedEntityType === 'subjects') {
@@ -418,6 +428,10 @@ export const ImportDataModal: React.FC<ImportDataModalProps> = ({
           const v = finalNewItem[k];
           if (v !== undefined && v !== null && String(v).trim() !== '') patch[k] = v;
         });
+        // Homeroom: update only when the file has matched classes; an empty cell keeps the existing value
+        if (Array.isArray(finalNewItem.homeroomGradeLevelIds) && finalNewItem.homeroomGradeLevelIds.length > 0) {
+          patch.homeroomGradeLevelIds = finalNewItem.homeroomGradeLevelIds;
+        }
         const label = finalNewItem.name || finalNewItem.teacherCode || 'รายการนี้';
 
         const pending = newItemsToPush.find(isMatch);
@@ -431,7 +445,11 @@ export const ImportDataModal: React.FC<ImportDataModalProps> = ({
         const existing = appData.teachers.find(isMatch);
         if (existing) {
           const merged = { ...existing, ...(teacherUpdates.get(existing.id) || {}) };
-          const changedKeys = Object.keys(patch).filter(k => (merged as any)[k] !== patch[k]);
+          const sameVal = (a: any, b: any) =>
+            Array.isArray(a) || Array.isArray(b)
+              ? JSON.stringify([...(a || [])].sort()) === JSON.stringify([...(b || [])].sort())
+              : a === b;
+          const changedKeys = Object.keys(patch).filter(k => !sameVal((merged as any)[k], patch[k]));
           if (changedKeys.length === 0) {
             unchangedCount++;
           } else {
