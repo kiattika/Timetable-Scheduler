@@ -13,6 +13,9 @@ export interface Discrepancy {
   status: 'green' | 'red';
   statusDescription: string;
   proposedChange: Partial<ScheduleEntry>;
+  // Applied when the user rejects: keeps the entry as is but records that the change was seen,
+  // so the same alert does not come back after a reload.
+  acknowledgeChange?: Partial<ScheduleEntry>;
 }
 
 interface ReviewWizardModalProps {

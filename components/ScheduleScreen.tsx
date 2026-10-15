@@ -152,20 +152,29 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
   // 1. Silent Initialization of legacy entries' caches
   useEffect(() => {
     if (!scheduleEntries || scheduleEntries.length === 0) return;
-    const entriesNeedInit = scheduleEntries.some(e => !(e as any).cachedSubjectName);
+    const entriesNeedInit = scheduleEntries.some(e =>
+      !(e as any).cachedSubjectName || (e as any).cachedHomeroomRoomId === undefined
+    );
     if (entriesNeedInit) {
       setAppData(prev => {
         if (!prev) return prev;
         const updatedEntries = prev.scheduleEntries.map(entry => {
-          if (!(entry as any).cachedSubjectName) {
+          const needSubjectCache = !(entry as any).cachedSubjectName;
+          const needRoomCache = (entry as any).cachedHomeroomRoomId === undefined;
+          if (!needSubjectCache && !needRoomCache) return entry;
+          const patch: Partial<ScheduleEntry> = {};
+          if (needSubjectCache) {
             const sub = prev.subjects.find(s => s.id === entry.subjectId);
-            return {
-              ...entry,
-              cachedSubjectName: sub?.name || '',
-              cachedSubjectCode: sub?.subjectCode || ''
-            };
+            patch.cachedSubjectName = sub?.name || '';
+            patch.cachedSubjectCode = sub?.subjectCode || '';
           }
-          return entry;
+          if (needRoomCache) {
+            // Snapshot the class's current homeroom room; a differing room on the entry is then
+            // treated as intentional until the class's homeroom room itself changes.
+            const gl = prev.gradeLevels.find(g => g.id === entry.gradeLevelId);
+            patch.cachedHomeroomRoomId = gl?.homeroomPhysicalRoomId || '';
+          }
+          return { ...entry, ...patch };
         });
         return {
           ...prev,
@@ -238,7 +247,8 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
               statusDescription: status === 'green' ? 'ว่าง (พร้อมอัปเดต)' : conflictDesc,
               proposedChange: {
                 gradeLevelId: firstHomeroomId,
-                physicalRoomId: targetGrade.homeroomPhysicalRoomId || entry.physicalRoomId
+                physicalRoomId: targetGrade.homeroomPhysicalRoomId || entry.physicalRoomId,
+                cachedHomeroomRoomId: targetGrade.homeroomPhysicalRoomId || ''
               }
             });
             continue;
@@ -247,8 +257,14 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
       }
 
       // Check 2: Room assignment changed within homeroom
+      // Only alert when the class's homeroom room itself changed since this entry was placed AND the entry
+      // was still sitting in the old homeroom room. An entry deliberately placed in another room is left alone.
+      const cachedHomeroomRoomId = (entry as any).cachedHomeroomRoomId as string | undefined;
+      const homeroomRoomChanged = cachedHomeroomRoomId !== undefined &&
+        cachedHomeroomRoomId !== (gradeLevel?.homeroomPhysicalRoomId || '');
+      const entryFollowedOldHomeroom = (entry.physicalRoomId || '') === cachedHomeroomRoomId;
       if (subject.isHomeroomAdvisorySubject && gradeLevel && gradeLevel.homeroomPhysicalRoomId) {
-        if (entry.physicalRoomId !== gradeLevel.homeroomPhysicalRoomId) {
+        if (homeroomRoomChanged && entryFollowedOldHomeroom && entry.physicalRoomId !== gradeLevel.homeroomPhysicalRoomId) {
           const targetRoom = (physicalRooms || []).find(r => r.id === gradeLevel.homeroomPhysicalRoomId);
           if (targetRoom) {
             // Check if target room is occupied at this day and period
@@ -279,7 +295,12 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
               status,
               statusDescription: status === 'green' ? 'ว่าง (พร้อมอัปเดต)' : conflictDesc,
               proposedChange: {
-                physicalRoomId: targetRoom.id
+                physicalRoomId: targetRoom.id,
+                cachedHomeroomRoomId: targetRoom.id
+              },
+              // "Reject" = keep the current room on purpose; remember the new homeroom room so this does not return
+              acknowledgeChange: {
+                cachedHomeroomRoomId: targetRoom.id
               }
             });
             continue;
@@ -342,7 +363,19 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
 
   const handleRejectDiscrepancy = useCallback((discrepancy: Discrepancy) => {
     setIgnoredDiscrepancyIds(prev => [...prev, discrepancy.id]);
-  }, []);
+    // Persist the acknowledgement (when the discrepancy provides one) so it survives a reload
+    if (discrepancy.acknowledgeChange) {
+      setAppData(prev => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          scheduleEntries: prev.scheduleEntries.map(e =>
+            e.id === discrepancy.id ? { ...e, ...discrepancy.acknowledgeChange } : e
+          )
+        };
+      });
+    }
+  }, [setAppData]);
 
   const handleAcceptAllNonConflicting = useCallback(() => {
     const greens = discrepancies.filter(d => d.status === 'green');

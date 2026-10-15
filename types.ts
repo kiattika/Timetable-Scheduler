@@ -90,6 +90,9 @@ export interface ScheduleEntry {
   cohort?: string; // Optional student cohort for split classes
   cachedSubjectName?: string;
   cachedSubjectCode?: string;
+  // Homeroom room of the class when this entry was placed/last acknowledged ('' = none).
+  // Used by the Review Wizard to alert only when the class's homeroom room really changed.
+  cachedHomeroomRoomId?: string;
 }
 
 export interface TeacherSubjectAssignment extends Identifiable {
