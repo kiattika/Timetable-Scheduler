@@ -1,3 +1,4 @@
+import { computeSubjectColors, SubjectColorMode } from '../utils/subjectColors';
 import { computeHomeroomLinkDrift, applyHomeroomLinkDrift } from '../utils/homeroomLinks';
 import { formatRoomDisplay } from "../utils/stringUtils";
 import React, { useState, useEffect, useMemo } from 'react';
@@ -38,6 +39,11 @@ const EntityManagementScreen = <T extends Identifiable,>({
   const [currentItem, setCurrentItem] = useState<Partial<T> | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
+  // Subjects page: department filter + bulk colour tool
+  const [selectedDepartmentFilter, setSelectedDepartmentFilter] = useState('');
+  const [isColorToolOpen, setIsColorToolOpen] = useState(false);
+  const [colorMode, setColorMode] = useState<SubjectColorMode>('gradient');
+  const [colorBase, setColorBase] = useState('#3B82F6');
   const [selectedRoomType, setSelectedRoomType] = useState('');
   
   const [isConfirmDeleteModalOpen, setIsConfirmDeleteModalOpen] = useState(false);
@@ -192,6 +198,18 @@ const EntityManagementScreen = <T extends Identifiable,>({
     setEditingId(item.id);
     setFormError(null);
     setIsModalOpen(true);
+  };
+
+  // Duplicate a subject: opens the "new" form pre-filled with all details, code left blank to be filled in
+  const openModalForCopy = (item: T) => {
+    openModalForEdit(item);
+    setEditingId(null);
+    setCurrentItem(prev => {
+      const copy: any = { ...(prev as any) };
+      delete copy.id;
+      copy.subjectCode = '';
+      return copy as Partial<T>;
+    });
   };
 
   const closeModal = () => {
@@ -584,12 +602,27 @@ const EntityManagementScreen = <T extends Identifiable,>({
         return String(nameA).localeCompare(String(nameB), undefined, { sensitivity: 'base' });
       });
     }
+    if (entityType === 'subjects') {
+      return [...items].sort((a, b) => {
+        const codeA = String((a as any).subjectCode || '').trim();
+        const codeB = String((b as any).subjectCode || '').trim();
+        if (!codeA !== !codeB) return codeA ? -1 : 1; // subjects without a code go last
+        if (codeA !== codeB) return codeA.localeCompare(codeB, 'th', { numeric: true, sensitivity: 'base' });
+        return String((a as any).name || '').localeCompare(String((b as any).name || ''), 'th', { sensitivity: 'base' });
+      });
+    }
     return items;
   }, [items, entityType]);
 
   const filteredItems = sortedItems.filter(item => {
     if (entityType === 'physicalRooms' && selectedRoomType) {
       if ((item as any).type !== selectedRoomType) {
+        return false;
+      }
+    }
+
+    if (entityType === 'subjects' && selectedDepartmentFilter) {
+      if ((item as any).department !== selectedDepartmentFilter) {
         return false;
       }
     }
@@ -662,6 +695,11 @@ const EntityManagementScreen = <T extends Identifiable,>({
       return 'N/A'; 
     }
   
+    if (entityType === 'subjects' && fieldName === 'type') {
+      const shortType: Record<string, string> = { STANDARD: 'ปกติ', TEACHER_ONLY: 'เฉพาะครู', STUDENT_ONLY: 'เฉพาะนักเรียน' };
+      if (shortType[String(value)]) return shortType[String(value)];
+    }
+
     if (fieldConfig?.type === 'select') {
       if (fieldConfig.optionsSource && appData) {
         // Fix: Cast sourceData to a more specific type array.
@@ -694,6 +732,25 @@ const EntityManagementScreen = <T extends Identifiable,>({
     return String(value);
   };
 
+
+  // Subjects table shows only the key columns so it fits the screen; everything else is in the edit form
+  const SUBJECT_TABLE_FIELDS = ['name', 'subjectCode', 'department', 'periodsPerWeek', 'color', 'type'];
+  const tableFields = entityType === 'subjects' ? formFields.filter(f => SUBJECT_TABLE_FIELDS.includes(f.name as string)) : formFields;
+  const subjectDepartments = useMemo(() => {
+    if (entityType !== 'subjects') return [] as string[];
+    return Array.from(new Set((items as unknown as SubjectType[]).map(s => s.department).filter(Boolean) as string[])).sort((a, b) => a.localeCompare(b, 'th'));
+  }, [items, entityType]);
+  const colorPreview = useMemo(() => {
+    if (!isColorToolOpen || entityType !== 'subjects') return new Map<string, string>();
+    return computeSubjectColors(filteredItems as unknown as SubjectType[], colorMode, colorBase);
+  }, [isColorToolOpen, entityType, filteredItems, colorMode, colorBase]);
+
+  const applyColorTool = () => {
+    const map = colorPreview;
+    setItems(prev => prev.map(it => (map.has(it.id) ? { ...it, color: map.get(it.id) } : it)) as unknown as T[]);
+    setIsColorToolOpen(false);
+    setToastMessage?.(`ปรับสีรายวิชา ${map.size} รายการแล้ว`);
+  };
 
   const handleExportExcel = () => {
     const wb = XLSX.utils.book_new();
@@ -798,6 +855,29 @@ const EntityManagementScreen = <T extends Identifiable,>({
           />
           <Icons.Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400" size={20} />
         </div>
+        {entityType === 'subjects' && (
+          <>
+            <div className="sm:w-64">
+              <select
+                value={selectedDepartmentFilter}
+                onChange={(e) => setSelectedDepartmentFilter(e.target.value)}
+                className="w-full p-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors bg-white font-medium text-slate-700"
+              >
+                <option value="">ทุกกลุ่มสาระฯ (All Departments)</option>
+                {subjectDepartments.map(d => <option key={d} value={d}>{d}</option>)}
+              </select>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsColorToolOpen(true)}
+              disabled={filteredItems.length === 0}
+              className="px-3 py-2 text-sm font-medium text-slate-700 bg-white hover:bg-slate-50 rounded-md border border-slate-300 shadow-sm whitespace-nowrap disabled:opacity-50"
+              title="กำหนดสีให้รายวิชาที่แสดงอยู่ทีเดียว"
+            >
+              🎨 จัดสีรายวิชา
+            </button>
+          </>
+        )}
         {entityType === 'physicalRooms' && (
           <div className="sm:w-64">
             <select
@@ -821,16 +901,16 @@ const EntityManagementScreen = <T extends Identifiable,>({
             {searchTerm ? `No ${entityNamePlural.toLowerCase()} found matching your search.` : `No ${entityNamePlural.toLowerCase()} found. Click "Add New ${entityNameSingular}" to get started.`}
         </p>
       ) : (
-        <div className="overflow-x-auto rounded-md border border-slate-200">
+        <div className={`overflow-auto rounded-md border border-slate-200 ${entityType === 'subjects' ? 'max-h-[68vh]' : ''}`}>
           <table className="min-w-full divide-y divide-slate-200">
-            <thead className="bg-slate-50">
+            <thead className="bg-slate-50 sticky top-0 z-10">
               <tr>
-                {formFields.map(field => (
+                {tableFields.map(field => (
                     <th key={field.name as string} scope="col" className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
                         {field.label}
                     </th>
                 ))}
-                <th scope="col" className="px-4 py-3 text-right text-xs font-medium text-slate-500 uppercase tracking-wider">
+                <th scope="col" className="px-4 py-3 text-right text-xs font-medium text-slate-500 uppercase tracking-wider sticky right-0 bg-slate-50">
                   Actions
                 </th>
               </tr>
@@ -838,8 +918,8 @@ const EntityManagementScreen = <T extends Identifiable,>({
             <tbody className="bg-white divide-y divide-slate-200">
               {filteredItems.map(item => (
                 <tr key={item.id} className="hover:bg-slate-50 transition-colors">
-                  {formFields.map(field => (
-                    <td key={field.name as string} className="px-4 py-3 whitespace-nowrap text-sm text-slate-700">
+                  {tableFields.map(field => (
+                    <td key={field.name as string} className={`px-4 py-3 text-sm text-slate-700 ${entityType === 'subjects' && field.name === 'name' ? 'min-w-[12rem]' : 'whitespace-nowrap'}`}>
                         {entityType === 'gradeLevels' && field.name === 'description' ? (
                           <input 
                             type="text"
@@ -856,7 +936,16 @@ const EntityManagementScreen = <T extends Identifiable,>({
                         )}
                     </td>
                   ))}
-                  <td className="px-4 py-3 whitespace-nowrap text-right text-sm font-medium space-x-2">
+                  <td className={`px-4 py-3 whitespace-nowrap text-right text-sm font-medium space-x-2 ${entityType === 'subjects' ? 'sticky right-0 bg-white' : ''}`}>
+                    {entityType === 'subjects' && (
+                      <button
+                        onClick={() => openModalForCopy(item)}
+                        className="text-emerald-600 hover:text-emerald-800 transition-colors"
+                        title="คัดลอกรายวิชา (สร้างใหม่จากรายละเอียดเดิม แล้วแก้รหัสวิชา)"
+                      >
+                        <Icons.Copy size={18} />
+                      </button>
+                    )}
 
                     <button
                       onClick={() => openModalForEdit(item)}
@@ -881,6 +970,52 @@ const EntityManagementScreen = <T extends Identifiable,>({
             </tbody>
           </table>
         </div>
+      )}
+
+      {isColorToolOpen && entityType === 'subjects' && (
+        <Modal isOpen={isColorToolOpen} onClose={() => setIsColorToolOpen(false)} title="จัดสีรายวิชา" size="lg">
+          <div className="space-y-4 text-sm">
+            <p className="text-slate-600">
+              ใช้กับรายวิชาที่แสดงอยู่ <b>{filteredItems.length}</b> รายการ
+              {selectedDepartmentFilter ? ` (กลุ่มสาระฯ: ${selectedDepartmentFilter})` : ''} — เรียงตามรหัสวิชา
+              <br /><span className="text-xs text-slate-500">ใช้ช่องค้นหา/ตัวกรองกลุ่มสาระฯ เพื่อเลือกกลุ่มย่อย เช่น ค้นหา "ฟิสิกส์" หรือ "ว3"</span>
+            </p>
+            <div className="space-y-2">
+              {([
+                ['solid', 'สีเดียวกันทั้งหมด'],
+                ['gradient', 'ไล่เฉดสีจากสีหลัก (เข้ม → อ่อน ตามรหัสวิชา)'],
+                ['byDepartment', 'แยกสีตามกลุ่มสาระฯ และไล่เฉดภายในกลุ่ม'],
+              ] as [SubjectColorMode, string][]).map(([m, label]) => (
+                <label key={m} className="flex items-center gap-2 cursor-pointer">
+                  <input type="radio" name="colorMode" checked={colorMode === m} onChange={() => setColorMode(m)} />
+                  <span>{label}</span>
+                </label>
+              ))}
+            </div>
+            {colorMode !== 'byDepartment' && (
+              <div className="flex items-center gap-3">
+                <span className="text-slate-700">สีหลัก</span>
+                <input type="color" value={colorBase} onChange={e => setColorBase(e.target.value.toUpperCase())} className="h-9 w-14 border border-slate-300 rounded" />
+                <span className="font-mono text-slate-600">{colorBase}</span>
+              </div>
+            )}
+            <div className="max-h-56 overflow-y-auto border border-slate-200 rounded-md divide-y divide-slate-100">
+              {(filteredItems as unknown as SubjectType[]).map(sj => (
+                <div key={sj.id} className="flex items-center gap-3 px-3 py-1.5">
+                  <span className="w-4 h-4 rounded-full border border-slate-300 shrink-0" style={{ backgroundColor: sj.color }} title="สีเดิม" />
+                  <span className="text-slate-400">→</span>
+                  <span className="w-4 h-4 rounded-full border border-slate-300 shrink-0" style={{ backgroundColor: colorPreview.get(sj.id) }} title="สีใหม่" />
+                  <span className="font-mono text-xs text-slate-500 w-24 shrink-0">{sj.subjectCode || '-'}</span>
+                  <span className="truncate">{sj.name}</span>
+                </div>
+              ))}
+            </div>
+            <div className="flex justify-end gap-2 pt-1">
+              <button type="button" onClick={() => setIsColorToolOpen(false)} className="px-4 py-2 text-sm font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-md border border-slate-300">ยกเลิก</button>
+              <button type="button" onClick={applyColorTool} className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md shadow-sm">ใช้สีใหม่ ({colorPreview.size})</button>
+            </div>
+          </div>
+        </Modal>
       )}
 
       {isModalOpen && (
