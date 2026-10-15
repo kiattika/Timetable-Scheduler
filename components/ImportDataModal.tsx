@@ -16,6 +16,7 @@ import {
 import Modal from './Modal';
 import { Icons, PREDEFINED_SUBJECT_COLORS } from '../constants';
 import { getSampleAppData } from '../api';
+import { getChildGradeLevelIds } from './scheduleUtils';
 
 interface ImportDataModalProps {
   isOpen: boolean;
@@ -61,6 +62,87 @@ const isSameValue = (a: any, b: any): boolean =>
   Array.isArray(a) || Array.isArray(b)
     ? JSON.stringify([...(a || [])].sort()) === JSON.stringify([...(b || [])].sort())
     : a === b;
+
+// Same rule as EntityManagementScreen's hrCzSubjects: subjects whose teacher links follow the homeroom advisor
+const needsHomeroomLinks = (s: Subject): boolean => !!(
+  s.autoLinkToHomeroomTeachers ||
+  s.subjectCode === 'HR' ||
+  s.subjectCode === 'CZ' ||
+  (s.name || '').includes('โฮมรูม') ||
+  (s.name || '').includes('เขตพื้นที่') ||
+  s.isHomeroomAdvisorySubject
+);
+
+// Keeps Teacher-Subject Links in step with homeroom advisors, mirroring what saving a teacher / subject
+// in the Manage screens does. Pure function (safe to call twice: once for counts, once inside setAppData).
+//  A) teacherIdsToSync: drop that teacher's homeroom-subject links that no longer match their homeroom
+//     classes, and add the missing ones.
+//  B) subjectIdsToLink: for subjects with auto-link on, add links for every homeroom advisor under the
+//     subject's applicable parent grades (additive only).
+const syncHomeroomLinks = (args: {
+  teachers: Teacher[];
+  subjects: Subject[];
+  gradeLevels: GradeLevel[];
+  links: TeacherSubjectAssignment[];
+  teacherIdsToSync: Set<string>;
+  subjectIdsToLink: Set<string>;
+}): { links: TeacherSubjectAssignment[]; added: number; removed: number } => {
+  const { teachers, subjects, gradeLevels, teacherIdsToSync, subjectIdsToLink } = args;
+  const keyOf = (l: { teacherId: string; subjectId: string; gradeLevelId: string }) => `${l.teacherId}|${l.subjectId}|${l.gradeLevelId}`;
+  const before = new Set(args.links.map(keyOf));
+  let links: TeacherSubjectAssignment[] = [...args.links];
+  const has = (teacherId: string, subjectId: string, gradeLevelId: string) =>
+    links.some(l => l.teacherId === teacherId && l.subjectId === subjectId && l.gradeLevelId === gradeLevelId);
+
+  if (teacherIdsToSync.size > 0) {
+    const hrSubjects = subjects.filter(needsHomeroomLinks);
+    teacherIdsToSync.forEach(teacherId => {
+      const teacher = teachers.find(t => t.id === teacherId);
+      if (!teacher) return;
+      const homerooms = teacher.homeroomGradeLevelIds || [];
+      hrSubjects.forEach(subject => {
+        const valid = new Set<string>();
+        if (subject.applicableParentGradeLevelIds && subject.applicableParentGradeLevelIds.length > 0) {
+          subject.applicableParentGradeLevelIds.forEach(pid => getChildGradeLevelIds(pid, gradeLevels).forEach(c => valid.add(c)));
+        } else {
+          gradeLevels.forEach(g => { if (g.name.includes('/')) valid.add(g.id); });
+        }
+        links = links.filter(l => {
+          if (l.teacherId !== teacherId || l.subjectId !== subject.id) return true;
+          const g = gradeLevels.find(x => x.id === l.gradeLevelId);
+          if (g && !g.name.includes('/')) return false;
+          return homerooms.includes(l.gradeLevelId) && valid.has(l.gradeLevelId);
+        });
+        homerooms.forEach(hid => {
+          if (valid.has(hid) && !has(teacherId, subject.id, hid)) {
+            links.push({ id: crypto.randomUUID(), teacherId, subjectId: subject.id, gradeLevelId: hid });
+          }
+        });
+      });
+    });
+  }
+
+  subjectIdsToLink.forEach(subjectId => {
+    const subject = subjects.find(s => s.id === subjectId);
+    if (!subject || !subject.autoLinkToHomeroomTeachers) return;
+    if (!subject.applicableParentGradeLevelIds || subject.applicableParentGradeLevelIds.length === 0) return;
+    subject.applicableParentGradeLevelIds.forEach(pid => {
+      const children = getChildGradeLevelIds(pid, gradeLevels);
+      teachers.forEach(t => (t.homeroomGradeLevelIds || []).forEach(hid => {
+        if (children.includes(hid) && !has(t.id, subject.id, hid)) {
+          links.push({ id: crypto.randomUUID(), teacherId: t.id, subjectId: subject.id, gradeLevelId: hid });
+        }
+      }));
+    });
+  });
+
+  const after = new Set(links.map(keyOf));
+  let added = 0;
+  let removed = 0;
+  after.forEach(k => { if (!before.has(k)) added++; });
+  before.forEach(k => { if (!after.has(k)) removed++; });
+  return { links, added, removed };
+};
 
 export const ImportDataModal: React.FC<ImportDataModalProps> = ({
   isOpen, 
@@ -241,6 +323,8 @@ export const ImportDataModal: React.FC<ImportDataModalProps> = ({
     let skippedCount = 0;
     // Re-import: patches to apply to existing records (teachers / subjects / physicalRooms), keyed by record id
     const entityUpdates = new Map<string, Record<string, any>>();
+    // Existing records that appeared in this file (changed or not) — used to re-sync homeroom links
+    const touchedExistingIds = new Set<string>();
     const messages: string[] = [];
     const dataRows = jsonData.slice(1);
 
@@ -464,6 +548,7 @@ export const ImportDataModal: React.FC<ImportDataModalProps> = ({
 
         const existing = appData.teachers.find(isMatch);
         if (existing) {
+          touchedExistingIds.add(existing.id);
           const merged = { ...existing, ...(entityUpdates.get(existing.id) || {}) };
           const changedKeys = Object.keys(patch).filter(k => !isSameValue((merged as any)[k], patch[k]));
           if (changedKeys.length === 0) {
@@ -511,6 +596,7 @@ export const ImportDataModal: React.FC<ImportDataModalProps> = ({
 
         const existing = existingList.find(isMatch);
         if (existing) {
+          touchedExistingIds.add(existing.id);
           const merged = { ...existing, ...(entityUpdates.get(existing.id) || {}) };
           const changedKeys = Object.keys(patch).filter(k => !isSameValue(merged[k], patch[k]));
           if (changedKeys.length === 0) {
@@ -571,7 +657,55 @@ export const ImportDataModal: React.FC<ImportDataModalProps> = ({
       }
     });
 
-    if (newItemsToPush.length > 0 || entityUpdates.size > 0) {
+    // Teachers / Subjects: keep Teacher-Subject Links in step with homeroom advisors (same as saving in Manage screens).
+    // Pure, so it is evaluated on the current snapshot for the summary and again on the latest state when saving.
+    const runLinkSync = (data: AppData) => {
+      const baseTeachers: Teacher[] = data.teachers || [];
+      const baseSubjects: Subject[] = data.subjects || [];
+      const applyImport = (list: any[]) => [
+        ...list.map((x: any) => (entityUpdates.has(x.id) ? { ...x, ...entityUpdates.get(x.id) } : x)),
+        ...newItemsToPush
+      ];
+      const nextTeachers: Teacher[] = selectedEntityType === 'teachers' ? applyImport(baseTeachers) : baseTeachers;
+      const nextSubjects: Subject[] = selectedEntityType === 'subjects' ? applyImport(baseSubjects) : baseSubjects;
+
+      const teacherIdsToSync = new Set<string>();
+      const subjectIdsToLink = new Set<string>();
+      const candidateIds = [...newItemsToPush.map((x: any) => x.id), ...Array.from(touchedExistingIds)];
+      if (selectedEntityType === 'teachers') {
+        candidateIds.forEach(id => {
+          const next = nextTeachers.find(t => t.id === id);
+          if (!next) return;
+          const homerooms = next.homeroomGradeLevelIds || [];
+          const old = baseTeachers.find(t => t.id === id);
+          const changed = !old || !isSameValue(old.homeroomGradeLevelIds || [], homerooms);
+          // Teachers without any homeroom and no change are left alone (do not strip manual links)
+          if (homerooms.length > 0 || changed) teacherIdsToSync.add(id);
+        });
+      } else if (selectedEntityType === 'subjects') {
+        candidateIds.forEach(id => subjectIdsToLink.add(id));
+      }
+
+      return syncHomeroomLinks({
+        teachers: nextTeachers,
+        subjects: nextSubjects,
+        gradeLevels: data.gradeLevels || [],
+        links: data.teacherSubjectAssignments || [],
+        teacherIdsToSync,
+        subjectIdsToLink
+      });
+    };
+
+    const linkSyncApplies = (selectedEntityType === 'teachers' || selectedEntityType === 'subjects') &&
+      (newItemsToPush.length > 0 || touchedExistingIds.size > 0);
+    if (linkSyncApplies) {
+      const preview = runLinkSync(appData);
+      if (preview.added > 0 || preview.removed > 0) {
+        messages.push(`ซิงค์ลิงก์ครูที่ปรึกษา-วิชาโฮมรูม: สร้างใหม่ ${preview.added} ลิงก์, ลบที่ไม่ตรงห้องที่ปรึกษา ${preview.removed} ลิงก์`);
+      }
+    }
+
+    if (newItemsToPush.length > 0 || entityUpdates.size > 0 || linkSyncApplies) {
       setAppData((prevAppData: AppData | null) => {
         if (!prevAppData) return prevAppData as any;
 
@@ -607,12 +741,18 @@ export const ImportDataModal: React.FC<ImportDataModalProps> = ({
             entityUpdates.has(t.id) ? { ...t, ...entityUpdates.get(t.id) } : t
           );
         }
-        return {
-          ...prevAppData, 
+        const nextData: AppData = {
+          ...prevAppData,
           [selectedEntityType]: [...currentEntityList, ...newItemsToPush],
           departments: updatedDepartments,
           resourceTypes: updatedResourceTypes
-        };
+        } as AppData;
+        if (linkSyncApplies) {
+          // Re-evaluate against the latest state so concurrent edits are not overwritten
+          const synced = runLinkSync(prevAppData);
+          return { ...nextData, teacherSubjectAssignments: synced.links };
+        }
+        return nextData;
       });
     }
 
