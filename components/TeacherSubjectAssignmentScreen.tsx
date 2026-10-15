@@ -5,6 +5,7 @@ import Modal from './Modal';
 import ConfirmationModal from './ConfirmationModal'; // Import ConfirmationModal
 import { Icons } from '../constants';
 import { ArrowUp, ArrowDown, Search, X } from 'lucide-react';
+import { getChildGradeLevelIds } from './scheduleUtils';
 import { computeHomeroomLinkDrift, applyHomeroomLinkDrift } from '../utils/homeroomLinks';
 
 interface TeacherSubjectAssignmentScreenProps extends ScreenAccessProps {
@@ -383,6 +384,25 @@ const TeacherSubjectAssignmentScreen: React.FC<TeacherSubjectAssignmentScreenPro
       }
     }
 
+    // New links: only offer subjects that are open in the current semester (Organization Settings),
+    // and only the grade levels a subject is restricted to (empty = all). The subject already being
+    // edited / chosen stays visible.
+    if (field.optionsSource === 'subjects') {
+      const sem = (appData.organizationSettings?.semester || '').trim();
+      if (sem) {
+        sourceData = (sourceData as Subject[]).filter(s =>
+          !s.applicableSemesters || s.applicableSemesters.length === 0 ||
+          s.applicableSemesters.includes(sem) || s.id === newAssignment.subjectId);
+      }
+    } else if (field.optionsSource === 'gradeLevels' && selectedSub?.applicableParentGradeLevelIds && selectedSub.applicableParentGradeLevelIds.length > 0) {
+      const allowed = new Set<string>();
+      selectedSub.applicableParentGradeLevelIds.forEach(pid => {
+        allowed.add(pid);
+        getChildGradeLevelIds(pid, appData.gradeLevels).forEach(c => allowed.add(c));
+      });
+      sourceData = (sourceData as Identifiable[]).filter(g => allowed.has(g.id) || newAssignment.selectedGradeLevelIds.includes(g.id));
+    }
+
     if (field.optionsSource === 'gradeLevels' || field.optionsSource === 'physicalRooms') {
         sourceData = [...sourceData].sort((a, b) => ((a as any).name || '').localeCompare((b as any).name || '', undefined, { numeric: true, sensitivity: 'base' }));
     } else if (field.optionsSource === 'teachers') {
@@ -417,6 +437,12 @@ const TeacherSubjectAssignmentScreen: React.FC<TeacherSubjectAssignmentScreenPro
             <label htmlFor={fieldName} className="block text-sm font-medium text-slate-700 mb-1">
             {field.label} <span className="text-red-500">*</span>
             </label>
+            {field.optionsSource === 'subjects' && appData.organizationSettings?.semester && (
+              <p className="text-xs text-slate-500 mb-1">แสดงเฉพาะวิชาที่เปิดสอนในภาคเรียนที่ {appData.organizationSettings.semester}</p>
+            )}
+            {field.optionsSource === 'gradeLevels' && (selectedSub?.applicableParentGradeLevelIds?.length || 0) > 0 && (
+              <p className="text-xs text-slate-500 mb-1">แสดงเฉพาะระดับชั้นที่วิชานี้เปิดสอน</p>
+            )}
             <select
               id={fieldName}
               name={fieldName}
