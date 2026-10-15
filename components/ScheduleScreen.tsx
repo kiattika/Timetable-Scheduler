@@ -149,25 +149,30 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
   }, []);
 
 
-  // 1. Silent Initialization of legacy entries' caches
+  // 1. Silent initialization / sync of entries' caches.
+  // Entries reference subjects by id, so renaming a subject or changing its code needs no review:
+  // the cached name/code is refreshed silently (no alert). Only homeroom/room changes are reviewed.
   useEffect(() => {
     if (!scheduleEntries || scheduleEntries.length === 0) return;
-    const entriesNeedInit = scheduleEntries.some(e =>
-      !(e as any).cachedSubjectName || (e as any).cachedHomeroomRoomId === undefined
-    );
+    const subjectsById = new Map(subjects.map(s => [s.id, s]));
+    const entryNeedsSync = (e: ScheduleEntry, subs: Map<string, any>) => {
+      const cachedName = (e as any).cachedSubjectName;
+      if (cachedName === undefined || (e as any).cachedHomeroomRoomId === undefined) return true;
+      const sub = subs.get(e.subjectId);
+      return !!sub && (cachedName !== sub.name || ((e as any).cachedSubjectCode || '') !== (sub.subjectCode || ''));
+    };
+    const entriesNeedInit = scheduleEntries.some(e => entryNeedsSync(e, subjectsById));
     if (entriesNeedInit) {
       setAppData(prev => {
         if (!prev) return prev;
+        const prevSubjectsById = new Map(prev.subjects.map(s => [s.id, s]));
         const updatedEntries = prev.scheduleEntries.map(entry => {
-          const needSubjectCache = !(entry as any).cachedSubjectName;
+          if (!entryNeedsSync(entry, prevSubjectsById)) return entry;
           const needRoomCache = (entry as any).cachedHomeroomRoomId === undefined;
-          if (!needSubjectCache && !needRoomCache) return entry;
           const patch: Partial<ScheduleEntry> = {};
-          if (needSubjectCache) {
-            const sub = prev.subjects.find(s => s.id === entry.subjectId);
-            patch.cachedSubjectName = sub?.name || '';
-            patch.cachedSubjectCode = sub?.subjectCode || '';
-          }
+          const sub = prevSubjectsById.get(entry.subjectId);
+          patch.cachedSubjectName = sub ? sub.name : ((entry as any).cachedSubjectName ?? '');
+          patch.cachedSubjectCode = sub ? (sub.subjectCode || '') : ((entry as any).cachedSubjectCode ?? '');
           if (needRoomCache) {
             // Snapshot the class's current homeroom room; a differing room on the entry is then
             // treated as intentional until the class's homeroom room itself changes.
@@ -308,27 +313,7 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
         }
       }
 
-      // Check 3: Subject code/name updated
-      const cachedName = (entry as any).cachedSubjectName;
-      const cachedCode = (entry as any).cachedSubjectCode;
-      
-      if (cachedName && (subject.name !== cachedName || (subject.subjectCode || '') !== (cachedCode || ''))) {
-        list.push({
-          id: entry.id,
-          entry,
-          type: 'subject_updated',
-          title: 'ข้อมูลวิชาอัปเดตใหม่ (Subject Info Updated)',
-          component: componentLabel,
-          currentGridData: `วิชาเดิม: ${cachedCode ? '[' + cachedCode + '] ' : ''}${cachedName}`,
-          pendingUpdateData: `วิชาใหม่: ${subject.subjectCode ? '[' + subject.subjectCode + '] ' : ''}${subject.name}`,
-          status: 'green',
-          statusDescription: 'ว่าง (พร้อมอัปเดต)',
-          proposedChange: {
-            cachedSubjectName: subject.name,
-            cachedSubjectCode: subject.subjectCode || ''
-          }
-        });
-      }
+      // (Subject name/code changes are no longer reviewed here — see the silent cache sync above.)
     }
 
     return list;
