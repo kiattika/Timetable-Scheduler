@@ -376,7 +376,7 @@ const App: React.FC = () => {
         { name: 'allowPhysicalRoomSharing', label: 'อนุญาตให้ใช้ห้องร่วมกัน (ข้ามการตรวจสอบห้องชนกัน)', type: 'checkbox', required: false, placeholder: "'true' or 'false'" },
         { name: 'isBroadAssignment', label: 'Broad Assignment (สำหรับวิชาที่เรียนรวมกันทั้งระดับชั้น เช่น ลูกเสือ)', type: 'checkbox', required: false },
         { name: 'isHomeroomAdvisorySubject', label: 'Homeroom/Advisory Subject (วิชาโฮมรูม/แนะแนว)', type: 'checkbox', required: false },
-        { name: 'autoLinkToHomeroomTeachers', label: 'Auto-link to Homeroom Teachers (เชื่อมโยงกับครูที่ปรึกษาอัตโนมัติ)', type: 'checkbox', required: false, disabled: (item: any) => !item?.isHomeroomAdvisorySubject },
+        { name: 'autoLinkToHomeroomTeachers', label: 'Auto-link to Homeroom Teachers (เชื่อมโยงกับครูที่ปรึกษาอัตโนมัติ)', type: 'checkbox', required: false, disabled: (item: any) => !item?.isHomeroomAdvisorySubject && !item?.isBroadAssignment },
         { name: 'applicableParentGradeLevelIds', label: 'เปิดสอนเฉพาะระดับชั้น (ไม่เลือก = ทุกระดับชั้น) — ใช้กับวิชาลูกเสือ/โฮมรูม/ครูที่ปรึกษาอัตโนมัติด้วย', type: 'checkboxgroup', optionsSource: 'gradeLevels', required: false },
         { name: 'applicableSemesters', label: 'เปิดสอนภาคเรียน (ไม่เลือก = ทุกภาคเรียน)', type: 'checkboxgroup', options: [{ value: '1', label: 'ภาคเรียนที่ 1' }, { value: '2', label: 'ภาคเรียนที่ 2' }], required: false },
         {

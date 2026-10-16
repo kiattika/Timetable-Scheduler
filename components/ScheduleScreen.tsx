@@ -1206,6 +1206,13 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
         setConflictError("Subject, Grade Level, and Physical Room are required for Student-Only slots.");
         return;
       }
+    } else if (currentSubjectDetails?.isBroadAssignment && gradeLevelId && isParentGrade(gradeLevelId, gradeLevels)) {
+      // Level-wide activity (e.g. scouts for all of M.1): placed once on the parent grade. The teachers are the
+      // linked/advisor teachers filled in automatically; no room is needed.
+      if (!assignmentModalContext || !subjectId || !teacherIds || teacherIds.length === 0) {
+        setConflictError("Subject and at least one linked teacher are required for a level-wide activity.");
+        return;
+      }
     } else {
       if (!assignmentModalContext || !subjectId || !teacherIds || teacherIds.length === 0 || !physicalRoomId || !gradeLevelId) {
         setConflictError("All fields (Grade Level, Subject, Teacher(s), PhysicalRoom) are required, and at least one teacher must be selected.");
