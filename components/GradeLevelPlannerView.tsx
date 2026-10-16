@@ -509,6 +509,44 @@ const GradeLevelPlannerView: React.FC<GradeLevelPlannerViewPropsExtended> = (pro
     );
   }, [selectedGradeLevelId, teacherSubjectAssignments, gradeHierarchyHelpers, gradeLevels, checkIsParentGrade]);
 
+  // Periods already placed per subject for the selected class (distinct day+period, so a level-wide subject that is
+  // stored once per sub-class is not counted several times).
+  const placedBySubject = useMemo(() => {
+    const keys = new Map<string, Set<string>>();
+    if (!selectedGradeLevelId) return new Map<string, number>();
+    const parentSelected = checkIsParentGrade(selectedGradeLevelId, gradeLevels);
+    scheduleEntries.forEach(e => {
+      const mine = e.gradeLevelId === selectedGradeLevelId || (parentSelected && gradeHierarchyHelpers.isChildOf(e.gradeLevelId, selectedGradeLevelId, gradeLevels));
+      if (!mine) return;
+      if (!keys.has(e.subjectId)) keys.set(e.subjectId, new Set());
+      keys.get(e.subjectId)!.add(`${e.day}|${e.period}`);
+    });
+    const counts = new Map<string, number>();
+    keys.forEach((set, id) => counts.set(id, set.size));
+    return counts;
+  }, [scheduleEntries, selectedGradeLevelId, gradeLevels, gradeHierarchyHelpers, checkIsParentGrade]);
+
+  // Subjects still needing periods (finished ones are hidden; the currently chosen one stays so the select never goes blank).
+  const assistantSubjectOptions = useMemo(() => {
+    const seen = new Set<string>();
+    const out: { key: string; subjectId: string; label: string }[] = [];
+    relevantTeacherAssignments.forEach(tsa => {
+      const subject = subjects.find(s => s.id === tsa.subjectId);
+      if (!subject) return;
+      const total = subject.periodsPerWeek;
+      const placed = placedBySubject.get(subject.id) || 0;
+      const remaining = typeof total === 'number' ? total - placed : null;
+      if (remaining !== null && remaining <= 0 && subject.id !== assistantSubjectId) return;
+      const key = `${tsa.subjectId}-${tsa.teacherId}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      const teacher = teachers.find(t => t.id === tsa.teacherId);
+      const suffix = remaining === null ? '' : remaining > 0 ? ` (เหลือ ${remaining} คาบ)` : ' (ครบแล้ว)';
+      out.push({ key, subjectId: subject.id, label: `${subject.name} (${teacher?.name || 'No Teacher'})${suffix}` });
+    });
+    return out;
+  }, [relevantTeacherAssignments, subjects, teachers, placedBySubject, assistantSubjectId]);
+
   const assistantSelectedTSA = relevantTeacherAssignments.find(tsa => tsa.subjectId === assistantSubjectId);
   const assistantSelectedSubject = subjects.find(s => s.id === assistantSubjectId);
   const assistantSelectedTeacherIds = assistantSelectedTSA ? [assistantSelectedTSA.teacherId] : [];
@@ -891,15 +929,11 @@ const GradeLevelPlannerView: React.FC<GradeLevelPlannerViewPropsExtended> = (pro
                       className="w-full p-2 border border-slate-300 rounded focus:ring-purple-500 focus:border-purple-500 text-sm"
                   >
                       <option value="">-- เลือกวิชา --</option>
-                      {relevantTeacherAssignments.map(tsa => {
-                          const subject = subjects.find(s => s.id === tsa.subjectId);
-                          const teacher = teachers.find(t => t.id === tsa.teacherId);
-                          return (
-                              <option key={`${tsa.subjectId}-${tsa.teacherId}`} value={tsa.subjectId}>
-                                  {subject?.name} ({teacher?.name || 'No Teacher'})
-                              </option>
-                          );
-                      })}
+                      {assistantSubjectOptions.map(opt => (
+                          <option key={opt.key} value={opt.subjectId}>
+                              {opt.label}
+                          </option>
+                      ))}
                   </select>
               </div>
 
