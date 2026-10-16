@@ -65,8 +65,8 @@ export const CampusMapScreen: React.FC<Props> = ({ appData, setAppData }) => {
       <div>
         <h2 className="text-xl font-bold text-slate-800">ผังอาคาร</h2>
         <p className="text-sm text-slate-500 mt-1">
-          พิมพ์เลขอาคารลงตารางตามตำแหน่งจริงบนผังโรงเรียน (ช่องว่าง = ไม่มีอาคาร) ใช้คำนวณระยะเดินระหว่างอาคารในการตรวจตาราง
-          รหัสห้อง 3 หลักถอดได้ เช่น 931 = อาคาร 9 ชั้น 3 ห้อง 1 ส่วนรหัส 4 หลัก/มีตัวอักษร ต้องกรอกอาคารและชั้นเองที่หน้า Physical Rooms
+          พิมพ์เลขอาคารลงตารางตามตำแหน่งจริงบนผังโรงเรียน (ช่องว่าง = ไม่มีอาคาร) สนามกีฬาใส่เป็น F (หรือแยก F1, F2, …) และลานกิจกรรมเป็น P ได้ โดยวางได้หลายช่องเพราะใหญ่กว่าอาคาร ใช้คำนวณระยะเดินระหว่างอาคารในการตรวจตาราง
+          รหัสห้อง 3 หลักถอดได้ เช่น 931 = อาคาร 9 ชั้น 3 ห้อง 1 F001 = สนามในโซน F, P900 = ลานหน้าอาคาร 9 (โซน P) ส่วนรหัส 4 หลักหรือตัวอักษรอื่นต้องกรอกอาคารและชั้นเองที่หน้า Physical Rooms
         </p>
       </div>
 
@@ -107,7 +107,7 @@ export const CampusMapScreen: React.FC<Props> = ({ appData, setAppData }) => {
             </button>
           </div>
         )}
-        {duplicates.length > 0 && <p className="text-sm text-red-600">อาคารซ้ำในผัง: {duplicates.join(', ')} (แต่ละอาคารวางได้ช่องเดียว)</p>}
+        {duplicates.length > 0 && <p className="text-sm text-red-600">อาคารซ้ำในผัง: {duplicates.join(', ')} (อาคารเลขวางได้ช่องเดียว)</p>}
         {msg && <p className="text-sm text-emerald-700">{msg}</p>}
       </div>
 

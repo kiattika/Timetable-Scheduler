@@ -12,7 +12,7 @@ export interface GridPos { row: number; col: number }
 
 /** "อาคาร 9", " 9 " -> "9". Empty -> ''. */
 export function normalizeBuildingId(raw: unknown): string {
-  return String(raw ?? '').replace(/อาคาร/g, '').replace(/\s+/g, '').trim();
+  return String(raw ?? '').replace(/อาคาร/g, '').replace(/\s+/g, '').trim().toUpperCase();
 }
 
 /**
@@ -21,9 +21,15 @@ export function normalizeBuildingId(raw: unknown): string {
  * ambiguous and letter codes (F001) carry no building, so they return null and must be filled in by hand.
  */
 export function parseRoomCode(code: unknown): { building: string; floor: number; room: string } | null {
-  const c = String(code ?? '').trim();
-  if (!/^\d{3}$/.test(c)) return null;
-  return { building: c[0], floor: Number(c[1]), room: c[2] };
+  const c = String(code ?? '').trim().toUpperCase();
+  if (/^\d{3}$/.test(c)) return { building: c[0], floor: Number(c[1]), room: c[2] };
+  // F001 = สนาม (Field) หมายเลข 1 -> โซน "F1" (ต้องวาง F1 ลงในผังอาคาร)
+  const f = c.match(/^F0*(\d+)$/);
+  if (f && Number(f[1]) > 0) return { building: `F${Number(f[1])}`, floor: 1, room: c };
+  // P900 = ลานกิจกรรมหน้าอาคาร 9 ลำดับที่ 00 -> โซน "P9" (ถ้าไม่มี P9 ในผัง ใช้ P แล้วค่อยใช้อาคาร 9)
+  const p = c.match(/^P([1-9])(\d{2})$/);
+  if (p) return { building: `P${p[1]}`, floor: 1, room: p[2] };
+  return null;
 }
 
 /** Explicit field first, otherwise decoded from the code. */
@@ -86,27 +92,49 @@ export function gridToText(grid: BuildingGrid): string {
 /* ---------------- positions & distance ---------------- */
 
 export interface GridCheck {
-  positions: Map<string, GridPos>;
-  duplicates: string[]; // building ids that appear in more than one cell
+  /** every cell of each building/zone (a field can span several cells) */
+  positions: Map<string, GridPos[]>;
+  /** NUMERIC building ids placed in more than one cell (zones with letters, e.g. F1, may span cells) */
+  duplicates: string[];
 }
 
 export function buildingPositions(grid: BuildingGrid): GridCheck {
-  const positions = new Map<string, GridPos>();
+  const positions = new Map<string, GridPos[]>();
   const dup = new Set<string>();
   grid.forEach((row, r) => row.forEach((cell, c) => {
     const id = normalizeBuildingId(cell);
     if (!id) return;
-    if (positions.has(id)) dup.add(id); else positions.set(id, { row: r, col: c });
+    const list = positions.get(id) ?? [];
+    if (list.length && /^\d+$/.test(id)) dup.add(id);
+    list.push({ row: r, col: c });
+    positions.set(id, list);
   }));
   return { positions, duplicates: [...dup].sort() };
 }
 
 /** Straight-line distance in grid cells (1 = next-door cell). null when either building is not on the grid. */
-export function buildingDistance(a: string, b: string, positions: Map<string, GridPos>): number | null {
-  const pa = positions.get(normalizeBuildingId(a));
-  const pb = positions.get(normalizeBuildingId(b));
-  if (!pa || !pb) return null;
-  return +Math.hypot(pa.row - pb.row, pa.col - pb.col).toFixed(2);
+/**
+ * Find where a building/zone sits on the grid. F3 -> F3, else the plain letter "F" (one block for all fields);
+ * P9 -> P9, else "P", else building 9 (the playground in front of it).
+ */
+export function resolveBuildingKey(id: string, positions: Map<string, GridPos[]>): string | null {
+  const x = normalizeBuildingId(id);
+  const cands = [x];
+  const m = x.match(/^([A-Z])(\d+)$/);
+  if (m) { cands.push(m[1]); if (m[1] === 'P' && m[2].length === 1) cands.push(m[2]); }
+  return cands.find((k) => positions.has(k)) ?? null;
+}
+
+export function buildingDistance(a: string, b: string, positions: Map<string, GridPos[]>): number | null {
+  const ka = resolveBuildingKey(a, positions);
+  const kb = resolveBuildingKey(b, positions);
+  const pa = ka ? positions.get(ka) : undefined;
+  const pb = kb ? positions.get(kb) : undefined;
+  if (!pa?.length || !pb?.length) return null;
+  // zones that span several cells: use the closest pair of cells
+  let best = Infinity;
+  for (const x of pa) for (const y of pb) best = Math.min(best, Math.hypot(x.row - y.row, x.col - y.col));
+  return +best.toFixed(2);
 }
 
 /* ---------------- preparation checklist ---------------- */
@@ -142,7 +170,7 @@ export function locationCoverage(rooms: (PhysicalRoom & { building?: string; flo
     const b = roomBuilding(r);
     if (!b) { unresolved.push({ id: r.id, code: r.code, name: r.name }); continue; }
     withBuilding++;
-    if (!positions.has(b)) notOnGrid.add(b);
+    if (!resolveBuildingKey(b, positions)) notOnGrid.add(b);
   }
   return {
     total: rooms.length,
