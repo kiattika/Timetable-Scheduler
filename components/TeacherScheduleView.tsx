@@ -346,6 +346,7 @@ interface TeacherScheduleViewPropsExtended extends ScreenAccessProps {
   selectedTeacherId: string | null;
   onTeacherIdChange: (id: string | null) => void;
   getWalkMark?: WalkMarkGetter;
+  allowedTeacherIds?: string[] | null;
 }
 
 const TeacherScheduleView: React.FC<TeacherScheduleViewPropsExtended> = ({
@@ -368,9 +369,12 @@ const TeacherScheduleView: React.FC<TeacherScheduleViewPropsExtended> = ({
   startTouchDrag,
   handleTouchMove,
   finishTouchDrag,
-  getWalkMark
+  getWalkMark,
+  allowedTeacherIds
 }) => {
-  const { teachers } = appData; 
+  const { teachers: allTeachers } = appData; 
+  // assistants only see the teachers of their own departments (null = everyone)
+  const teachers = useMemo(() => (allowedTeacherIds ? allTeachers.filter(t => allowedTeacherIds.includes(t.id)) : allTeachers), [allTeachers, allowedTeacherIds]);
   const [tableView, setTableView] = useState<TableView>('daysAsCols'); 
   
   const sortedTeachers = useMemo(() => {
