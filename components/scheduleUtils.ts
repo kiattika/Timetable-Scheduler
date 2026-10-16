@@ -11,6 +11,23 @@ export const isSharable = (subject: any) => Boolean(
   (typeof subject?.subjectCode === 'string' && (subject.subjectCode.toUpperCase() === 'HR' || subject.subjectCode.toUpperCase() === 'LUNCH'))
 );
 
+/** True when the subject is offered in the given semester (empty list / no semester = every semester). */
+export const subjectOfferedInSemester = (subject: any, semester?: string): boolean => {
+  const sem = (semester || '').trim();
+  const list: string[] | undefined = subject?.applicableSemesters;
+  return !sem || !list || list.length === 0 || list.includes(sem);
+};
+
+/** Short text for a cell that has many teachers (the full list stays in the tooltip). */
+export const teachersCellLabel = (names: string[], subject?: any): string => {
+  if (names.length > 3 || (subject?.isBroadAssignment && names.length > 1)) {
+    return subject?.isBroadAssignment && subject?.autoLinkToHomeroomTeachers
+      ? `คณะครูที่ปรึกษา (${names.length} คน)`
+      : `คณะครู (${names.length} คน)`;
+  }
+  return names.join(', ');
+};
+
 export const getParentGradeLevelId = (childGradeLevelId: string, allGradeLevels: GradeLevel[]): string | null => {
     const childGrade = allGradeLevels.find(gl => gl.id === childGradeLevelId);
     if (!childGrade || !childGrade.name.includes('/')) return null;

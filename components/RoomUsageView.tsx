@@ -4,7 +4,7 @@ import SearchableSelect from './SearchableSelect';
 import React, { useState, useMemo, useEffect, DragEvent, MouseEvent as ReactMouseEvent } from 'react';
 import { AppData, DayOfWeek, PeriodSetting, ScheduleEntry, Subject, Teacher, PhysicalRoom, GradeLevel, AssignmentModalContext, ContextMenuTargetInfo, ScreenAccessProps, OrganizationSettings, SingleScheduleTableProps } from '../types';
 import { DAYS_OF_WEEK_ORDERED, Icons } from '../constants';
-import { isParentGrade } from './scheduleUtils'; // Import from new utils file
+import { isParentGrade, teachersCellLabel } from './scheduleUtils'; // Import from new utils file
 
 export const THAI_DAYS: Record<string, string> = {
   'Monday': 'จันทร์',
@@ -69,6 +69,7 @@ export const RoomUsageScheduleTable: React.FC<SingleScheduleTableProps & {
     const periodLabel = periodInfo?.label || `P${periodIndex}`; 
     const periodTimeTooltip = periodInfo ? `${periodInfo.startTime} - ${periodInfo.endTime}` : '';
     const teacherNames = displayInfo?.teachers.map(t => t.name).join(', ');
+    const teacherNamesShort = displayInfo ? teachersCellLabel(displayInfo.teachers.map(t => t.name), displayInfo.subject) : '';
 
     const isLocked = !!appData.organizationSettings?.isLocked;
     const isAssistant = appData.currentUser?.role === 'assistant';
@@ -204,7 +205,7 @@ export const RoomUsageScheduleTable: React.FC<SingleScheduleTableProps & {
               </div>
               <div className="text-xxs leading-tight text-slate-500 truncate flex items-center mt-0.5" title={teacherNames}>
                 <Icons.Teacher size={10} className="inline mr-1 flex-shrink-0" />
-                <span className="truncate">{teacherNames}</span>
+                <span className="truncate">{teacherNamesShort}</span>
               </div>
               <div className="text-xxs leading-tight text-slate-600 truncate flex items-center mt-0.5">
                 <Icons.GradeLevel size={10} className="inline mr-1 flex-shrink-0" />

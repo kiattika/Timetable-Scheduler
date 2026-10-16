@@ -1,5 +1,5 @@
 import type { Teacher, Subject, GradeLevel, TeacherSubjectAssignment } from '../types';
-import { getChildGradeLevelIds } from '../components/scheduleUtils';
+import { getChildGradeLevelIds, subjectOfferedInSemester } from '../components/scheduleUtils';
 
 export interface HomeroomLinkDrift {
   /** Links that should exist (advisor of the class, subject auto-links to advisors) but do not. */
@@ -20,8 +20,10 @@ export const computeHomeroomLinkDrift = (args: {
   links: TeacherSubjectAssignment[];
   /** Optional: restrict to some teachers (e.g. an assistant's own departments). */
   includeTeacher?: (t: Teacher) => boolean;
+  /** Optional: current semester. Subjects not offered in it are skipped (no links added or reported). */
+  currentSemester?: string;
 }): HomeroomLinkDrift => {
-  const { teachers, subjects, gradeLevels, links, includeTeacher } = args;
+  const { teachers, subjects, gradeLevels, links, includeTeacher, currentSemester } = args;
   const scopedTeachers = includeTeacher ? teachers.filter(includeTeacher) : teachers;
   const scopedTeacherIds = new Set(scopedTeachers.map(t => t.id));
   const keyOf = (teacherId: string, subjectId: string, gradeLevelId: string) => `${teacherId}|${subjectId}|${gradeLevelId}`;
@@ -32,6 +34,7 @@ export const computeHomeroomLinkDrift = (args: {
 
   subjects.forEach(subject => {
     if (!subject.autoLinkToHomeroomTeachers) return;
+    if (!subjectOfferedInSemester(subject, currentSemester)) return;
     const parents = subject.applicableParentGradeLevelIds || [];
     if (parents.length === 0) return;
 

@@ -10,7 +10,7 @@ import SearchableSelect from './SearchableSelect';
 import { thaiGradeName } from '../utils/subjectCode';
 import ConfirmationModal from './ConfirmationModal'; // Import ConfirmationModal
 import { Icons, PREDEFINED_SUBJECT_COLORS } from '../constants';
-import { getParentGradeLevelId, isParentGrade as checkIsParentGradeUtil, getChildGradeLevelIds } from './scheduleUtils'; // Import from new utils file
+import { getParentGradeLevelId, isParentGrade as checkIsParentGradeUtil, getChildGradeLevelIds, subjectOfferedInSemester } from './scheduleUtils'; // Import from new utils file
 
 
 interface EntityManagementScreenProps<T extends Identifiable> extends ScreenAccessProps {
@@ -68,15 +68,15 @@ const EntityManagementScreen = <T extends Identifiable,>({
   // Determine standard HR/CZ subjects to auto-link
   const hrCzSubjects = useMemo(() => {
     if (!appData) return [];
-    return appData.subjects.filter(s => 
+    return appData.subjects.filter(s => subjectOfferedInSemester(s, appData.organizationSettings?.semester) && (
         s.autoLinkToHomeroomTeachers || 
         s.subjectCode === 'HR' || 
         s.subjectCode === 'CZ' ||
         s.name.includes('โฮมรูม') ||
         s.name.includes('เขตพื้นที่') ||
         s.isHomeroomAdvisorySubject
-    );
-  }, [appData?.subjects]);
+    ));
+  }, [appData?.subjects, appData?.organizationSettings?.semester]);
 
 
   const IconComponent = getIcon(entityType);
@@ -439,6 +439,7 @@ const EntityManagementScreen = <T extends Identifiable,>({
                 subjects: [savedSubject],
                 gradeLevels: appData.gradeLevels,
                 links: appData.teacherSubjectAssignments,
+                currentSemester: appData.organizationSettings?.semester,
             });
             let applyStale = true;
             if (drift.stale.length > 0) {

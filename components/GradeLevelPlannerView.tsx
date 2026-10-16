@@ -7,7 +7,7 @@ import { usePersistedState } from '../utils/usePersistedState';
 import { AppData, DayOfWeek, PeriodSetting, ScheduleEntry, Subject, Teacher, PhysicalRoom, GradeLevel, AssignmentModalContext, ContextMenuTargetInfo, ScreenAccessProps, OrganizationSettings, SingleScheduleTableProps, PrintWithOptionsModalProps, WalkMarkGetter } from '../types';
 import { WalkDot } from './WalkDot';
 import { DAYS_OF_WEEK_ORDERED, Icons } from '../constants';
-import { isParentGrade as checkIsParentGradeUtil, getParentGradeLevelId as getParentIdUtil, isLunchPeriodForGrade } from './scheduleUtils';
+import { isParentGrade as checkIsParentGradeUtil, getParentGradeLevelId as getParentIdUtil, isLunchPeriodForGrade, teachersCellLabel } from './scheduleUtils';
 import Modal from './Modal';
 
 export const THAI_DAYS: Record<string, string> = {
@@ -184,6 +184,7 @@ export const GradeLevelScheduleTable: React.FC<SingleScheduleTableProps & {
               const displayData = getEntryDisplay(entry);
               const isBeingDragged = entry.id === draggedEntryId;
               const teacherNames = displayData?.teachers.map(t => t.name).join(', ');
+              const teacherNamesShort = displayData ? teachersCellLabel(displayData.teachers.map(t => t.name), displayData.subject) : '';
               
               let isDraggable = false;
               let cursorClass = 'cursor-default';
@@ -269,7 +270,7 @@ export const GradeLevelScheduleTable: React.FC<SingleScheduleTableProps & {
                     </div>
                     <div className="text-xxs leading-tight text-slate-600 truncate flex items-center mt-0.5" title={teacherNames}>
                       <Icons.Teacher size={10} className="inline mr-1 flex-shrink-0" />
-                      <span className="truncate">{teacherNames}</span>
+                      <span className="truncate">{teacherNamesShort}</span>
                     </div>
                     <div className="text-xxs leading-tight text-slate-500 truncate flex items-center mt-0.5" title={formatRoomDisplay(displayData?.physicalRoom)}>
                        <Icons.PhysicalRoom size={10} className="inline mr-1 flex-shrink-0" />

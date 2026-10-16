@@ -54,9 +54,10 @@ const TeacherSubjectAssignmentScreen: React.FC<TeacherSubjectAssignmentScreenPro
       subjects: appData.subjects,
       gradeLevels: appData.gradeLevels,
       links: appData.teacherSubjectAssignments || [],
-      includeTeacher: isAssistant ? (t => !!t.department && depts.includes(t.department)) : undefined
+      includeTeacher: isAssistant ? (t => !!t.department && depts.includes(t.department)) : undefined,
+      currentSemester: appData.organizationSettings?.semester
     });
-  }, [appData.teachers, appData.subjects, appData.gradeLevels, appData.teacherSubjectAssignments, appData.currentUser]);
+  }, [appData.teachers, appData.subjects, appData.gradeLevels, appData.teacherSubjectAssignments, appData.currentUser, appData.organizationSettings?.semester]);
   const homeroomDriftCount = homeroomDrift.missing.length + homeroomDrift.stale.length;
 
   const describeLink = (teacherId: string, subjectId: string, gradeLevelId: string) => {
