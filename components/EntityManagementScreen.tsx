@@ -1,6 +1,6 @@
 import { computeSubjectColors, SubjectColorMode } from '../utils/subjectColors';
 import { computeHomeroomLinkDrift, applyHomeroomLinkDrift } from '../utils/homeroomLinks';
-import { normalizeSubjectFlags, subjectFlagLockReason, SubjectFlagField } from '../utils/subjectFlags';
+import { normalizeSubjectFlags, subjectFlagLockReason, SubjectFlagField, SUBJECT_TYPE_LABELS_TH, SubjectTypeValue } from '../utils/subjectFlags';
 import { formatRoomDisplay } from "../utils/stringUtils";
 import React, { useState, useEffect, useMemo } from 'react';
 import * as XLSX from 'xlsx';
@@ -809,7 +809,7 @@ const EntityManagementScreen = <T extends Identifiable,>({
       const headers = [
         "ชื่อวิชา", "รหัสวิชา", "จำนวนคาบ/สัปดาห์", "กลุ่มสาระการเรียนรู้", "สีประจำวิชา",
         "รูปแบบการสอน", "รูปแบบการจัดคาบ", "อนุญาตให้ใช้ห้องร่วม", "วิชาเรียนรวม",
-        "วิชาโฮมรูม/แนะแนว", "ผูกกับครูประจำชั้นอัตโนมัติ", "ระดับชั้นที่เปิดสอน", "ประเภทห้องที่จำกัด", "ภาคเรียนที่เปิดสอน"
+        "วิชาโฮมรูม/แนะแนว", "ผูกกับครูประจำชั้นอัตโนมัติ", "ระดับชั้นที่เปิดสอน", "ประเภทห้องที่จำกัด", "ภาคเรียนที่เปิดสอน", "ประเภทวิชา"
       ];
       const rows = (filteredItems as unknown as Subject[]).map(s => {
         const applicableGrades = (s.applicableParentGradeLevelIds || [])
@@ -825,7 +825,8 @@ const EntityManagementScreen = <T extends Identifiable,>({
           s.autoLinkToHomeroomTeachers ? 'ใช่' : 'ไม่ใช่',
           applicableGrades,
           restrictedRooms,
-          (s.applicableSemesters || []).join(', ')
+          (s.applicableSemesters || []).join(', '),
+          SUBJECT_TYPE_LABELS_TH[(s.type as SubjectTypeValue) || 'STANDARD'] || 'ปกติ'
         ];
       });
       dataAOA = [headers, ...rows];
@@ -837,9 +838,9 @@ const EntityManagementScreen = <T extends Identifiable,>({
       });
       dataAOA = [headers, ...rows];
     } else if (entityType === 'physicalRooms') {
-      const headers = ["รหัสห้อง", "ชื่อห้อง", "ประเภทห้อง", "ความจุ (คน)"];
+      const headers = ["รหัสห้อง", "ชื่อห้อง", "ประเภทห้อง", "ความจุ (คน)", "อาคาร", "ชั้น"];
       const rows = (filteredItems as unknown as PhysicalRoom[]).map(r => [
-        r.code || '', r.name || '', r.type || 'ห้องเรียนทั่วไป', r.capacity ?? 40
+        r.code || '', r.name || '', r.type || 'ห้องเรียนทั่วไป', r.capacity ?? 40, r.building || '', r.floor ?? ''
       ]);
       dataAOA = [headers, ...rows];
     } else {

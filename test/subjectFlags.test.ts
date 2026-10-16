@@ -20,3 +20,20 @@ describe('subject flag rules', () => {
     expect(normalizeSubjectFlags(s)).toEqual(s);
   });
 });
+
+import { parseSubjectType } from '../utils/subjectFlags';
+
+describe('parseSubjectType', () => {
+  it('accepts enum, Thai and loose English wording', () => {
+    expect(parseSubjectType('STANDARD')).toBe('STANDARD');
+    expect(parseSubjectType('ปกติ')).toBe('STANDARD');
+    expect(parseSubjectType('เฉพาะครู')).toBe('TEACHER_ONLY');
+    expect(parseSubjectType('teacher-only')).toBe('TEACHER_ONLY');
+    expect(parseSubjectType('เฉพาะนักเรียน')).toBe('STUDENT_ONLY');
+    expect(parseSubjectType('STUDENT_ONLY')).toBe('STUDENT_ONLY');
+  });
+  it('returns undefined for blank or unknown', () => {
+    expect(parseSubjectType('')).toBeUndefined();
+    expect(parseSubjectType('อะไรก็ไม่รู้')).toBeUndefined();
+  });
+});

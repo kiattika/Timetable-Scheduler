@@ -17,7 +17,8 @@ import Modal from './Modal';
 import { Icons, PREDEFINED_SUBJECT_COLORS } from '../constants';
 import { getSampleAppData } from '../api';
 import { getChildGradeLevelIds } from './scheduleUtils';
-import { normalizeSubjectFlags } from '../utils/subjectFlags';
+import { normalizeSubjectFlags, parseSubjectType } from '../utils/subjectFlags';
+import { normalizeBuildingId } from '../utils/buildings';
 
 interface ImportDataModalProps {
   isOpen: boolean;
@@ -184,6 +185,9 @@ export const ImportDataModal: React.FC<ImportDataModalProps> = ({
       else if (field.name === 'applicableParentGradeLevelIds') note = 'ชื่อระดับชั้นหลักคั่นด้วยจุลภาค (เช่น ม.1, ม.2, ม.3)';
       else if (field.name === 'homeroomPhysicalRoomId') note = 'ชื่อหรือรหัสห้องประจำ (เช่น ห้อง 931 หรือ 931)';
       else if (field.name === 'type' && selectedEntityType === 'physicalRooms') note = 'ประเภทห้อง (เช่น ห้องเรียนทั่วไป, ห้องปฏิบัติการ, สนาม/ลานกิจกรรม)';
+      else if (field.name === 'type' && selectedEntityType === 'subjects') note = "ประเภทวิชา: ปกติ / เฉพาะครู / เฉพาะนักเรียน (หรือ STANDARD / TEACHER_ONLY / STUDENT_ONLY) เว้นว่าง = ปกติ";
+      else if (field.name === 'building') note = 'อาคาร (เช่น 9 หรือ อาคาร 9) เว้นว่าง = เดาจากรหัสห้อง 3 หลัก';
+      else if (field.name === 'floor') note = 'ชั้นที่ตั้งห้อง (ตัวเลข) เว้นว่าง = เดาจากรหัสห้อง 3 หลัก';
       else if (field.name === 'capacity') note = 'ตัวเลขความจุ/จำนวนที่นั่ง (เช่น 40)';
       else if (selectedEntityType === 'teacherSubjectAssignments') {
         if (field.name === 'teacherIdentifier') note = "ชื่อ-สกุล หรือรหัสครูผู้สอน (เช่น ดร.สมชาย หรือ T001)";
@@ -211,10 +215,18 @@ export const ImportDataModal: React.FC<ImportDataModalProps> = ({
       data.push(["นายสมชาย ใจดี", "T001", "somchai.j@utd.ac.th", "วิทยาศาสตร์และเทคโนโลยี", "ม.1/1, ม.1/2"]);
       data.push(["นางสาวสมหญิง สดใส", "T002", "somying.s@utd.ac.th", "คณิตศาสตร์", "ม.2/1"]);
     } else if (selectedEntityType === 'subjects') {
-      data.push(["คณิตศาสตร์พื้นฐาน 1", "ค21101", 3, "คณิตศาสตร์", "#3B82F6", "single", "2/1", false, false, false, false, "ม.1"]);
-      data.push(["วิทยาศาสตร์กายภาพ 1", "ว21101", 3, "วิทยาศาสตร์และเทคโนโลยี", "#10B981", "single", "2/1", false, false, false, false, "ม.1"]);
-      data.push(["กิจกรรมลูกเสือ-เนตรนารี", "ก21901", 1, "กิจกรรมพัฒนาผู้เรียน", "#D97706", "single", "1", true, true, false, false, "ม.1, ม.2, ม.3"]);
-      data.push(["กิจกรรมโฮมรูมและแนะแนว", "ก21902", 1, "กิจกรรมพัฒนาผู้เรียน", "#8B5CF6", "single", "1", false, false, true, true, "ม.1"]);
+      // Rows are built by field name so they always line up with the (generated) header order
+      const subjectSamples: Record<string, any>[] = [
+        { name: 'คณิตศาสตร์พื้นฐาน 1', subjectCode: 'ค21101', department: 'คณิตศาสตร์', periodsPerWeek: 3, color: '#3B82F6', type: 'ปกติ', teachingMode: 'single', schedulingPattern: '2/1', applicableParentGradeLevelIds: 'ม.1', applicableSemesters: '1' },
+        { name: 'กิจกรรมลูกเสือ-เนตรนารี', subjectCode: 'ก21901', department: 'กิจกรรมพัฒนาผู้เรียน', periodsPerWeek: 1, color: '#D97706', type: 'ปกติ', teachingMode: 'single', schedulingPattern: '1', isBroadAssignment: true, autoLinkToHomeroomTeachers: true, applicableParentGradeLevelIds: 'ม.1, ม.2, ม.3', applicableSemesters: '1' },
+        { name: 'กิจกรรมโฮมรูม', subjectCode: 'ก21902', department: 'กิจกรรมพัฒนาผู้เรียน', periodsPerWeek: 1, color: '#8B5CF6', type: 'ปกติ', teachingMode: 'single', schedulingPattern: '1', isHomeroomAdvisorySubject: true, autoLinkToHomeroomTeachers: true, applicableParentGradeLevelIds: 'ม.1' },
+        { name: 'PLC ครู', subjectCode: 'PLC', department: 'กิจกรรมพัฒนาผู้เรียน', periodsPerWeek: 1, color: '#64748B', type: 'เฉพาะครู', teachingMode: 'multiple', schedulingPattern: '1' },
+        { name: 'ศึกษาค้นคว้าด้วยตนเอง', subjectCode: 'IS', department: 'กิจกรรมพัฒนาผู้เรียน', periodsPerWeek: 1, color: '#0EA5E9', type: 'เฉพาะนักเรียน', teachingMode: 'single', schedulingPattern: '1' },
+      ];
+      subjectSamples.forEach(sample => data.push(currentExpectedColumns.map(col => {
+        const v = sample[col.field];
+        return v === undefined ? (col.type === 'checkbox' ? false : '') : v;
+      })));
     } else if (selectedEntityType === 'gradeLevels') {
       data.push(["ม.1", "", "ชั้นมัธยมศึกษาปีที่ 1"]);
       data.push(["ม.2", "", "ชั้นมัธยมศึกษาปีที่ 2"]);
@@ -224,10 +236,12 @@ export const ImportDataModal: React.FC<ImportDataModalProps> = ({
       data.push(["ม.1/2", "ห้อง 932", "ห้องเรียนประจำชั้น ม.1/2 อาคาร 9"]);
       data.push(["ม.2/1", "ห้อง 941", "ห้องเรียนประจำชั้น ม.2/1 อาคาร 9"]);
     } else if (selectedEntityType === 'physicalRooms') {
-      data.push(["931", "ห้องปฏิบัติการคอมพิวเตอร์ 1", "ห้องปฏิบัติการ", 40]);
-      data.push(["932", "ห้องเรียน ม.1/2 อาคาร 9", "ห้องเรียนทั่วไป", 40]);
-      data.push(["941", "ห้องเรียน ม.2/1 อาคาร 9", "ห้องเรียนทั่วไป", 40]);
-      data.push(["F001", "สนามฟุตบอลและลานกิจกรรม", "สนาม/ลานกิจกรรม", 100]);
+      const roomSamples: Record<string, any>[] = [
+        { code: '931', name: 'ห้องปฏิบัติการคอมพิวเตอร์ 1', type: 'ห้องปฏิบัติการ', capacity: 40, building: '9', floor: 3 },
+        { code: '932', name: 'ห้องเรียน ม.1/2 อาคาร 9', type: 'ห้องเรียนทั่วไป', capacity: 40 },
+        { code: 'F001', name: 'สนามฟุตบอลและลานกิจกรรม', type: 'สนาม/ลานกิจกรรม', capacity: 100 },
+      ];
+      roomSamples.forEach(sample => data.push(currentExpectedColumns.map(col => sample[col.field] ?? '')));
     } else if (selectedEntityType === 'teacherSubjectAssignments') {
       data.push(["นายสมชาย ใจดี", "วิทยาศาสตร์กายภาพ 1", "ม.1/1"]);
       data.push(["T002", "ค21101", "ม.1/1"]);
@@ -275,17 +289,20 @@ export const ImportDataModal: React.FC<ImportDataModalProps> = ({
       if (fn === 'department' && (fh.includes('กลุ่มสาระ') || fh.includes('หมวด') || fh.includes('สาระ') || fh === 'department')) return true;
       if (fn === 'email' && (fh.includes('อีเมล') || fh.includes('email') || fh === 'e-mail')) return true;
       if (fn === 'type' && selectedEntityType === 'physicalRooms' && (fh.includes('ประเภทห้อง') || fh.includes('ประเภท') || fh === 'type' || fh === 'room type')) return true;
+      if (fn === 'type' && selectedEntityType === 'subjects' && (fh.includes('ประเภทวิชา') || fh === 'subject type' || fh === 'type')) return true;
+      if (fn === 'building' && selectedEntityType === 'physicalRooms' && (fh.includes('อาคาร') || fh === 'building')) return true;
+      if (fn === 'floor' && selectedEntityType === 'physicalRooms' && (fh === 'ชั้น' || fh.includes('ชั้นที่') || fh === 'floor')) return true;
       if (fn === 'capacity' && selectedEntityType === 'physicalRooms' && (fh.includes('ความจุ') || fh.includes('ที่นั่ง') || fh === 'capacity')) return true;
       if (fn === 'homeroomPhysicalRoomId' && (fh.includes('โฮมรูม') || fh.includes('ห้องประจำ') || fh.includes('ห้องเรียนประจำ') || fh === 'homeroom')) return true;
       if (fn === 'homeroomGradeLevelIds' && (fh.includes('ประจำชั้น') || fh.includes('ที่ปรึกษา') || fh.includes('homeroom grades'))) return true;
-      if (fn === 'periodsPerWeek' && (fh.includes('คาบ') || fh.includes('จำนวนคาบ') || fh === 'periods' || fh === 'periods per week')) return true;
+      if (fn === 'periodsPerWeek' && !fh.includes('รูปแบบ') && (fh.includes('คาบ') || fh.includes('จำนวนคาบ') || fh === 'periods' || fh === 'periods per week')) return true;
       if (fn === 'teachingMode' && (fh.includes('รูปแบบการสอน') || fh === 'teaching mode' || fh === 'mode')) return true;
-      if (fn === 'schedulingPattern' && (fh.includes('รูปแบบคาบ') || fh.includes('pattern') || fh === 'scheduling pattern')) return true;
+      if (fn === 'schedulingPattern' && (fh.includes('รูปแบบคาบ') || fh.includes('รูปแบบการจัดคาบ') || fh.includes('pattern') || fh === 'scheduling pattern')) return true;
       if ((fn === 'allowPhysicalRoomSharing' || fn === 'allowClassroomSharing') && (fh.includes('แชร์ห้อง') || fh.includes('ใช้ห้องร่วม') || fh.includes('ข้ามการตรวจสอบห้อง') || fh === 'allow sharing' || fh === 'allow physicalroom sharing')) return true;
       if (fn === 'isBroadAssignment' && (fh.includes('เรียนรวม') || fh.includes('broad') || fh === 'broad assignment')) return true;
       if (fn === 'isHomeroomAdvisorySubject' && (fh.includes('โฮมรูม') || fh.includes('แนะแนว') || fh === 'homeroom subject')) return true;
       if (fn === 'autoLinkToHomeroomTeachers' && (fh.includes('ผูกกับครู') || fh.includes('auto link') || fh === 'auto link teachers')) return true;
-      if (fn === 'applicableParentGradeLevelIds' && (fh.includes('เปิดสอน') || fh.includes('applicable grades') || fh.includes('ระดับชั้นที่เรียน'))) return true;
+      if (fn === 'applicableParentGradeLevelIds' && !fh.includes('ภาคเรียน') && (fh.includes('เปิดสอน') || fh.includes('applicable grades') || fh.includes('ระดับชั้นที่เรียน'))) return true;
       if (fn === 'applicableSemesters' && (fh.includes('ภาคเรียน') || fh.includes('semester'))) return true;
       if (fn === 'restrictedRoomTypes' && (fh.includes('ประเภทห้อง') || fh.includes('restricted room') || fh.includes('ห้องที่จำกัด'))) return true;
       if (fn === 'description' && (fh.includes('คำอธิบาย') || fh.includes('หมายเหตุ') || fh === 'description' || fh === 'notes')) return true;
@@ -378,7 +395,13 @@ export const ImportDataModal: React.FC<ImportDataModalProps> = ({
               }
               break;
             case 'select':
-              if (selectedEntityType === 'subjects' && fieldConfig.name === 'teachingMode') {
+              if (selectedEntityType === 'subjects' && fieldConfig.name === 'type') {
+                const parsedType = parseSubjectType(rawValue);
+                if (!parsedType) {
+                  messages.push(`แถวที่ ${rowIndex + 2}: ประเภทวิชา '${rawValue}' ไม่ถูกต้อง (ใช้: ปกติ / เฉพาะครู / เฉพาะนักเรียน) — ใช้ค่า 'ปกติ'`);
+                }
+                processedValue = parsedType || 'STANDARD';
+              } else if (selectedEntityType === 'subjects' && fieldConfig.name === 'teachingMode') {
                 const modeVal = rawValue.toLowerCase();
                 processedValue = (modeVal === 'single' || modeVal === 'multiple') ? modeVal as SubjectTeachingMode : 'single';
               }
@@ -461,6 +484,13 @@ export const ImportDataModal: React.FC<ImportDataModalProps> = ({
         if (newItemData.type) discoveredResourceTypes.add(newItemData.type);
         if (!newItemData.code && newItemData.name) {
           newItemData.code = newItemData.name;
+        }
+        if (newItemData.building !== undefined) {
+          const b = normalizeBuildingId(newItemData.building);
+          if (b) newItemData.building = b; else delete newItemData.building;
+        }
+        if (newItemData.floor !== undefined && (!Number.isFinite(newItemData.floor) || newItemData.floor < 0)) {
+          delete newItemData.floor;
         }
       }
 
@@ -605,6 +635,13 @@ export const ImportDataModal: React.FC<ImportDataModalProps> = ({
         if (existing) {
           touchedExistingIds.add(existing.id);
           const merged = { ...existing, ...(entityUpdates.get(existing.id) || {}) };
+          if (isSubject) {
+            // Keep flags consistent with the resulting type (e.g. existing Broad subject re-imported as teacher-only)
+            const resulting = normalizeSubjectFlags({ ...merged, ...patch });
+            (['allowPhysicalRoomSharing', 'allowClassroomSharing', 'isBroadAssignment', 'isHomeroomAdvisorySubject', 'autoLinkToHomeroomTeachers'] as const).forEach(f => {
+              if (!isSameValue((merged as any)[f], (resulting as any)[f]) && (resulting as any)[f] !== undefined) patch[f] = (resulting as any)[f];
+            });
+          }
           const changedKeys = Object.keys(patch).filter(k => !isSameValue(merged[k], patch[k]));
           if (changedKeys.length === 0) {
             unchangedCount++;

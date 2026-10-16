@@ -14,6 +14,7 @@ import {
 import Modal from './Modal';
 import { Icons, APP_TITLE } from '../constants';
 import { formatRoomDisplay } from '../utils/stringUtils';
+import { SUBJECT_TYPE_LABELS_TH, SubjectTypeValue } from '../utils/subjectFlags';
 
 export type ExportTargetType = 
   | 'all' 
@@ -155,7 +156,10 @@ export const ExportDataModal: React.FC<ExportDataModalProps> = ({
       "วิชาเรียนรวม", 
       "วิชาโฮมรูม/แนะแนว", 
       "ผูกกับครูประจำชั้นอัตโนมัติ", 
-      "ระดับชั้นที่เปิดสอน"
+      "ระดับชั้นที่เปิดสอน",
+      "ประเภทห้องที่จำกัด",
+      "ภาคเรียนที่เปิดสอน",
+      "ประเภทวิชา"
     ];
     const rows = getFilteredSubjects(deptFilter).map(sub => {
       const applicableGrades = (sub.applicableParentGradeLevelIds || [])
@@ -169,11 +173,14 @@ export const ExportDataModal: React.FC<ExportDataModalProps> = ({
         sub.color || '#3B82F6',
         sub.teachingMode || 'single',
         sub.schedulingPattern || '',
-        sub.allowClassroomSharing ? 'ใช่' : 'ไม่ใช่',
+        (sub.allowPhysicalRoomSharing ?? sub.allowClassroomSharing) ? 'ใช่' : 'ไม่ใช่',
         sub.isBroadAssignment ? 'ใช่' : 'ไม่ใช่',
         sub.isHomeroomAdvisorySubject ? 'ใช่' : 'ไม่ใช่',
         sub.autoLinkToHomeroomTeachers ? 'ใช่' : 'ไม่ใช่',
-        applicableGrades
+        applicableGrades,
+        (sub.restrictedRoomTypes || []).join(', '),
+        (sub.applicableSemesters || []).join(', '),
+        SUBJECT_TYPE_LABELS_TH[(sub.type as SubjectTypeValue) || 'STANDARD'] || 'ปกติ'
       ];
     });
     return [headers, ...rows];
@@ -212,12 +219,14 @@ export const ExportDataModal: React.FC<ExportDataModalProps> = ({
 
   // Build Sheet Data: Physical Rooms
   const buildPhysicalRoomsSheetData = () => {
-    const headers = ["รหัสห้อง", "ชื่อห้อง", "ประเภทห้อง", "ความจุ (คน)"];
+    const headers = ["รหัสห้อง", "ชื่อห้อง", "ประเภทห้อง", "ความจุ (คน)", "อาคาร", "ชั้น"];
     const rows = (appData.physicalRooms || []).map(r => [
       r.code || '',
       r.name || '',
       r.type || 'ห้องเรียนทั่วไป',
-      r.capacity ?? 40
+      r.capacity ?? 40,
+      r.building || '',
+      r.floor ?? ''
     ]);
     return [headers, ...rows];
   };

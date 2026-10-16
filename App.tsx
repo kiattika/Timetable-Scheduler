@@ -32,7 +32,8 @@ import { isParentGrade as checkIsParentGradeUtil, getParentGradeLevelId, getChil
 import { useAppAuth } from './hooks/useAppAuth';
 import { useBackupRestore } from './hooks/useBackupRestore';
 import { db } from './lib/firebase';
-import { isSubjectFlagLocked } from './utils/subjectFlags';
+import { isSubjectFlagLocked, normalizeSubjectFlags } from './utils/subjectFlags';
+import { gridFromStored, gridToStored, normalizeBuildingId } from './utils/buildings';
 import { doc, getDoc, getDocFromServer } from 'firebase/firestore';
 
 type View = 'schedule' | 'manageData' | 'importData'; 
@@ -266,23 +267,40 @@ const App: React.FC = () => {
           const rawData = parsedData.data || parsedData;
           
           if (appData && rawData) {
-            const restoredOrgSettings = normalizeLoadedOrganizationSettings(
+            const restoredOrgSettings: any = normalizeLoadedOrganizationSettings(
               rawData.organizationSettings || parsedData.organizationSettings || appData.organizationSettings
             );
+            if (restoredOrgSettings && typeof restoredOrgSettings === 'object') {
+              // System-level read mode (System Health) belongs to this deployment, not to the backup file.
+              const currentReadMode = (appData.organizationSettings as any)?.readFromSubcollections;
+              if (currentReadMode === undefined) delete restoredOrgSettings.readFromSubcollections;
+              else restoredOrgSettings.readFromSubcollections = currentReadMode;
+              // Campus building layout: accept both the stored shape and a plain string[][] from older backups.
+              if (restoredOrgSettings.buildingGrid !== undefined) {
+                restoredOrgSettings.buildingGrid = gridToStored(gridFromStored(restoredOrgSettings.buildingGrid));
+              }
+            }
             
             const newAppData: AppData = {
                 departments: rawData.departments && rawData.departments.length > 0 ? rawData.departments : (appData.departments || [...DEFAULT_DEPARTMENTS]),
                 resourceTypes: rawData.resourceTypes && rawData.resourceTypes.length > 0 ? rawData.resourceTypes : (appData.resourceTypes || [...DEFAULT_RESOURCE_TYPES]),
                 teachers: Array.isArray(rawData.teachers) ? rawData.teachers : [],
                 subjects: Array.isArray(rawData.subjects) ? rawData.subjects.map((s: any) => ({
-                  ...normalizeLoadedSubject(s), // shared: teachingMode + room-sharing (matches all load paths)
-                  isBroadAssignment: !!s.isBroadAssignment,
-                  isHomeroomAdvisorySubject: !!s.isHomeroomAdvisorySubject,
-                  autoLinkToHomeroomTeachers: !!s.autoLinkToHomeroomTeachers,
-                  applicableParentGradeLevelIds: s.applicableParentGradeLevelIds || []
+                  ...normalizeSubjectFlags({
+                    ...normalizeLoadedSubject(s), // shared: teachingMode + room-sharing (matches all load paths)
+                    isBroadAssignment: !!s.isBroadAssignment,
+                    isHomeroomAdvisorySubject: !!s.isHomeroomAdvisorySubject,
+                    autoLinkToHomeroomTeachers: !!s.autoLinkToHomeroomTeachers,
+                    applicableParentGradeLevelIds: s.applicableParentGradeLevelIds || [],
+                    applicableSemesters: Array.isArray(s.applicableSemesters) ? s.applicableSemesters.map(String) : []
+                  })
                 })) : [],
                 gradeLevels: Array.isArray(rawData.gradeLevels) ? rawData.gradeLevels : [],
-                physicalRooms: Array.isArray(rawData.physicalRooms) ? rawData.physicalRooms : [],
+                physicalRooms: Array.isArray(rawData.physicalRooms) ? rawData.physicalRooms.map((r: any) => {
+                  const b = normalizeBuildingId(r?.building);
+                  const { building: _b, ...rest } = r || {};
+                  return b ? { ...rest, building: b } : rest;
+                }) : [],
                 scheduleEntries: Array.isArray(rawData.scheduleEntries) ? rawData.scheduleEntries : [],
                 periodSettings: Array.isArray(rawData.periodSettings) && rawData.periodSettings.length > 0 ? rawData.periodSettings : (appData.periodSettings || [...DEFAULT_PERIOD_SETTINGS]),
                 teacherSubjectAssignments: Array.isArray(rawData.teacherSubjectAssignments) ? rawData.teacherSubjectAssignments : [],

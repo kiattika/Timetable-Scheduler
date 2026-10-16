@@ -39,3 +39,21 @@ export const normalizeSubjectFlags = <T extends Record<string, any>>(item: T): T
   if (isSubjectFlagLocked(out, 'autoLinkToHomeroomTeachers') && out.autoLinkToHomeroomTeachers) out.autoLinkToHomeroomTeachers = false;
   return out as T;
 };
+
+export type SubjectTypeValue = 'STANDARD' | 'TEACHER_ONLY' | 'STUDENT_ONLY';
+
+export const SUBJECT_TYPE_LABELS_TH: Record<SubjectTypeValue, string> = {
+  STANDARD: 'ปกติ',
+  TEACHER_ONLY: 'เฉพาะครู',
+  STUDENT_ONLY: 'เฉพาะนักเรียน',
+};
+
+// Accepts the enum value, Thai labels used in the exports/UI, or loose English wording. Unknown/blank -> undefined.
+export const parseSubjectType = (raw: unknown): SubjectTypeValue | undefined => {
+  const v = String(raw ?? '').trim().toLowerCase().replace(/[\s_-]+/g, '');
+  if (!v) return undefined;
+  if (v === 'standard' || v === 'ปกติ' || v === 'วิชาปกติ' || v === 'ทั่วไป') return 'STANDARD';
+  if (v.includes('teacher') || v.includes('เฉพาะครู') || v.includes('วิชาเฉพาะครู')) return 'TEACHER_ONLY';
+  if (v.includes('student') || v.includes('เฉพาะนักเรียน') || v.includes('วิชาเฉพาะนักเรียน')) return 'STUDENT_ONLY';
+  return undefined;
+};
