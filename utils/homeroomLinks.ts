@@ -6,6 +6,8 @@ export interface HomeroomLinkDrift {
   missing: { teacherId: string; subjectId: string; gradeLevelId: string }[];
   /** Existing links on auto-link subjects whose teacher is not an advisor of that class (anymore). */
   stale: TeacherSubjectAssignment[];
+  /** Why each stale link is "extra": the class is outside the levels the subject is offered in, or the teacher is not its advisor. */
+  staleReasons: Record<string, 'wrong_level' | 'not_advisor'>;
 }
 
 /**
@@ -31,6 +33,7 @@ export const computeHomeroomLinkDrift = (args: {
 
   const missing: HomeroomLinkDrift['missing'] = [];
   const stale: TeacherSubjectAssignment[] = [];
+  const staleReasons: HomeroomLinkDrift['staleReasons'] = {};
 
   subjects.forEach(subject => {
     if (!subject.autoLinkToHomeroomTeachers) return;
@@ -55,11 +58,14 @@ export const computeHomeroomLinkDrift = (args: {
       if (l.subjectId !== subject.id || !scopedTeacherIds.has(l.teacherId)) return;
       // Teacher-only links (no class) are never homeroom links, so they are never "extra".
       if (l.gradeLevelId === 'Non-Student') return;
-      if (!desired.has(keyOf(l.teacherId, l.subjectId, l.gradeLevelId))) stale.push(l);
+      if (!desired.has(keyOf(l.teacherId, l.subjectId, l.gradeLevelId))) {
+        stale.push(l);
+        staleReasons[l.id] = valid.has(l.gradeLevelId) ? 'not_advisor' : 'wrong_level';
+      }
     });
   });
 
-  return { missing, stale };
+  return { missing, stale, staleReasons };
 };
 
 /** Applies a drift result to a links array (removes stale, adds missing). Pure. */

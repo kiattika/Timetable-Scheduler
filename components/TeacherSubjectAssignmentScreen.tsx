@@ -5,7 +5,7 @@ import Modal from './Modal';
 import ConfirmationModal from './ConfirmationModal'; // Import ConfirmationModal
 import { Icons } from '../constants';
 import { ArrowUp, ArrowDown, Search, X } from 'lucide-react';
-import { getChildGradeLevelIds } from './scheduleUtils';
+import { getChildGradeLevelIds, getParentGradeLevelId } from './scheduleUtils';
 import SearchableSelect from './SearchableSelect';
 import { thaiGradeName } from '../utils/subjectCode';
 import { computeHomeroomLinkDrift, applyHomeroomLinkDrift } from '../utils/homeroomLinks';
@@ -62,10 +62,57 @@ const TeacherSubjectAssignmentScreen: React.FC<TeacherSubjectAssignmentScreenPro
 
   const describeLink = (teacherId: string, subjectId: string, gradeLevelId: string) => {
     const t = appData.teachers.find(x => x.id === teacherId)?.name || teacherId;
-    const s = appData.subjects.find(x => x.id === subjectId)?.name || subjectId;
+    const subj = appData.subjects.find(x => x.id === subjectId);
+    const s = subj ? `${subj.subjectCode ? `[${subj.subjectCode}] ` : ''}${subj.name}` : subjectId;
     const g = appData.gradeLevels.find(x => x.id === gradeLevelId)?.name || gradeLevelId;
     return `${t} — ${s} — ${g}`;
   };
+
+  // "Keep as is": hide this exact set of mismatches until it changes (stored per browser).
+  const driftSignature = useMemo(() => {
+    const raw = [
+      ...homeroomDrift.missing.map(m => `m:${m.teacherId}|${m.subjectId}|${m.gradeLevelId}`),
+      ...homeroomDrift.stale.map(l => `s:${l.id}`),
+    ].sort().join(',');
+    let h = 5381;
+    for (let i = 0; i < raw.length; i++) h = ((h << 5) + h + raw.charCodeAt(i)) | 0;
+    return `${raw.length}:${h}`;
+  }, [homeroomDrift]);
+  const DRIFT_DISMISS_KEY = 'tt.homeroomDrift.dismissed';
+  const [dismissedDriftSignature, setDismissedDriftSignature] = useState<string>(() => {
+    try { return localStorage.getItem(DRIFT_DISMISS_KEY) || ''; } catch { return ''; }
+  });
+  const handleDismissDrift = () => {
+    try { localStorage.setItem(DRIFT_DISMISS_KEY, driftSignature); } catch { /* ignore */ }
+    setDismissedDriftSignature(driftSignature);
+  };
+
+  // Plain-language summary of WHY links are extra, grouped by subject and reason.
+  const driftSummaryLines = useMemo(() => {
+    const lines: string[] = [];
+    const gradeLevelName = (id: string) => appData.gradeLevels.find(g => g.id === id)?.name || id;
+    const levelOf = (name: string) => name.split('/')[0];
+    const groups = new Map<string, { subjectId: string; reason: 'wrong_level' | 'not_advisor'; links: TeacherSubjectAssignment[] }>();
+    homeroomDrift.stale.forEach(l => {
+      const reason = homeroomDrift.staleReasons?.[l.id] || 'not_advisor';
+      const key = `${l.subjectId}|${reason}`;
+      if (!groups.has(key)) groups.set(key, { subjectId: l.subjectId, reason, links: [] });
+      groups.get(key)!.links.push(l);
+    });
+    groups.forEach(g => {
+      const subj = appData.subjects.find(s => s.id === g.subjectId);
+      const label = `${subj?.subjectCode ? `[${subj.subjectCode}] ` : ''}${subj?.name || g.subjectId}`;
+      if (g.reason === 'wrong_level') {
+        const offered = (subj?.applicableParentGradeLevelIds || []).map(gradeLevelName).join(', ') || '-';
+        const linkedLevels = Array.from(new Set(g.links.map(l => levelOf(gradeLevelName(l.gradeLevelId))))).join(', ');
+        lines.push(`${label}: เปิดสอนเฉพาะ ${offered} แต่มีลิงก์ไปที่ห้องของ ${linkedLevels} เกินมา ${g.links.length} รายการ`);
+      } else {
+        lines.push(`${label}: ครูไม่ได้เป็นที่ปรึกษาห้องนั้นแล้ว ${g.links.length} รายการ`);
+      }
+    });
+    if (homeroomDrift.missing.length > 0) lines.push(`ครูที่ปรึกษาที่ยังไม่มีลิงก์วิชานี้ ${homeroomDrift.missing.length} รายการ`);
+    return lines;
+  }, [homeroomDrift, appData.subjects, appData.gradeLevels]);
 
   const handleSyncHomeroomLinks = () => {
     const ok = window.confirm(
@@ -316,6 +363,42 @@ const TeacherSubjectAssignmentScreen: React.FC<TeacherSubjectAssignmentScreenPro
     });
   }, [assignments, appData.teachers, appData.subjects, searchQuery, selectedGradeLevelId, selectedSubjectId, selectedDepartment]);
 
+  // Info card for the subject picked in the filter: which classes it is assigned to and how much is already timetabled.
+  const subjectInfo = useMemo(() => {
+    if (!selectedSubjectId) return null;
+    const subject = appData.subjects.find(s => s.id === selectedSubjectId);
+    if (!subject) return null;
+    const gradeById = new Map(appData.gradeLevels.map(g => [g.id, g]));
+    const links = assignments.filter(a => a.subjectId === subject.id);
+    const classIds = Array.from(new Set(links.map(l => l.gradeLevelId).filter(id => id && id !== 'Non-Student')));
+    const teacherIds = new Set(links.map(l => l.teacherId));
+    const teacherOnly = links.filter(l => l.gradeLevelId === 'Non-Student').length;
+
+    const entriesOfSubject = (appData.scheduleEntries || []).filter(e => e.subjectId === subject.id);
+    const placedFor = (classId: string) => {
+      const parentId = getParentGradeLevelId(classId, appData.gradeLevels);
+      const keys = new Set<string>();
+      entriesOfSubject.forEach(e => {
+        if (e.gradeLevelId === classId || (subject.isBroadAssignment && parentId && e.gradeLevelId === parentId)) keys.add(`${e.day}|${e.period}`);
+      });
+      return keys.size;
+    };
+    const classes = classIds.map(id => {
+      const g = gradeById.get(id);
+      return { id, name: g?.name || id, level: (g?.name || id).split('/')[0], placed: placedFor(id) };
+    }).sort((a, b) => a.name.localeCompare(b.name, 'th', { numeric: true }));
+    const byLevel = new Map<string, typeof classes>();
+    classes.forEach(c => { if (!byLevel.has(c.level)) byLevel.set(c.level, []); byLevel.get(c.level)!.push(c); });
+    const total = typeof subject.periodsPerWeek === 'number' ? subject.periodsPerWeek : null;
+    return {
+      subject, total, teacherCount: teacherIds.size, teacherOnly,
+      classCount: classes.length,
+      byLevel: Array.from(byLevel.entries()),
+      completeCount: total === null ? 0 : classes.filter(c => c.placed >= total).length,
+      offeredLevels: (subject.applicableParentGradeLevelIds || []).map(id => gradeById.get(id)?.name || id),
+    };
+  }, [selectedSubjectId, appData.subjects, appData.gradeLevels, appData.scheduleEntries, assignments]);
+
   // Sorting Logic (Locale-aware & Numeric supported)
   const sortedAssignments = useMemo(() => {
     const list = [...filteredAssignments];
@@ -552,7 +635,7 @@ const TeacherSubjectAssignmentScreen: React.FC<TeacherSubjectAssignmentScreenPro
       </div>
 
       {/* Homeroom advisor ↔ link mismatch notice */}
-      {permissions.canModifyTeacherSubjectLinks && homeroomDriftCount > 0 && (
+      {permissions.canModifyTeacherSubjectLinks && homeroomDriftCount > 0 && dismissedDriftSignature !== driftSignature && (
         <div className="mb-6 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
@@ -562,14 +645,32 @@ const TeacherSubjectAssignmentScreen: React.FC<TeacherSubjectAssignmentScreenPro
                 (เฉพาะวิชาที่ตั้งค่า "เชื่อมโยงกับครูที่ปรึกษาอัตโนมัติ")
               </div>
             </div>
-            <button
-              type="button"
-              onClick={handleSyncHomeroomLinks}
-              className="shrink-0 bg-amber-600 hover:bg-amber-700 text-white font-semibold py-2 px-4 rounded-md shadow-sm text-sm transition-colors"
-            >
-              ซิงค์ลิงก์ตอนนี้
-            </button>
+            <div className="shrink-0 flex flex-col sm:flex-row gap-2">
+              <button
+                type="button"
+                onClick={handleSyncHomeroomLinks}
+                className="bg-amber-600 hover:bg-amber-700 text-white font-semibold py-2 px-4 rounded-md shadow-sm text-sm transition-colors"
+                title={`ลบลิงก์ที่เกิน ${homeroomDrift.stale.length} รายการ และเพิ่มลิงก์ที่ขาด ${homeroomDrift.missing.length} รายการ`}
+              >
+                ซิงค์ลิงก์ตอนนี้
+              </button>
+              <button
+                type="button"
+                onClick={handleDismissDrift}
+                className="bg-white hover:bg-amber-100 text-amber-800 border border-amber-300 font-semibold py-2 px-4 rounded-md shadow-sm text-sm transition-colors"
+                title="เก็บลิงก์ไว้ตามเดิม และซ่อนการแจ้งเตือนนี้ (จะแจ้งใหม่เมื่อรายการเปลี่ยน)"
+              >
+                เก็บไว้ ไม่ซิงค์
+              </button>
+            </div>
           </div>
+          <ul className="mt-2 text-xs text-amber-900 list-disc list-inside space-y-0.5">
+            {driftSummaryLines.map((line, i) => <li key={i}>{line}</li>)}
+          </ul>
+          <p className="mt-1.5 text-[11px] text-amber-800">
+            ซิงค์ = ลบลิงก์ที่เกิน {homeroomDrift.stale.length} รายการ และเพิ่มที่ขาด {homeroomDrift.missing.length} รายการ ·
+            เก็บไว้ = ไม่แก้ลิงก์ใด ๆ (แจ้งเตือนจะกลับมาเมื่อรายการเปลี่ยน)
+          </p>
           <details className="mt-2 text-xs">
             <summary className="cursor-pointer text-amber-800">ดูรายละเอียด</summary>
             <ul className="mt-1 max-h-40 overflow-y-auto list-disc list-inside space-y-0.5">
@@ -708,6 +809,52 @@ const TeacherSubjectAssignmentScreen: React.FC<TeacherSubjectAssignmentScreenPro
           </div>
         </div>
       </div>
+
+      {subjectInfo && (
+        <div className="mb-6 rounded-xl border border-indigo-200 bg-indigo-50/60 p-4 text-sm text-slate-700">
+          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+            <span className="font-semibold text-indigo-900">
+              {subjectInfo.subject.subjectCode ? `[${subjectInfo.subject.subjectCode}] ` : ''}{subjectInfo.subject.name}
+            </span>
+            <span className="text-xs text-slate-500">
+              {subjectInfo.total !== null ? `${subjectInfo.total} คาบ/สัปดาห์` : 'ไม่ระบุจำนวนคาบ'}
+              {subjectInfo.subject.schedulingPattern ? ` · รูปแบบ ${subjectInfo.subject.schedulingPattern}` : ''}
+              {' · '}ภาคเรียน {(subjectInfo.subject.applicableSemesters && subjectInfo.subject.applicableSemesters.length > 0) ? subjectInfo.subject.applicableSemesters.join(', ') : 'ทุกภาคเรียน'}
+              {subjectInfo.offeredLevels.length > 0 ? ` · เปิดสอน ${subjectInfo.offeredLevels.join(', ')}` : ''}
+            </span>
+          </div>
+          <div className="mt-1 text-xs text-slate-600">
+            จัดให้ <b>{subjectInfo.classCount}</b> ห้อง · ครูผู้สอน <b>{subjectInfo.teacherCount}</b> คน
+            {subjectInfo.teacherOnly > 0 ? ` · ลิงก์เฉพาะครู ${subjectInfo.teacherOnly} รายการ` : ''}
+            {subjectInfo.total !== null && subjectInfo.classCount > 0 ? ` · ลงตารางครบแล้ว ${subjectInfo.completeCount}/${subjectInfo.classCount} ห้อง` : ''}
+          </div>
+          {subjectInfo.byLevel.length === 0 ? (
+            <p className="mt-2 text-xs text-slate-500">ยังไม่ได้จัดวิชานี้ให้ห้องใดเลย</p>
+          ) : (
+            <div className="mt-2 space-y-1.5">
+              {subjectInfo.byLevel.map(([level, list]) => (
+                <div key={level} className="flex flex-wrap items-center gap-1.5">
+                  <span className="w-12 text-xs font-semibold text-slate-500">{level}</span>
+                  {list.map(c => {
+                    const tone = subjectInfo.total === null ? 'bg-white border-slate-200 text-slate-700'
+                      : c.placed >= subjectInfo.total ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                      : c.placed > 0 ? 'bg-amber-50 border-amber-200 text-amber-800'
+                      : 'bg-white border-slate-200 text-slate-500';
+                    return (
+                      <span key={c.id} className={`px-2 py-0.5 rounded-md border text-xs ${tone}`} title={subjectInfo.total === null ? 'ลงตารางแล้ว ' + c.placed + ' คาบ' : `ลงตารางแล้ว ${c.placed} จาก ${subjectInfo.total} คาบ`}>
+                        {c.name}{subjectInfo.total !== null ? ` (${c.placed}/${subjectInfo.total})` : ''}
+                      </span>
+                    );
+                  })}
+                </div>
+              ))}
+              <p className="text-[11px] text-slate-500 pt-1">
+                ตัวเลขในวงเล็บ = คาบที่ลงตารางแล้ว/คาบต่อสัปดาห์ · เขียว = ครบ · เหลือง = ยังไม่ครบ · เทา = ยังไม่ได้ลงตาราง
+              </p>
+            </div>
+          )}
+        </div>
+      )}
 
       {sortedAssignments.length === 0 ? (
         <p className="text-slate-500 text-center py-8 bg-slate-50/50 rounded-lg border border-dashed border-slate-200">
