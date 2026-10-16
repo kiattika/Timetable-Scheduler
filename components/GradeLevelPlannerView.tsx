@@ -141,7 +141,12 @@ export const GradeLevelScheduleTable: React.FC<SingleScheduleTableProps & {
         return Array.from(depts);
     };
 
-    const hasAssistantAccess = (_entryItem: ScheduleEntry) => true; // assistants may edit the whole school's schedule
+    const hasAssistantAccess = (entryItem: ScheduleEntry) => {
+        if (!isAssistant) return true;
+        if (assignedDepts.length === 0) return false;
+        const depts = getEntryDepts(entryItem);
+        return depts.some(d => assignedDepts.includes(d));
+    };
 
     return (
         <td 
