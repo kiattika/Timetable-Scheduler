@@ -6,7 +6,8 @@
  * Distances come from the campus grid (utils/buildings.ts); the unit is "grid cells".
  * Nothing here blocks scheduling.
  */
-import type { GradeLevel, PhysicalRoom, ScheduleEntry, Subject, Teacher } from '../types';
+import type { GradeLevel, PeriodSetting, PhysicalRoom, ScheduleEntry, Subject, Teacher } from '../types';
+import { isLunchPeriodForGrade } from '../components/scheduleUtils';
 import {
   BuildingGrid, GridPos, buildingPositions, buildingDistance, resolveBuildingKey, roomBuilding, roomFloor,
 } from './buildings';
@@ -46,7 +47,10 @@ export interface Leg { fromPeriod: number; toPeriod: number; from: string; to: s
 export interface DayResult {
   day: string;
   stops: Stop[];
-  switches: number;
+  /** stops split at the lunch break: [before lunch, after lunch]; a single group when there is no lunch in between */
+  segments: Stop[][];
+  switches: number;       // building changes over the whole day
+  maxSegmentSwitches: number; // worst single stretch between breaks (this is what the thresholds judge)
   legs: Leg[];            // back-to-back moves that actually go somewhere else
   pingPong: { periods: [number, number, number]; labels: [string, string, string] }[];
   severity: Severity;
@@ -57,9 +61,19 @@ export interface DayResult {
 const sameLoc = (a: Loc, b: Loc) => a.building === b.building && a.floor === b.floor;
 
 /** Analyse one person/class on one day. `stops` must be sorted by period, one per period. */
-export function analyzeDay(day: string, stops: Stop[], positions: Map<string, GridPos[]>, opts: WalkOptions = DEFAULT_WALK_OPTIONS): DayResult {
+export function analyzeDay(day: string, stops: Stop[], positions: Map<string, GridPos[]>, opts: WalkOptions = DEFAULT_WALK_OPTIONS, breaks: number[] = []): DayResult {
   const legs: Leg[] = [];
   let switches = 0;
+  // Stops on either side of a lunch break are separate stretches: people get a rest and can move freely.
+  const segments: Stop[][] = [];
+  for (const st of stops) {
+    const last = segments[segments.length - 1];
+    const prev = last?.[last.length - 1];
+    if (!prev || breaks.some((b) => prev.period < b && b < st.period)) segments.push([st]); else last.push(st);
+  }
+  const segSwitches = segments.map((seg) => seg.reduce((n, st, i) => n + (i > 0 && seg[i - 1].loc.building !== st.loc.building ? 1 : 0), 0));
+  const maxSegmentSwitches = segSwitches.reduce((m, n) => Math.max(m, n), 0);
+  const segName = (i: number) => (segments.length === 1 ? '' : segments.length === 2 ? (i === 0 ? ' ก่อนพักกลางวัน' : ' หลังพักกลางวัน') : ` ช่วงที่ ${i + 1}`);
   let severity: Severity = 'ok';
   const reasons: string[] = [];
   for (let i = 1; i < stops.length; i++) {
@@ -85,9 +99,11 @@ export function analyzeDay(day: string, stops: Stop[], positions: Map<string, Gr
       reasons.push(`คาบ ${a.period + 1}-${c.period + 1} เดินไปกลับ ${a.label} → ${b.label} → ${c.label}`);
     }
   }
-  if (switches >= opts.switchRisk) { severity = maxSev(severity, 'risk'); reasons.push(`ย้ายอาคาร ${switches} ครั้งในวันเดียว`); }
-  else if (switches >= opts.switchWatch) { severity = maxSev(severity, 'watch'); reasons.push(`ย้ายอาคาร ${switches} ครั้งในวันเดียว`); }
-  return { day, stops, switches, legs, pingPong, severity, reasons, maxCost: legs.reduce((m, l) => Math.max(m, l.cost), 0) };
+  segSwitches.forEach((n, i) => {
+    if (n >= opts.switchRisk) { severity = maxSev(severity, 'risk'); reasons.push(`ย้ายอาคาร ${n} ครั้ง${segName(i) || 'ในวันเดียว'}`); }
+    else if (n >= opts.switchWatch) { severity = maxSev(severity, 'watch'); reasons.push(`ย้ายอาคาร ${n} ครั้ง${segName(i) || 'ในวันเดียว'}`); }
+  });
+  return { day, stops, segments, maxSegmentSwitches, switches, legs, pingPong, severity, reasons, maxCost: legs.reduce((m, l) => Math.max(m, l.cost), 0) };
 }
 
 /* ---------------- whole timetable ---------------- */
@@ -98,6 +114,8 @@ export interface WalkInput {
   teachers: Teacher[];
   gradeLevels: GradeLevel[];
   subjects: Subject[];
+  /** period definitions; lunch periods (lunchGradeLevelIds) split a day into before/after lunch */
+  periods?: PeriodSetting[];
   grid: BuildingGrid;
   options?: Partial<WalkOptions>;
 }
@@ -156,11 +174,22 @@ export function analyzeWalking(input: WalkInput): WalkReport {
     return { ...s, period: e.period };
   };
 
+  const lunchEntries = input.entries.filter((e) => isLunchLike(subjectById.get(e.subjectId)));
   const entries = input.entries.filter((e) => !isLunchLike(subjectById.get(e.subjectId)));
+  /** lunch period indexes for a grade (from period settings, plus any lunch entries placed for it on that day) */
+  const lunchFor = (gradeId: string, day: string): number[] => {
+    const set = new Set<number>();
+    (input.periods || []).forEach((p, i) => { if (isLunchPeriodForGrade(p, gradeId, input.gradeLevels)) set.add(i); });
+    const g = gradeById.get(gradeId);
+    const par = g ? parentOf(g) : undefined;
+    lunchEntries.forEach((e) => { if (e.day === day && (e.gradeLevelId === gradeId || e.gradeLevelId === par?.id)) set.add(e.period); });
+    return [...set];
+  };
   stats.entries = entries.length;
 
   /* teachers */
   const byTeacherDay = new Map<string, Map<string, Map<number, Stop>>>();
+  const teacherGrades = new Map<string, Set<string>>(); // `${tid}|${day}` -> grade ids taught
   for (const e of entries) {
     if (subjectById.get(e.subjectId)?.type === 'STUDENT_ONLY') continue;
     const s = locate(e);
@@ -169,6 +198,8 @@ export function analyzeWalking(input: WalkInput): WalkReport {
       const days = byTeacherDay.get(tid) ?? new Map();
       const periods = days.get(e.day) ?? new Map();
       if (!periods.has(e.period)) periods.set(e.period, s);
+      const gk = `${tid}|${e.day}`;
+      teacherGrades.set(gk, (teacherGrades.get(gk) ?? new Set()).add(e.gradeLevelId));
       days.set(e.day, periods); byTeacherDay.set(tid, days);
     }
   }
@@ -177,7 +208,8 @@ export function analyzeWalking(input: WalkInput): WalkReport {
     const t = input.teachers.find((x) => x.id === tid);
     for (const [day, periods] of days) {
       const stops = [...periods.values()].sort((a, b) => a.period - b.period);
-      const r = analyzeDay(day, stops, positions, opts);
+      const breaks = [...new Set([...(teacherGrades.get(`${tid}|${day}`) ?? [])].flatMap((gid) => lunchFor(gid, day)))];
+      const r = analyzeDay(day, stops, positions, opts, breaks);
       teacherDays.push({ ...r, teacherId: tid, name: t?.name || tid, group: t?.department || '(ไม่ระบุกลุ่มสาระฯ)' });
     }
   }
@@ -203,7 +235,7 @@ export function analyzeWalking(input: WalkInput): WalkReport {
         if (new Set(list.map((s) => `${s.loc.building}|${s.loc.floor}`)).size > 1) { stats.splitSkipped++; continue; }
         stops.push({ ...list[0], period: p });
       }
-      const r = analyzeDay(day, stops, positions, opts);
+      const r = analyzeDay(day, stops, positions, opts, lunchFor(g.id, day));
       classDays.push({ ...r, gradeLevelId: g.id, name: g.name, group: (parent || g).name });
     }
   }

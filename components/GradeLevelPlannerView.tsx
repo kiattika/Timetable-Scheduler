@@ -3,6 +3,7 @@ import SearchableSelect from './SearchableSelect';
 import { thaiGradeName } from '../utils/subjectCode';
 
 import React, { useState, useMemo, useEffect, DragEvent, MouseEvent as ReactMouseEvent } from 'react';
+import { usePersistedState } from '../utils/usePersistedState';
 import { AppData, DayOfWeek, PeriodSetting, ScheduleEntry, Subject, Teacher, PhysicalRoom, GradeLevel, AssignmentModalContext, ContextMenuTargetInfo, ScreenAccessProps, OrganizationSettings, SingleScheduleTableProps, PrintWithOptionsModalProps } from '../types';
 import { DAYS_OF_WEEK_ORDERED, Icons } from '../constants';
 import { isParentGrade as checkIsParentGradeUtil, getParentGradeLevelId as getParentIdUtil, isLunchPeriodForGrade } from './scheduleUtils';
@@ -420,7 +421,7 @@ interface GradeLevelPlannerViewPropsExtended extends ScreenAccessProps {
 
 
 const GradeLevelPlannerView: React.FC<GradeLevelPlannerViewPropsExtended> = (props) => {
-  const [selectedCohort, setSelectedCohort] = useState<string>('ทั้งหมด');
+  const [selectedCohort, setSelectedCohort] = usePersistedState<string>('tt.sched.cohort', 'ทั้งหมด');
   const { 
     appData, periodSettings, openAssignmentModal, 
     handleDragStart, handleDropEntry, handleDragEnd, draggedEntryId, onSlotSelect, getEntryDisplay,
@@ -432,7 +433,7 @@ const GradeLevelPlannerView: React.FC<GradeLevelPlannerViewPropsExtended> = (pro
   const getParentGradeLevelIdFromUtil = getParentIdUtil;
   const checkIsParentGrade = checkIsParentGradeUtil;
 
-  const [selectedGradeLevelId, setSelectedGradeLevelId] = useState<string | null>(null);
+  const [selectedGradeLevelId, setSelectedGradeLevelId] = usePersistedState<string | null>('tt.sched.grade', null);
   const [tableView, setTableView] = useState<TableView>('daysAsCols'); 
 
   const [assistantSubjectId, setAssistantSubjectId] = useState<string>('');

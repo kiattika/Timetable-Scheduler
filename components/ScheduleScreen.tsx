@@ -14,6 +14,8 @@ import ContextMenu from './ContextMenu';
 import GradeLevelPlannerView from './GradeLevelPlannerView'; 
 import SlotAvailabilityInspectorModal from './SlotAvailabilityInspectorModal'; 
 import { AuditModal } from './AuditModal';
+import { WalkingCheckScreen, countWalkingRisks } from './WalkingCheckScreen';
+import { usePersistedState } from '../utils/usePersistedState';
 import { getParentGradeLevelId, getChildGradeLevelIds, isParentGrade, isChildOf, isSharable, getAvailablePhysicalRooms, isLunchPeriodForGrade } from './scheduleUtils';
 import { useTouchDrag } from '../hooks/useTouchDrag';
 import { ReviewWizardModal, Discrepancy } from './ReviewWizardModal';
@@ -37,7 +39,7 @@ type TableView = 'daysAsCols' | 'periodsAsCols';
 // Helper functions moved to scheduleUtils.ts
 
 const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, permissions, openPrintOptionsModal }) => {
-  const [activeScheduleView, setActiveScheduleView] = useState<ScheduleViewType>('gradeLevelPlanner');
+  const [activeScheduleView, setActiveScheduleView] = usePersistedState<ScheduleViewType>('tt.sched.view', 'gradeLevelPlanner');
   const [selectedAvailabilitySlot, setSelectedAvailabilitySlot] = useState<{ day: DayOfWeek; period: number } | null>(null);
   
   const [isAssignmentModalOpen, setIsAssignmentModalOpen] = useState(false);
@@ -58,6 +60,8 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
 
   const [isScheduleVisible, setIsScheduleVisible] = useState<boolean>(true);
   const [isAuditModalOpen, setIsAuditModalOpen] = useState<boolean>(false);
+  const [isWalkModalOpen, setIsWalkModalOpen] = useState<boolean>(false);
+  const walkRisks = useMemo(() => countWalkingRisks(appData), [appData.scheduleEntries, appData.physicalRooms, appData.teachers, appData.gradeLevels, appData.subjects, appData.periodSettings, appData.organizationSettings, appData.currentUser]);
   const [isReviewModalOpen, setIsReviewModalOpen] = useState<boolean>(false);
   const [ignoredDiscrepancyIds, setIgnoredDiscrepancyIds] = useState<string[]>([]);
 
@@ -128,8 +132,8 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
 
   type ViewState = { day: DayOfWeek, period: number, gradeLevelId?: string, teacherId?: string, physicalRoomId?: string };
   const [selectedBlock, setSelectedBlock] = useState<ViewState | null>(null);
-  const [viewingTeacherId, setViewingTeacherId] = useState<string | null>(null);
-  const [viewingPhysicalRoomId, setViewingPhysicalRoomId] = useState<string | null>(null);
+  const [viewingTeacherId, setViewingTeacherId] = usePersistedState<string | null>('tt.sched.teacher', null);
+  const [viewingPhysicalRoomId, setViewingPhysicalRoomId] = usePersistedState<string | null>('tt.sched.room', null);
 
   const gradeHierarchyHelpers = { getParentGradeLevelId, getChildGradeLevelIds, isParentGrade, isChildOf };
 
@@ -2442,6 +2446,19 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
                 🔍 ตรวจสอบความถูกต้อง (Audit)
              </button>
              )}
+             {appData.currentUser?.role !== 'teacher' && appData.currentUser?.role !== 'guest' && (
+             <button
+               onClick={() => setIsWalkModalOpen(true)}
+               className="bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium px-4 py-1.5 rounded-full border border-indigo-400 shadow-sm transition-colors flex items-center gap-2"
+             >
+                🚶 ตรวจการเดิน
+                {walkRisks !== null && (
+                  <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${walkRisks > 0 ? 'bg-red-500 text-white' : 'bg-emerald-400 text-emerald-950'}`}>
+                    {walkRisks > 0 ? `เสี่ยง ${walkRisks}` : 'ผ่าน'}
+                  </span>
+                )}
+             </button>
+             )}
              <div className="text-indigo-100 text-sm font-medium bg-white/10 px-3 py-1.5 rounded-full border border-white/20">
                ภาคเรียนที่ {appData.organizationSettings?.semester || '-'} / {appData.organizationSettings?.academicYear || '-'}
              </div>
@@ -2669,6 +2686,12 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
            </div>
         </div>
       )}
+
+      <Modal isOpen={isWalkModalOpen} onClose={() => setIsWalkModalOpen(false)} title="🚶 ตรวจการเดินระหว่างคาบ" size="2xl">
+        <div className="overflow-y-auto" style={{ maxHeight: '75vh' }}>
+          <WalkingCheckScreen appData={appData} />
+        </div>
+      </Modal>
 
       <AuditModal
         isOpen={isAuditModalOpen}
