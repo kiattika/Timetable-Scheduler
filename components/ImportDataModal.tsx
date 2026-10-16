@@ -305,6 +305,7 @@ export const ImportDataModal: React.FC<ImportDataModalProps> = ({
       if (fn === 'applicableParentGradeLevelIds' && !fh.includes('ภาคเรียน') && (fh.includes('เปิดสอน') || fh.includes('applicable grades') || fh.includes('ระดับชั้นที่เรียน'))) return true;
       if (fn === 'applicableSemesters' && (fh.includes('ภาคเรียน') || fh.includes('semester'))) return true;
       if (fn === 'restrictedRoomTypes' && (fh.includes('ประเภทห้อง') || fh.includes('restricted room') || fh.includes('ห้องที่จำกัด'))) return true;
+      if (fn === 'color' && (fh.includes('สี') || fh === 'color' || fh === 'colour')) return true;
       if (fn === 'description' && (fh.includes('คำอธิบาย') || fh.includes('หมายเหตุ') || fh === 'description' || fh === 'notes')) return true;
 
       if (selectedEntityType === 'teacherSubjectAssignments') {
@@ -317,7 +318,7 @@ export const ImportDataModal: React.FC<ImportDataModalProps> = ({
     };
 
     const missingRequiredHeaders = configForSelectedType.fields
-      .filter(col => col.required)
+      .filter(col => col.required && col.name !== 'color') // colour is optional on import (auto-assigned)
       .filter(col => !headersFromFile.some(fh => isHeaderMatch(fh, col)));
 
     if (missingRequiredHeaders.length > 0) {
@@ -367,7 +368,7 @@ export const ImportDataModal: React.FC<ImportDataModalProps> = ({
         let processedValue: any = rawValue;
         if (rawValue !== undefined && rawValue !== '') providedFields.add(internalField);
 
-        if (fieldConfig.required && (rawValue === undefined || rawValue === '')) {
+        if (fieldConfig.required && fieldConfig.name !== 'color' && (rawValue === undefined || rawValue === '')) {
           messages.push(`แถวที่ ${rowIndex + 2}: ข้าม - ไม่ได้ระบุข้อมูลจำเป็นในคอลัมน์ '${fieldConfig.label}'`);
           skippedCount++; 
           hasErrorForRow = true; 
