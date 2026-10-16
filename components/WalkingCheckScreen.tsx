@@ -85,7 +85,7 @@ export const WalkingCheckScreen: React.FC<Props> = ({ appData, onOpenCampusMap }
     if (!w) return;
     const title = `${isTeacherTab ? 'ครู' : 'ห้องเรียน'} — ตรวจการเดินระหว่างคาบ${group ? ` (${groupLabel(group)})` : ''}`;
     const body = shown.map((r) => `<tr><td>${esc(displayName(r.name))}</td><td>${esc(groupLabel(r.group))}</td><td>${DAY_TH[r.day] || r.day}</td>
-      <td>${SEV_TH[r.severity]}</td><td>${r.segments.map((seg) => seg.map((s) => `${s.pl ?? `P${s.period}`} ${esc(s.label)}`).join(' → ')).join(' ┃พักกลางวัน┃ ')}</td><td>${r.reasons.map(esc).join('<br>')}</td></tr>`).join('');
+      <td>${SEV_TH[r.severity]}</td><td>${r.segments.map((seg) => seg.map((s) => `${s.pl ?? `คาบ${s.period}`} ${esc(s.label)}`).join(' → ')).join(' ┃พักกลางวัน┃ ')}</td><td>${r.reasons.map(esc).join('<br>')}</td></tr>`).join('');
     w.document.write(`<!doctype html><meta charset="utf-8"><title>${esc(title)}</title>
       <style>body{font-family:sans-serif;font-size:12px;padding:16px}table{border-collapse:collapse;width:100%}td,th{border:1px solid #999;padding:4px;vertical-align:top}th{background:#eee}</style>
       <h3>${esc(title)}</h3><p>รายการที่ระดับ "${SEV_TH[minSev]}" ขึ้นไป: ${shown.length} รายการ · พิมพ์เมื่อ ${new Date().toLocaleString('th-TH')}</p>
@@ -101,7 +101,7 @@ export const WalkingCheckScreen: React.FC<Props> = ({ appData, onOpenCampusMap }
         <h2 className="text-xl font-bold text-slate-800">ตรวจการเดินระหว่างคาบ</h2>
         <p className="text-sm text-slate-500 mt-1">
           ตรวจจากผังอาคารและตารางที่จัดไว้ เป็นการเตือนเพื่อประกอบการพิจารณาเท่านั้น ไม่ได้ห้ามจัด ระยะนับเป็น "ช่องในผัง" รวมค่าบันไดตามชั้น
-          ชื่อคาบตรงกับหัวตาราง (P0, P1 ...) · ใช้เฉพาะคาบที่ติดกัน (คาบว่างคั่นถือว่ามีเวลาเดิน) และแยกช่วงก่อน/หลังพักกลางวันออกจากกัน · คาบที่ไม่ระบุห้องถือว่าอยู่ห้องประจำชั้น
+          เลขคาบตรงกับหัวตาราง (P0 = คาบ0) · ใช้เฉพาะคาบที่ติดกัน (คาบว่างคั่นถือว่ามีเวลาเดิน) และแยกช่วงก่อน/หลังพักกลางวันออกจากกัน · คาบที่ไม่ระบุห้องถือว่าอยู่ห้องประจำชั้น
         </p>
       </div>
 
@@ -165,7 +165,7 @@ export const WalkingCheckScreen: React.FC<Props> = ({ appData, onOpenCampusMap }
               {r.segments.map((seg, k) => (
                 <React.Fragment key={k}>
                   {k > 0 && <span className="mx-2 px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 text-xs">พักกลางวัน</span>}
-                  {seg.map((s) => `${s.pl ?? `P${s.period}`} ${s.label}`).join(' → ')}
+                  {seg.map((s) => `${s.pl ?? `คาบ${s.period}`} ${s.label}`).join(' → ')}
                 </React.Fragment>
               ))}
             </div>

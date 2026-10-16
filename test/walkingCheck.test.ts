@@ -32,11 +32,11 @@ describe('teacher checks', () => {
     const d = r.teacherDays.find((x) => x.teacherId === 't1')!;
     expect(d.severity).toBe('risk');
     expect(d.legs[0].cost).toBe(5); // 4 cells + 2 floors of stairs
-    expect(d.reasons[0]).toContain('คาบ P0→P1');
+    expect(d.reasons[0]).toContain('คาบ0→คาบ1');
   });
   it('uses the timetable period names (P0, P1 ...) in stops', () => {
     const d = run([e('t1', 'Monday', 0, 'r111'), e('t1', 'Monday', 3, 'r211')]).teacherDays[0];
-    expect(d.stops.map((s) => s.pl)).toEqual(['P0', 'P3']);
+    expect(d.stops.map((s) => s.pl)).toEqual(['คาบ0', 'คาบ3']);
   });
   it('a gap period means no tight leg', () => {
     const d = run([e('t1', 'Monday', 0, 'r931'), e('t1', 'Monday', 2, 'r411')]).teacherDays[0];

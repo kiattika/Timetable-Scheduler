@@ -58,6 +58,12 @@ export interface DayResult {
   maxCost: number;
 }
 
+/** Period shown exactly as the timetable header, in Thai: "P0" -> "คาบ0" (0-based like the header). */
+export function periodName(index: number, label?: string): string {
+  const m = /^\s*P\s*(\d+)\s*$/i.exec(label || '');
+  return `คาบ${m ? m[1] : index}`;
+}
+
 const sameLoc = (a: Loc, b: Loc) => a.building === b.building && a.floor === b.floor;
 
 /** Analyse one person/class on one day. `stops` must be sorted by period, one per period. */
@@ -82,11 +88,11 @@ export function analyzeDay(day: string, stops: Stop[], positions: Map<string, Gr
     if (b.period - a.period !== 1 || sameLoc(a.loc, b.loc)) continue;
     const cost = legCost(a.loc, b.loc, positions, opts);
     if (cost === null || cost === 0) continue;
-    const pa = a.pl ?? `P${a.period}`, pb = b.pl ?? `P${b.period}`;
+    const pa = a.pl ?? periodName(a.period), pb = b.pl ?? periodName(b.period);
     const sev: Severity = cost >= opts.risk ? 'risk' : cost >= opts.watch ? 'watch' : 'ok';
     legs.push({ fromPeriod: a.period, toPeriod: b.period, from: a.label, to: b.label, cost, severity: sev });
     severity = maxSev(severity, sev);
-    if (sev !== 'ok') reasons.push(`คาบ ${pa}→${pb} เดิน ${a.label} → ${b.label} (ระยะ ${cost})`);
+    if (sev !== 'ok') reasons.push(`${pa}→${pb} เดิน ${a.label} → ${b.label} (ระยะ ${cost})`);
   }
   // A -> B -> A on consecutive periods, B in another building
   const pingPong: DayResult['pingPong'] = [];
@@ -97,7 +103,7 @@ export function analyzeDay(day: string, stops: Stop[], positions: Map<string, Gr
       pingPong.push({ periods: [a.period, b.period, c.period], labels: [a.label, b.label, c.label] });
       const cost = legCost(a.loc, b.loc, positions, opts) ?? 0;
       severity = maxSev(severity, cost >= opts.watch ? 'risk' : 'watch');
-      reasons.push(`คาบ ${a.pl ?? `P${a.period}`}-${c.pl ?? `P${c.period}`} เดินไปกลับ ${a.label} → ${b.label} → ${c.label}`);
+      reasons.push(`${a.pl ?? periodName(a.period)}-${c.pl ?? periodName(c.period)} เดินไปกลับ ${a.label} → ${b.label} → ${c.label}`);
     }
   }
   segSwitches.forEach((n, i) => {
@@ -152,7 +158,8 @@ export function analyzeWalking(input: WalkInput): WalkReport {
     const b = roomBuilding(room);
     if (!b) return null;
     const f = roomFloor(room) ?? 1;
-    return { period: 0, loc: { building: b, floor: f }, label: `${b}${f > 1 ? `/ชั้น${f}` : ''}` };
+    const name = /^\d+$/.test(b) ? `อาคาร ${b}` : b; // numbered buildings: "อาคาร 9"; zones (F1, P9) keep their name
+    return { period: 0, loc: { building: b, floor: f }, label: `${name}${f > 1 ? ` ชั้น ${f}` : ''}` };
   };
   const homeroomOf = (g: GradeLevel | undefined) => {
     if (!g) return undefined;
@@ -172,7 +179,7 @@ export function analyzeWalking(input: WalkInput): WalkReport {
     const s = room ? labelOf(room) : null;
     if (!s) { stats.noLocation++; return null; }
     if (!resolveBuildingKey(s.loc.building, positions)) { stats.notOnGrid++; return null; }
-    return { ...s, period: e.period, pl: input.periods?.[e.period]?.label || `P${e.period}` };
+    return { ...s, period: e.period, pl: periodName(e.period, input.periods?.[e.period]?.label) };
   };
 
   const lunchEntries = input.entries.filter((e) => isLunchLike(subjectById.get(e.subjectId)));
