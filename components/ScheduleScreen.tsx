@@ -18,7 +18,7 @@ import { WalkingCheckScreen, computeWalkReport, countWalkingRisks, makeWalkMarkG
 import { usePersistedState } from '../utils/usePersistedState';
 import { getParentGradeLevelId, getChildGradeLevelIds, isParentGrade, isChildOf, isSharable, getAvailablePhysicalRooms, isLunchPeriodForGrade } from './scheduleUtils';
 import { useTouchDrag } from '../hooks/useTouchDrag';
-import { ReviewWizardModal, Discrepancy } from './ReviewWizardModal';
+import { ReviewWizardModal, Discrepancy, DetailRow } from './ReviewWizardModal';
 
 interface ScheduleScreenProps extends ScreenAccessProps {
   appData: AppData;
@@ -228,6 +228,22 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
       const periodLabelForDiscrepancy = periodSettings[entry.period]?.label || `P${entry.period}`;
       const componentLabel = `${DAY_LABELS_TH[entry.day] || entry.day} คาบ ${periodLabelForDiscrepancy} (${gradeLevel?.name || 'Unknown'})`;
 
+      // Full picture of the slot, so the review table shows everything that is (or would be) on the timetable.
+      const periodInfo = periodSettings[entry.period] as any;
+      const timeText = periodInfo?.startTime && periodInfo?.endTime ? ` (${periodInfo.startTime}–${periodInfo.endTime})` : '';
+      const roomNameOf = (id?: string) => (physicalRooms || []).find(r => r.id === id)?.name || 'ไม่ระบุ';
+      const allTeacherNames = entry.teacherIds
+        .map(id => teachers.find(t => t.id === id)?.name)
+        .filter(Boolean)
+        .join(', ') || 'ไม่ระบุ';
+      const detailRows = (gradeName: string, roomName: string): DetailRow[] => [
+        { label: 'วิชา', value: `${subject.name}${subject.subjectCode ? ` [${subject.subjectCode}]` : ''}` },
+        { label: 'ครูผู้สอน', value: allTeacherNames },
+        { label: 'ชั้นเรียน', value: gradeName },
+        { label: 'ห้อง', value: roomName },
+        { label: 'วัน/คาบ', value: `${DAY_LABELS_TH[entry.day] || entry.day} คาบ ${periodLabelForDiscrepancy}${timeText}` },
+      ];
+
       // Check 1: Teacher's homeroom changed
       if (subject.isHomeroomAdvisorySubject && teacher) {
         const firstHomeroomId = teacher.homeroomGradeLevelIds?.[0];
@@ -260,6 +276,10 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
               pendingUpdateData: `${teacher.name} - [${subject.subjectCode || 'HR'}] - ${targetGrade.name}`,
               status,
               statusDescription: status === 'green' ? 'ว่าง (พร้อมอัปเดต)' : conflictDesc,
+              currentDetails: detailRows(gradeLevel?.name || 'Unknown', roomNameOf(entry.physicalRoomId)),
+              pendingDetails: detailRows(targetGrade.name, roomNameOf(targetGrade.homeroomPhysicalRoomId || entry.physicalRoomId)),
+              acceptHint: `ย้ายคาบนี้ไปอยู่ชั้น ${targetGrade.name} และใช้ห้อง ${roomNameOf(targetGrade.homeroomPhysicalRoomId || entry.physicalRoomId)}`,
+              rejectHint: `คงไว้ที่ชั้น ${gradeLevel?.name || 'เดิม'} ตามเดิม (แจ้งเตือนนี้จะกลับมาอีกเมื่อเปิดแอปใหม่ จนกว่าจะแก้ข้อมูลครูประจำชั้นหรือตารางให้ตรงกัน)`,
               proposedChange: {
                 gradeLevelId: firstHomeroomId,
                 physicalRoomId: targetGrade.homeroomPhysicalRoomId || entry.physicalRoomId,
@@ -309,6 +329,10 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
               pendingUpdateData: `ห้องใหม่: ${targetRoom.name}`,
               status,
               statusDescription: status === 'green' ? 'ว่าง (พร้อมอัปเดต)' : conflictDesc,
+              currentDetails: detailRows(gradeLevel?.name || 'Unknown', roomNameOf(entry.physicalRoomId)),
+              pendingDetails: detailRows(gradeLevel?.name || 'Unknown', targetRoom.name),
+              acceptHint: `เปลี่ยนห้องของคาบนี้เป็น ${targetRoom.name}`,
+              rejectHint: `ใช้ห้อง ${currentRoom?.name || 'เดิม'} ต่อไป และจำไว้ว่าเห็นการเปลี่ยนห้องนี้แล้ว (แจ้งเตือนจะไม่กลับมา)`,
               proposedChange: {
                 physicalRoomId: targetRoom.id,
                 cachedHomeroomRoomId: targetRoom.id
