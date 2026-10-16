@@ -1,5 +1,6 @@
 import { computeSubjectColors, SubjectColorMode } from '../utils/subjectColors';
 import { computeHomeroomLinkDrift, applyHomeroomLinkDrift } from '../utils/homeroomLinks';
+import { normalizeSubjectFlags, subjectFlagLockReason, SubjectFlagField } from '../utils/subjectFlags';
 import { formatRoomDisplay } from "../utils/stringUtils";
 import React, { useState, useEffect, useMemo } from 'react';
 import * as XLSX from 'xlsx';
@@ -345,7 +346,7 @@ const EntityManagementScreen = <T extends Identifiable,>({
   const executeSubmit = () => {
     if (!currentItem) return;
 
-    let processedItem = { ...currentItem };
+    let processedItem = entityType === 'subjects' ? normalizeSubjectFlags({ ...currentItem } as any) as typeof currentItem : { ...currentItem };
 
     // Sanitize applicableParentGradeLevelIds to ensure no sub-rooms leak into the data
     if (entityType === 'subjects' && Array.isArray((processedItem as any).applicableParentGradeLevelIds)) {
@@ -566,7 +567,8 @@ const EntityManagementScreen = <T extends Identifiable,>({
             ...prev,
             [name]: updatedVal,
           };
-          return next as Partial<T>;
+          // Subject type / Homeroom / Broad decide which special checkboxes are usable: clear the ones that no longer apply.
+          return (entityType === 'subjects' ? normalizeSubjectFlags(next as any) : next) as Partial<T>;
         });
       }
     }
@@ -1201,9 +1203,12 @@ const EntityManagementScreen = <T extends Identifiable,>({
                             className="h-4 w-4 rounded border-slate-400 text-blue-600 focus:ring-blue-500 mr-2"
                             disabled={isDisabled}
                         />
-                        <label htmlFor={field.name as string} className="text-sm font-medium text-slate-700">
+                        <label htmlFor={field.name as string} className={`text-sm font-medium ${isDisabled ? 'text-slate-400' : 'text-slate-700'}`}>
                             {field.label} {field.required && <span className="text-red-500">*</span>}
                         </label>
+                        {entityType === 'subjects' && isDisabled && subjectFlagLockReason(currentItem, field.name as SubjectFlagField) && (
+                          <span className="ml-2 text-xs text-slate-400">({subjectFlagLockReason(currentItem, field.name as SubjectFlagField)})</span>
+                        )}
                     </div>
                 );
               }

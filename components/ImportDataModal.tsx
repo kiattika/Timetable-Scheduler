@@ -17,6 +17,7 @@ import Modal from './Modal';
 import { Icons, PREDEFINED_SUBJECT_COLORS } from '../constants';
 import { getSampleAppData } from '../api';
 import { getChildGradeLevelIds } from './scheduleUtils';
+import { normalizeSubjectFlags } from '../utils/subjectFlags';
 
 interface ImportDataModalProps {
   isOpen: boolean;
@@ -437,6 +438,10 @@ export const ImportDataModal: React.FC<ImportDataModalProps> = ({
             const match = appData.gradeLevels.find(gl => normGradeName(gl.name) === normGradeName(name) && !gl.name.includes('/'));
             return match ? match.id : null;
           }).filter(Boolean);
+        }
+        // Teacher-only / student-only subjects cannot be Broad/Homeroom/room-sharing etc. — drop the flags that do not apply.
+        if (newItemData.type === 'TEACHER_ONLY' || newItemData.type === 'STUDENT_ONLY') {
+          Object.assign(newItemData, normalizeSubjectFlags(newItemData));
         }
       }
 
