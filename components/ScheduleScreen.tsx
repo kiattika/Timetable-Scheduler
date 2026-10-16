@@ -247,7 +247,7 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
       // Check 1: Teacher's homeroom changed
       if (subject.isHomeroomAdvisorySubject && teacher) {
         const firstHomeroomId = teacher.homeroomGradeLevelIds?.[0];
-        if (firstHomeroomId && entry.gradeLevelId !== firstHomeroomId) {
+        if (firstHomeroomId && entry.gradeLevelId !== firstHomeroomId && entry.ackedHomeroomGradeId !== firstHomeroomId) {
           const targetGrade = gradeLevels.find(gl => gl.id === firstHomeroomId);
           if (targetGrade) {
             // Check conflict in the target slot
@@ -279,12 +279,13 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
               currentDetails: detailRows(gradeLevel?.name || 'Unknown', roomNameOf(entry.physicalRoomId)),
               pendingDetails: detailRows(targetGrade.name, roomNameOf(targetGrade.homeroomPhysicalRoomId || entry.physicalRoomId)),
               acceptHint: `ย้ายคาบนี้ไปอยู่ชั้น ${targetGrade.name} และใช้ห้อง ${roomNameOf(targetGrade.homeroomPhysicalRoomId || entry.physicalRoomId)}`,
-              rejectHint: `คงไว้ที่ชั้น ${gradeLevel?.name || 'เดิม'} ตามเดิม (แจ้งเตือนนี้จะกลับมาอีกเมื่อเปิดแอปใหม่ จนกว่าจะแก้ข้อมูลครูประจำชั้นหรือตารางให้ตรงกัน)`,
+              rejectHint: `คงไว้ที่ชั้น ${gradeLevel?.name || 'เดิม'} ตามเดิม และจำไว้ว่าเห็นแล้ว (แจ้งเตือนจะไม่กลับมา จนกว่าครูจะเปลี่ยนไปเป็นครูประจำชั้นห้องอื่น)`,
               proposedChange: {
                 gradeLevelId: firstHomeroomId,
                 physicalRoomId: targetGrade.homeroomPhysicalRoomId || entry.physicalRoomId,
                 cachedHomeroomRoomId: targetGrade.homeroomPhysicalRoomId || ''
-              }
+              },
+              acknowledgeChange: { ackedHomeroomGradeId: firstHomeroomId }
             });
             continue;
           }

@@ -112,6 +112,9 @@ export interface ScheduleEntry {
   // Homeroom room of the class when this entry was placed/last acknowledged ('' = none).
   // Used by the Review Wizard to alert only when the class's homeroom room really changed.
   cachedHomeroomRoomId?: string;
+  // Set when the user chose "Reject" for a homeroom-teacher change: the class the teacher's homeroom pointed to at that time.
+  // The same alert stays hidden until the teacher's homeroom changes to a different class.
+  ackedHomeroomGradeId?: string;
 }
 
 export interface TeacherSubjectAssignment extends Identifiable {
