@@ -3,7 +3,7 @@ import autoTable from 'jspdf-autotable';
 import { AppData, Identifiable, PrintOptions, Teacher, GradeLevel, PhysicalRoom, ScheduleEntry, DayOfWeek } from '../types';
 import { SARABUN_REGULAR_BASE64, SARABUN_BOLD_BASE64 } from './sarabunFont';
 import { formatRoomDisplay, formatRoomShort } from './stringUtils';
-import { isParentGrade as checkIsParentGradeUtil } from '../components/scheduleUtils';
+import { isParentGrade as checkIsParentGradeUtil, levelActivityLabel } from '../components/scheduleUtils';
 
 export const THAI_DAYS: Record<string, string> = {
   'Monday': 'จันทร์',
@@ -144,6 +144,12 @@ export async function exportScheduleGridPdf(
             const subCode = display.subject?.subjectCode || display.subject?.name || '-';
             const roomShort = formatRoomShort(display.physicalRoom) || '';
 
+            const lead = levelActivityLabel(display.subject, display.gradeLevel?.name);
+            if (lead) {
+              if (itemType === 'teacher') return `${subCode}\n${display.gradeLevel?.name || '-'}\n${lead.leader}\n${lead.activity}`;
+              if (itemType === 'gradeLevel') return `${subCode}\n${lead.leader}\n\n${lead.activity}`;
+              return `${subCode}\n${lead.leader}\n${lead.activity}\n${display.gradeLevel?.name || '-'}`;
+            }
             if (itemType === 'teacher') {
               const coTeachers = display.teachers.filter(t => t.id !== item.id);
               let line3 = '';

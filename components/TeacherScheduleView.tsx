@@ -5,7 +5,7 @@ import React, { useState, useMemo, useEffect, DragEvent, MouseEvent as ReactMous
 import { AppData, DayOfWeek, PeriodSetting, ScheduleEntry, Subject, Teacher, PhysicalRoom, GradeLevel, AssignmentModalContext, ContextMenuTargetInfo, ScreenAccessProps, OrganizationSettings, SingleScheduleTableProps, WalkMarkGetter } from '../types';
 import { WalkDot } from './WalkDot';
 import { DAYS_OF_WEEK_ORDERED, Icons } from '../constants';
-import { isParentGrade } from './scheduleUtils'; // Import from new utils file
+import { isParentGrade, levelActivityLabel } from './scheduleUtils'; // Import from new utils file
 
 export const THAI_DAYS: Record<string, string> = {
   'Monday': 'จันทร์',
@@ -184,6 +184,8 @@ export const TeacherScheduleTable: React.FC<SingleScheduleTableProps & {
                  {/* Line 3: Co-teacher info / cohort */}
                  <div className="text-[7.5px] leading-tight text-slate-800 font-medium truncate w-full px-0.5">
                     {(() => {
+                      const lead = levelActivityLabel(displayInfo.subject, displayInfo.gradeLevel?.name);
+                      if (lead) return lead.leader;
                       if (coTeachers && coTeachers.length === 1) {
                         return coTeachers[0].name;
                       } else if (coTeachers && coTeachers.length > 1) {
@@ -196,7 +198,7 @@ export const TeacherScheduleTable: React.FC<SingleScheduleTableProps & {
                  </div>
                  {/* Line 4: Room */}
                  <div className="text-[7.5px] leading-tight text-slate-700 font-medium truncate w-full px-0.5">
-                    {formatRoomShort(displayInfo?.physicalRoom) || '\u00A0'}
+                    {levelActivityLabel(displayInfo.subject, displayInfo.gradeLevel?.name)?.activity || formatRoomShort(displayInfo?.physicalRoom) || '\u00A0'}
                  </div>
               </div>
             ) : (

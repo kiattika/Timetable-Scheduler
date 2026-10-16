@@ -7,7 +7,7 @@ import { usePersistedState } from '../utils/usePersistedState';
 import { AppData, DayOfWeek, PeriodSetting, ScheduleEntry, Subject, Teacher, PhysicalRoom, GradeLevel, AssignmentModalContext, ContextMenuTargetInfo, ScreenAccessProps, OrganizationSettings, SingleScheduleTableProps, PrintWithOptionsModalProps, WalkMarkGetter } from '../types';
 import { WalkDot } from './WalkDot';
 import { DAYS_OF_WEEK_ORDERED, Icons } from '../constants';
-import { isParentGrade as checkIsParentGradeUtil, getParentGradeLevelId as getParentIdUtil, isLunchPeriodForGrade, teachersCellLabel } from './scheduleUtils';
+import { isParentGrade as checkIsParentGradeUtil, getParentGradeLevelId as getParentIdUtil, isLunchPeriodForGrade, teachersCellLabel, levelActivityLabel } from './scheduleUtils';
 import Modal from './Modal';
 
 export const THAI_DAYS: Record<string, string> = {
@@ -241,11 +241,12 @@ export const GradeLevelScheduleTable: React.FC<SingleScheduleTableProps & {
                        </div>
                        {/* Line 2: Teacher #1 */}
                        <div className="text-[7.5px] leading-tight text-slate-800 font-medium truncate w-full px-0.5">
-                          {displayData?.teachers && displayData.teachers.length > 0 ? displayData.teachers[0].name : '-'}
+                          {levelActivityLabel(displayData?.subject, displayData?.gradeLevel?.name)?.leader || (displayData?.teachers && displayData.teachers.length > 0 ? displayData.teachers[0].name : '-')}
                        </div>
                        {/* Line 3: Teacher #2 (or Teacher #2 + และทีม, or cohort/blank) */}
                        <div className="text-[7.5px] leading-tight text-slate-800 font-medium truncate w-full px-0.5">
                           {(() => {
+                            if (levelActivityLabel(displayData?.subject, displayData?.gradeLevel?.name)) return '\u00A0';
                             const teachers = displayData?.teachers || [];
                             if (teachers.length === 2) {
                               return teachers[1].name;
@@ -259,7 +260,7 @@ export const GradeLevelScheduleTable: React.FC<SingleScheduleTableProps & {
                        </div>
                        {/* Line 4: Room */}
                        <div className="text-[7.5px] leading-tight text-slate-700 font-medium truncate w-full px-0.5">
-                          {formatRoomShort(displayData?.physicalRoom) || '\u00A0'}
+                          {levelActivityLabel(displayData?.subject, displayData?.gradeLevel?.name)?.activity || formatRoomShort(displayData?.physicalRoom) || '\u00A0'}
                        </div>
                     </div>
                   ) : (

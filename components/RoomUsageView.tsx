@@ -4,7 +4,7 @@ import SearchableSelect from './SearchableSelect';
 import React, { useState, useMemo, useEffect, DragEvent, MouseEvent as ReactMouseEvent } from 'react';
 import { AppData, DayOfWeek, PeriodSetting, ScheduleEntry, Subject, Teacher, PhysicalRoom, GradeLevel, AssignmentModalContext, ContextMenuTargetInfo, ScreenAccessProps, OrganizationSettings, SingleScheduleTableProps } from '../types';
 import { DAYS_OF_WEEK_ORDERED, Icons } from '../constants';
-import { isParentGrade, teachersCellLabel } from './scheduleUtils'; // Import from new utils file
+import { isParentGrade, teachersCellLabel, levelActivityLabel } from './scheduleUtils'; // Import from new utils file
 
 export const THAI_DAYS: Record<string, string> = {
   'Monday': 'จันทร์',
@@ -177,11 +177,13 @@ export const RoomUsageScheduleTable: React.FC<SingleScheduleTableProps & {
                  </div>
                  {/* Line 2: Teacher #1 */}
                  <div className="text-[7.5px] leading-tight text-slate-800 font-medium truncate w-full px-0.5">
-                    {displayInfo?.teachers && displayInfo.teachers.length > 0 ? displayInfo.teachers[0].name : '-'}
+                    {levelActivityLabel(displayInfo?.subject, displayInfo?.gradeLevel?.name)?.leader || (displayInfo?.teachers && displayInfo.teachers.length > 0 ? displayInfo.teachers[0].name : '-')}
                  </div>
                  {/* Line 3: Teacher #2 (or Teacher #2 + และทีม / cohort) */}
                  <div className="text-[7.5px] leading-tight text-slate-800 font-medium truncate w-full px-0.5">
                     {(() => {
+                      const lead = levelActivityLabel(displayInfo?.subject, displayInfo?.gradeLevel?.name);
+                      if (lead) return lead.activity;
                       const teachers = displayInfo?.teachers || [];
                       if (teachers.length === 2) {
                         return teachers[1].name;

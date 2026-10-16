@@ -28,6 +28,21 @@ export const teachersCellLabel = (names: string[], subject?: any): string => {
   return names.join(', ');
 };
 
+/**
+ * Printed label for level-wide activities run by the homeroom advisors:
+ * scouts -> "ผู้กำกับลูกเสือ ม.1", military students (นศท.) -> "ผู้กำกับ นศท. ม.4".
+ * Returns null for any other subject so the normal teacher names are printed.
+ */
+export const levelActivityLabel = (subject: any, gradeName?: string): { leader: string; activity: string } | null => {
+  if (!subject || !subject.isBroadAssignment) return null;
+  const name = String(subject.name || '');
+  const level = (gradeName || '').split('/')[0].trim().replace(/^M\.?\s*/i, 'ม.');
+  const suffix = level ? ` ${level}` : '';
+  if (name.includes('ลูกเสือ') || name.includes('เนตรนารี')) return { leader: `ผู้กำกับลูกเสือ${suffix}`, activity: name };
+  if (name.includes('นศท') || name.includes('นักศึกษาวิชาทหาร')) return { leader: `ผู้กำกับ นศท.${suffix}`, activity: name };
+  return null;
+};
+
 export const getParentGradeLevelId = (childGradeLevelId: string, allGradeLevels: GradeLevel[]): string | null => {
     const childGrade = allGradeLevels.find(gl => gl.id === childGradeLevelId);
     if (!childGrade || !childGrade.name.includes('/')) return null;
