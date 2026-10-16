@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "lint": "tsc --noEmit",
     "test:rules": "vitest run",
-    "test:rules:emulate": "firebase emulators:exec --only firestore --project timetable-rules-test \"vitest run\""
+    "test:rules:emulate": "firebase emulators:exec --only firestore --project timetable-rules-test \"vitest run\"",
+    "test": "vitest run --exclude \"test/rules/**\""
   },
   "dependencies": {
     "@types/file-saver": "^2.0.7",
