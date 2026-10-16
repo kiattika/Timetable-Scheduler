@@ -42,7 +42,7 @@ export function legCost(a: Loc, b: Loc, positions: Map<string, GridPos[]>, opts:
   return +(d + opts.floorWeight * (Math.max(a.floor, 1) - 1 + Math.max(b.floor, 1) - 1)).toFixed(2);
 }
 
-export interface Stop { period: number; loc: Loc; label: string }
+export interface Stop { period: number; loc: Loc; label: string; /** period name as shown in the timetable (e.g. "P1") */ pl?: string }
 export interface Leg { fromPeriod: number; toPeriod: number; from: string; to: string; cost: number; severity: Severity }
 export interface DayResult {
   day: string;
@@ -82,10 +82,11 @@ export function analyzeDay(day: string, stops: Stop[], positions: Map<string, Gr
     if (b.period - a.period !== 1 || sameLoc(a.loc, b.loc)) continue;
     const cost = legCost(a.loc, b.loc, positions, opts);
     if (cost === null || cost === 0) continue;
+    const pa = a.pl ?? `P${a.period}`, pb = b.pl ?? `P${b.period}`;
     const sev: Severity = cost >= opts.risk ? 'risk' : cost >= opts.watch ? 'watch' : 'ok';
     legs.push({ fromPeriod: a.period, toPeriod: b.period, from: a.label, to: b.label, cost, severity: sev });
     severity = maxSev(severity, sev);
-    if (sev !== 'ok') reasons.push(`คาบ ${a.period + 1}→${b.period + 1} เดิน ${a.label} → ${b.label} (ระยะ ${cost})`);
+    if (sev !== 'ok') reasons.push(`คาบ ${pa}→${pb} เดิน ${a.label} → ${b.label} (ระยะ ${cost})`);
   }
   // A -> B -> A on consecutive periods, B in another building
   const pingPong: DayResult['pingPong'] = [];
@@ -96,7 +97,7 @@ export function analyzeDay(day: string, stops: Stop[], positions: Map<string, Gr
       pingPong.push({ periods: [a.period, b.period, c.period], labels: [a.label, b.label, c.label] });
       const cost = legCost(a.loc, b.loc, positions, opts) ?? 0;
       severity = maxSev(severity, cost >= opts.watch ? 'risk' : 'watch');
-      reasons.push(`คาบ ${a.period + 1}-${c.period + 1} เดินไปกลับ ${a.label} → ${b.label} → ${c.label}`);
+      reasons.push(`คาบ ${a.pl ?? `P${a.period}`}-${c.pl ?? `P${c.period}`} เดินไปกลับ ${a.label} → ${b.label} → ${c.label}`);
     }
   }
   segSwitches.forEach((n, i) => {
@@ -171,7 +172,7 @@ export function analyzeWalking(input: WalkInput): WalkReport {
     const s = room ? labelOf(room) : null;
     if (!s) { stats.noLocation++; return null; }
     if (!resolveBuildingKey(s.loc.building, positions)) { stats.notOnGrid++; return null; }
-    return { ...s, period: e.period };
+    return { ...s, period: e.period, pl: input.periods?.[e.period]?.label || `P${e.period}` };
   };
 
   const lunchEntries = input.entries.filter((e) => isLunchLike(subjectById.get(e.subjectId)));

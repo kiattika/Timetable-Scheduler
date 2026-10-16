@@ -26,6 +26,7 @@ const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&l
 interface Props { appData: AppData; onOpenCampusMap?: () => void }
 
 export const WalkingCheckScreen: React.FC<Props> = ({ appData, onOpenCampusMap }) => {
+  const isAssistant = appData.currentUser?.role === 'assistant';
   const [tab, setTab] = useState<'teachers' | 'classes'>('teachers');
   const [group, setGroup] = useState('');
   const [minSev, setMinSev] = useState<Severity>('watch');
@@ -69,9 +70,9 @@ export const WalkingCheckScreen: React.FC<Props> = ({ appData, onOpenCampusMap }
     );
   }
 
-  const isTeacherTab = tab === 'teachers';
+  const isTeacherTab = tab === 'teachers' || isAssistant;
   let rows: (DayResult & { name: string; group: string })[] = isTeacherTab ? report.teacherDays : report.classDays;
-  if (isTeacherTab && role === 'assistant' && assigned.length > 0) rows = rows.filter((r) => assigned.includes(r.group)); // department heads see their own department
+  if (isTeacherTab && role === 'assistant') rows = rows.filter((r) => assigned.includes(r.group)); // department heads see their own department
   const groups = [...new Set(rows.map((r) => r.group))].sort((a, b) => a.localeCompare(b, 'th', { numeric: true }));
   const rank = { ok: 0, watch: 1, risk: 2 } as const;
   const shown = rows.filter((r) => rank[r.severity] >= rank[minSev] && (!group || r.group === group));
@@ -84,7 +85,7 @@ export const WalkingCheckScreen: React.FC<Props> = ({ appData, onOpenCampusMap }
     if (!w) return;
     const title = `${isTeacherTab ? 'ครู' : 'ห้องเรียน'} — ตรวจการเดินระหว่างคาบ${group ? ` (${groupLabel(group)})` : ''}`;
     const body = shown.map((r) => `<tr><td>${esc(displayName(r.name))}</td><td>${esc(groupLabel(r.group))}</td><td>${DAY_TH[r.day] || r.day}</td>
-      <td>${SEV_TH[r.severity]}</td><td>${r.segments.map((seg) => seg.map((s) => `ค.${s.period + 1} ${esc(s.label)}`).join(' → ')).join(' ┃พักกลางวัน┃ ')}</td><td>${r.reasons.map(esc).join('<br>')}</td></tr>`).join('');
+      <td>${SEV_TH[r.severity]}</td><td>${r.segments.map((seg) => seg.map((s) => `${s.pl ?? `P${s.period}`} ${esc(s.label)}`).join(' → ')).join(' ┃พักกลางวัน┃ ')}</td><td>${r.reasons.map(esc).join('<br>')}</td></tr>`).join('');
     w.document.write(`<!doctype html><meta charset="utf-8"><title>${esc(title)}</title>
       <style>body{font-family:sans-serif;font-size:12px;padding:16px}table{border-collapse:collapse;width:100%}td,th{border:1px solid #999;padding:4px;vertical-align:top}th{background:#eee}</style>
       <h3>${esc(title)}</h3><p>รายการที่ระดับ "${SEV_TH[minSev]}" ขึ้นไป: ${shown.length} รายการ · พิมพ์เมื่อ ${new Date().toLocaleString('th-TH')}</p>
@@ -100,12 +101,12 @@ export const WalkingCheckScreen: React.FC<Props> = ({ appData, onOpenCampusMap }
         <h2 className="text-xl font-bold text-slate-800">ตรวจการเดินระหว่างคาบ</h2>
         <p className="text-sm text-slate-500 mt-1">
           ตรวจจากผังอาคารและตารางที่จัดไว้ เป็นการเตือนเพื่อประกอบการพิจารณาเท่านั้น ไม่ได้ห้ามจัด ระยะนับเป็น "ช่องในผัง" รวมค่าบันไดตามชั้น
-          ใช้เฉพาะคาบที่ติดกัน (คาบว่างคั่นถือว่ามีเวลาเดิน) และแยกช่วงก่อน/หลังพักกลางวันออกจากกัน · คาบที่ไม่ระบุห้องถือว่าอยู่ห้องประจำชั้น
+          ชื่อคาบตรงกับหัวตาราง (P0, P1 ...) · ใช้เฉพาะคาบที่ติดกัน (คาบว่างคั่นถือว่ามีเวลาเดิน) และแยกช่วงก่อน/หลังพักกลางวันออกจากกัน · คาบที่ไม่ระบุห้องถือว่าอยู่ห้องประจำชั้น
         </p>
       </div>
 
       <div className="flex flex-wrap gap-2 border-b border-slate-200">
-        {(['teachers', 'classes'] as const).map((t) => (
+        {(isAssistant ? ['teachers'] as const : ['teachers', 'classes'] as const).map((t) => (
           <button key={t} onClick={() => { setTab(t); setGroup(''); }}
             className={`px-3 py-2 text-sm font-medium border-b-2 ${tab === t ? 'border-blue-600 text-blue-700' : 'border-transparent text-slate-500'}`}>
             {t === 'teachers' ? 'ครู (หัวหน้ากลุ่มสาระฯ)' : 'ห้องเรียน/นักเรียน (หัวหน้าระดับ)'}
@@ -164,7 +165,7 @@ export const WalkingCheckScreen: React.FC<Props> = ({ appData, onOpenCampusMap }
               {r.segments.map((seg, k) => (
                 <React.Fragment key={k}>
                   {k > 0 && <span className="mx-2 px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 text-xs">พักกลางวัน</span>}
-                  {seg.map((s) => `ค.${s.period + 1} ${s.label}`).join(' → ')}
+                  {seg.map((s) => `${s.pl ?? `P${s.period}`} ${s.label}`).join(' → ')}
                 </React.Fragment>
               ))}
             </div>
@@ -189,6 +190,7 @@ export const countWalkingRisks = (appData: AppData): number | null => {
   });
   const role = appData.currentUser?.role;
   const assigned = appData.currentUser?.assignedDepartments || [];
-  const teachers = role === 'assistant' && assigned.length > 0 ? r.teacherDays.filter((x) => assigned.includes(x.group)) : r.teacherDays;
-  return teachers.filter((x) => x.severity === 'risk').length + r.classDays.filter((x) => x.severity === 'risk').length;
+  // assistants: only their own departments' teachers; managers and above: the whole school
+  if (role === 'assistant') return r.teacherDays.filter((x) => assigned.includes(x.group) && x.severity === 'risk').length;
+  return r.teacherDays.filter((x) => x.severity === 'risk').length + r.classDays.filter((x) => x.severity === 'risk').length;
 };
