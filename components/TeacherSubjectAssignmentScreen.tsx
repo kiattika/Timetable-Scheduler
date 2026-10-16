@@ -715,9 +715,9 @@ const TeacherSubjectAssignmentScreen: React.FC<TeacherSubjectAssignmentScreenPro
             : 'ไม่พบข้อมูลที่ตรงกับเงื่อนไขการค้นหา/ตัวกรอง'}
         </p>
       ) : (
-        <div className="overflow-x-auto rounded-md border border-slate-200 shadow-sm">
+        <div className="overflow-auto max-h-[68vh] rounded-md border border-slate-200 shadow-sm">
           <table className="min-w-full divide-y divide-slate-200">
-            <thead className="bg-slate-50">
+            <thead className="bg-slate-50 sticky top-0 z-10">
               <tr>
                 {fields.map((field, index) => {
                   let fieldSortKey: 'teacher' | 'subject' | 'gradeLevel' | null = null;

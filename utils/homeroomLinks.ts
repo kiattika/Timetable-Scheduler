@@ -50,6 +50,8 @@ export const computeHomeroomLinkDrift = (args: {
 
     links.forEach(l => {
       if (l.subjectId !== subject.id || !scopedTeacherIds.has(l.teacherId)) return;
+      // Teacher-only links (no class) are never homeroom links, so they are never "extra".
+      if (l.gradeLevelId === 'Non-Student') return;
       if (!desired.has(keyOf(l.teacherId, l.subjectId, l.gradeLevelId))) stale.push(l);
     });
   });
