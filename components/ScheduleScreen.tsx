@@ -75,14 +75,6 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
   const { teachers, subjects, gradeLevels, physicalRooms, periodSettings, teacherSubjectAssignments } = appData;
   const scheduleEntries = Array.isArray(appData.scheduleEntries) ? appData.scheduleEntries : [];
 
-  // Assistants only see the teachers of their own departments in the teacher table (null = everyone).
-  const allowedTeacherIds = useMemo<string[] | null>(() => {
-    if (appData.currentUser?.role !== 'assistant') return null;
-    const depts = appData.currentUser?.assignedDepartments || [];
-    return teachers.filter(t => t.department && depts.includes(t.department)).map(t => t.id);
-  }, [teachers, appData.currentUser]);
-  const pickViewableTeacher = (ids: string[]): string | undefined => (allowedTeacherIds ? ids.find(id => allowedTeacherIds.includes(id)) : ids[0]);
-
   const prevAllocationRef = React.useRef<Record<string, number>>({});
 
   useEffect(() => {
@@ -2412,13 +2404,13 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
   /** Make the class, teacher and room tables all show the entry that was clicked in one of them. */
   const syncViewsToEntry = (entry: ScheduleEntry, keep: { teacherId?: string; physicalRoomId?: string }) => {
     setViewingGradeLevelId(entry.gradeLevelId);
-    if (!keep.teacherId) { const tid = pickViewableTeacher(entry.teacherIds); if (tid) setViewingTeacherId(tid); }
+    if (!keep.teacherId && entry.teacherIds.length > 0) setViewingTeacherId(entry.teacherIds[0]);
     if (!keep.physicalRoomId && entry.physicalRoomId) setViewingPhysicalRoomId(entry.physicalRoomId);
     setSelectedBlock({
       day: entry.day,
       period: entry.period,
       gradeLevelId: entry.gradeLevelId,
-      teacherId: keep.teacherId ?? pickViewableTeacher(entry.teacherIds),
+      teacherId: keep.teacherId ?? entry.teacherIds[0],
       physicalRoomId: keep.physicalRoomId ?? entry.physicalRoomId,
     });
   };
@@ -2524,10 +2516,10 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
                         day: blockInfo.day,
                         period: blockInfo.period,
                         gradeLevelId: blockInfo.gradeLevelId,
-                        teacherId: pickViewableTeacher(blockInfo.teacherIds),
+                        teacherId: blockInfo.teacherIds.length > 0 ? blockInfo.teacherIds[0] : undefined,
                         physicalRoomId: blockInfo.physicalRoomId
                     });
-                    { const tid = pickViewableTeacher(blockInfo.teacherIds); if (tid) setViewingTeacherId(tid); }
+                    if (blockInfo.teacherIds.length > 0) setViewingTeacherId(blockInfo.teacherIds[0]);
                     if (blockInfo.physicalRoomId) setViewingPhysicalRoomId(blockInfo.physicalRoomId);
                 } else {
                     setSelectedBlock(null);
@@ -2545,7 +2537,6 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
                   if (entry) syncViewsToEntry(entry, { teacherId: viewingTeacherId || undefined });
                 }}
                 selectedTeacherId={viewingTeacherId}
-                allowedTeacherIds={allowedTeacherIds}
                 onTeacherIdChange={setViewingTeacherId}
             />
             <RoomUsageView
