@@ -3,7 +3,7 @@ import { AppData, ActivityLog, ActivityLogAction, AppErrorLog } from '../types';
 import { Icons } from '../constants';
 import { collection, getDocs, limit, orderBy, query, deleteDoc, doc } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
-import { db, functions } from '../lib/firebase';
+import { db, functions, firestoreDatabaseId } from '../lib/firebase';
 import { pruneActivityLogs, saveAppData, ORG_ID } from '../api';
 import {
   FirestoreDailyMetric,
@@ -11,20 +11,16 @@ import {
   DEFAULT_PRICING,
   PricingConfig,
   calculatePeriodCost,
+  splitBeforeAfter,
 } from '../utils/telemetry';
 import {
   Activity,
   BarChart3,
   Calendar,
-  DollarSign,
-  Coins,
   ShieldCheck,
-  Calculator,
   RefreshCw,
-  Info,
   CheckCircle2,
   AlertCircle,
-  Sliders,
   Database,
   ExternalLink,
   ShieldAlert,
@@ -77,12 +73,15 @@ export const SystemHealthScreen: React.FC<SystemHealthScreenProps> = ({
   const [selectedDays, setSelectedDays] = useState<number>(7);
   const [pricingConfig] = useState<PricingConfig>(DEFAULT_PRICING);
 
-  // Budget Simulator State (Interactive estimation tool where user defines inputs)
-  const [simTeachersCount, setSimTeachersCount] = useState<number>(appData.teachers?.length || 120);
-  const [simStudentsCount, setSimStudentsCount] = useState<number>(2500);
-  const [simDailyTeacherViews, setSimDailyTeacherViews] = useState<number>(3);
-  const [simDailyStudentViews, setSimDailyStudentViews] = useState<number>(2);
-  const [simDailyScheduleUpdates, setSimDailyScheduleUpdates] = useState<number>(25);
+  // Before / after trial report: the day the change (e.g. read-flip) was switched on. Per-browser convenience.
+  const CUTOVER_KEY = 'systemHealth.cutoverDate';
+  const [cutoverDate, setCutoverDate] = useState<string>(() => {
+    try { return localStorage.getItem(CUTOVER_KEY) || ''; } catch { return ''; }
+  });
+  const updateCutoverDate = (v: string) => {
+    setCutoverDate(v);
+    try { v ? localStorage.setItem(CUTOVER_KEY, v) : localStorage.removeItem(CUTOVER_KEY); } catch { /* ignore */ }
+  };
 
   const isAdmin = appData.currentUser?.role === 'admin';
   const orgId = ORG_ID;
@@ -92,11 +91,11 @@ export const SystemHealthScreen: React.FC<SystemHealthScreenProps> = ({
     setIsLoadingStats(true);
     setStatsError(null);
     try {
-      const getStatsFn = httpsCallable<{ days: number }, FirestoreUsageResponse>(
+      const getStatsFn = httpsCallable<{ days: number; databaseId?: string }, FirestoreUsageResponse>(
         functions,
         'getFirestoreUsageStats'
       );
-      const result = await getStatsFn({ days });
+      const result = await getStatsFn({ days, databaseId: firestoreDatabaseId || undefined });
       if (result && result.data && result.data.success) {
         setUsageStats(result.data);
       } else {
@@ -319,53 +318,10 @@ export const SystemHealthScreen: React.FC<SystemHealthScreenProps> = ({
     return calculatePeriodCost(usageStats.dailyStats, pricingConfig, storageUsageMB);
   }, [usageStats, pricingConfig, storageUsageMB]);
 
-  // Budget Simulator Calculation (Explicit user input model)
-  const simulationResult = useMemo(() => {
-    const teacherDailyReads = simTeachersCount * simDailyTeacherViews * 1.5;
-    const studentDailyReads = simStudentsCount * simDailyStudentViews * 1.0;
-    const updateDailyReads = simDailyScheduleUpdates * 2;
-    const estimatedDailyReads = Math.round(teacherDailyReads + studentDailyReads + updateDailyReads);
-
-    const estimatedDailyWrites = Math.round(simDailyScheduleUpdates * 4.5);
-    const estimatedDailyDeletes = Math.round(simDailyScheduleUpdates * 0.5);
-
-    const billableDailyReads = Math.max(0, estimatedDailyReads - pricingConfig.freeDailyReads);
-    const billableDailyWrites = Math.max(0, estimatedDailyWrites - pricingConfig.freeDailyWrites);
-
-    const dailyCostUsd =
-      (billableDailyReads / 100000) * pricingConfig.readCostPer100kUsd +
-      (billableDailyWrites / 100000) * pricingConfig.writeCostPer100kUsd;
-
-    const dailyCostThb = dailyCostUsd * pricingConfig.thbExchangeRate;
-    const monthlyCostThb = dailyCostThb * 30;
-    const semesterCostThb = monthlyCostThb * 4.5;
-    const annualCostThb = monthlyCostThb * 12;
-
-    const readCapacityUsedPercent = Math.min(100, (estimatedDailyReads / pricingConfig.freeDailyReads) * 100);
-    const writeCapacityUsedPercent = Math.min(100, (estimatedDailyWrites / pricingConfig.freeDailyWrites) * 100);
-
-    return {
-      estimatedDailyReads,
-      estimatedDailyWrites,
-      estimatedDailyDeletes,
-      billableDailyReads,
-      billableDailyWrites,
-      dailyCostThb: +dailyCostThb.toFixed(2),
-      monthlyCostThb: +monthlyCostThb.toFixed(2),
-      semesterCostThb: +semesterCostThb.toFixed(2),
-      annualCostThb: +annualCostThb.toFixed(2),
-      readCapacityUsedPercent: +readCapacityUsedPercent.toFixed(1),
-      writeCapacityUsedPercent: +writeCapacityUsedPercent.toFixed(1),
-      isFreeTierCovered: dailyCostThb === 0,
-    };
-  }, [
-    simTeachersCount,
-    simStudentsCount,
-    simDailyTeacherViews,
-    simDailyStudentViews,
-    simDailyScheduleUpdates,
-    pricingConfig,
-  ]);
+  const beforeAfter = useMemo(() => {
+    if (!usageStats || !cutoverDate) return null;
+    return splitBeforeAfter(usageStats.dailyStats, cutoverDate, usageStats.todayDate);
+  }, [usageStats, cutoverDate]);
 
   if (!isAdmin) {
     return (
@@ -635,6 +591,31 @@ export const SystemHealthScreen: React.FC<SystemHealthScreenProps> = ({
                   </div>
                 </div>
 
+                {/* Data-quality warnings: never let a broken query look like "0 usage" */}
+                {!usageStats.bucketing && (
+                  <div className="p-3 bg-amber-50 border border-amber-300 rounded-xl text-xs text-amber-900 flex items-start gap-2">
+                    <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                    <span>Cloud Function <code>getFirestoreUsageStats</code> บนเซิร์ฟเวอร์ยังเป็นรุ่นเก่า: ตัวเลข "รายวัน" เป็นช่วง 24 ชม. ย้อนหลังจากเวลาที่กดรีเฟรช ไม่ใช่วันที่ตามปฏิทิน และรวมทุกฐานข้อมูลในโปรเจกต์ — ต้อง deploy functions ใหม่ก่อนจึงจะเทียบก่อน/หลังได้แม่นยำ</span>
+                  </div>
+                )}
+                {usageStats.metricErrors && usageStats.metricErrors.length > 0 && (
+                  <div className="p-3 bg-red-50 border border-red-300 rounded-xl text-xs text-red-800 flex items-start gap-2">
+                    <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                    <span>ดึงบาง Metric ไม่สำเร็จ ตัวเลขที่เป็น 0 อาจไม่ใช่ค่าจริง: {usageStats.metricErrors.join(' | ')}</span>
+                  </div>
+                )}
+                {usageStats.bucketing && usageStats.seriesFound === 0 && (
+                  <div className="p-3 bg-amber-50 border border-amber-300 rounded-xl text-xs text-amber-900 flex items-start gap-2">
+                    <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                    <span>ไม่พบข้อมูล Metric ของฐานข้อมูล <code>{usageStats.databaseId || '(ทั้งหมด)'}</code> ในช่วงนี้ — ถ้าคาดว่าต้องมีการใช้งาน ให้ตรวจว่า VITE_FIREBASE_DATABASE_ID ตรงกับฐานข้อมูลที่ใช้จริง</span>
+                  </div>
+                )}
+                {usageStats.bucketing && usageStats.databaseId && (
+                  <p className="text-[11px] text-slate-500 -mt-2">
+                    นับเฉพาะฐานข้อมูล <code className="font-mono">{usageStats.databaseId}</code> · วันที่เป็นเวลาไทย (00:00–24:00) · การอ่านจาก script ตรวจสอบ/migrate และ Admin SDK ก็ถูกนับรวมด้วย
+                  </p>
+                )}
+
                 {/* Top Metric Cards from Real Monitoring Data */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                   <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
@@ -658,23 +639,26 @@ export const SystemHealthScreen: React.FC<SystemHealthScreenProps> = ({
                   </div>
 
                   <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
-                    <span className="text-xs font-semibold text-amber-600 uppercase tracking-wider">Storage Footprint</span>
+                    <span className="text-xs font-semibold text-amber-600 uppercase tracking-wider">ขนาดข้อมูลแอป (ประมาณ)</span>
                     <div className="text-2xl font-bold text-slate-800 mt-1">
                       {storageUsageMB} MB
                     </div>
                     <p className="text-xs text-slate-500 mt-1">
-                      {storagePercentOfFreeGB}% ของโควตาฟรี 1,024 MB
+                      นับจากข้อมูลที่โหลดในเบราว์เซอร์ ไม่ใช่ขนาดที่เก็บจริงบน Firestore
                     </p>
                   </div>
 
                   <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
                     <span className="text-xs font-semibold text-indigo-600 uppercase tracking-wider">สถานะค่าบริการจริง</span>
-                    <div className="text-2xl font-bold text-emerald-600 mt-1">
+                    <div className={`text-2xl font-bold mt-1 ${realCostBreakdown && realCostBreakdown.totalCostThb > 0 ? 'text-red-600' : 'text-emerald-600'}`}>
                       {realCostBreakdown ? `${realCostBreakdown.totalCostThb.toFixed(2)} ฿` : '0.00 ฿'}
                     </div>
                     <p className="text-xs text-slate-500 mt-1 flex items-center gap-1">
-                      <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
-                      อยู่ในโควตา Spark Free Tier
+                      {realCostBreakdown && realCostBreakdown.totalCostThb > 0 ? (
+                        <><AlertTriangle className="w-3.5 h-3.5 text-red-600" /> มีวันที่เกินโควตาฟรีรายวัน</>
+                      ) : (
+                        <><ShieldCheck className="w-3.5 h-3.5 text-emerald-600" /> ทุกวันอยู่ในโควตาฟรีรายวัน</>
+                      )}
                     </p>
                   </div>
                 </div>
@@ -688,15 +672,21 @@ export const SystemHealthScreen: React.FC<SystemHealthScreenProps> = ({
                         <th className="px-4 py-3 text-right">Document Reads</th>
                         <th className="px-4 py-3 text-right">Document Writes</th>
                         <th className="px-4 py-3 text-right">Document Deletes</th>
-                        <th className="px-4 py-3 text-center">สถานะ Free Quota (50k reads/วัน)</th>
+                        <th className="px-4 py-3 text-center">สถานะ Free Quota (50k reads / 20k writes / 20k deletes ต่อวัน)</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {usageStats.dailyStats.map((item) => {
-                        const isOverReads = item.reads > pricingConfig.freeDailyReads;
+                        const overWhat = [
+                          item.reads > pricingConfig.freeDailyReads ? 'reads' : '',
+                          item.writes > pricingConfig.freeDailyWrites ? 'writes' : '',
+                          item.deletes > pricingConfig.freeDailyDeletes ? 'deletes' : '',
+                        ].filter(Boolean);
+                        const isOverReads = overWhat.length > 0;
+                        const isToday = item.date === usageStats.todayDate;
                         return (
                           <tr key={item.date} className="hover:bg-slate-50 transition-colors">
-                            <td className="px-4 py-2.5 font-medium font-mono text-slate-800">{item.date}</td>
+                            <td className="px-4 py-2.5 font-medium font-mono text-slate-800">{item.date}{isToday && <span className="ml-2 text-[10px] font-sans font-semibold text-amber-600">วันนี้ (ยังไม่ครบวัน)</span>}</td>
                             <td className="px-4 py-2.5 text-right font-mono font-bold text-blue-700">
                               {item.reads.toLocaleString()}
                             </td>
@@ -708,7 +698,7 @@ export const SystemHealthScreen: React.FC<SystemHealthScreenProps> = ({
                             </td>
                             <td className="px-4 py-2.5 text-center">
                               {isOverReads ? (
-                                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-red-100 text-red-700">เกินโควตาฟรี</span>
+                                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-red-100 text-red-700">เกินโควตาฟรี ({overWhat.join(', ')})</span>
                               ) : (
                                 <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-100 text-emerald-700">100% Free</span>
                               )}
@@ -723,155 +713,111 @@ export const SystemHealthScreen: React.FC<SystemHealthScreenProps> = ({
             )}
           </div>
 
-          {/* Budget Planning & Simulator */}
-          <div className="bg-gradient-to-br from-slate-900 via-slate-850 to-indigo-950 text-white rounded-2xl shadow-md p-6 md:p-8 space-y-6">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-700/80 pb-5">
-              <div className="flex items-center gap-3">
-                <div className="w-11 h-11 rounded-xl bg-amber-500/20 border border-amber-400/30 text-amber-300 flex items-center justify-center">
-                  <Calculator className="w-6 h-6" />
-                </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <h2 className="text-xl font-bold text-white">
-                      เครื่องมือวางแผนและจำลองงบประมาณ (Budget Planning & Capacity Simulator)
-                    </h2>
-                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/30 text-amber-200 border border-amber-400/30">
-                      แบบจำลองประมาณการ
-                    </span>
-                  </div>
-                  <p className="text-xs text-slate-300 mt-0.5">
-                    กำหนดตัวแปรขนาดโรงเรียนเพื่อคำนวณและประเมินค่าใช้จ่ายฐานข้อมูล Google Cloud Firestore ล่วงหน้า
-                  </p>
-                </div>
+          {/* Before / After trial report */}
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+            <div className="p-5 md:p-6 border-b border-slate-200 bg-slate-50/60 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+              <div>
+                <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                  <BarChart3 className="w-5 h-5 text-indigo-600" />
+                  รายงานเทียบก่อน / หลังทดลอง
+                </h2>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  เลือกวันที่เริ่มทดลอง (เช่น วันที่เปิด VITE_READ_FROM_SUBCOLLECTIONS) ระบบจะแยกสถิติเป็น “ก่อน” และ “หลัง” ให้เทียบกัน
+                </p>
               </div>
-
-              <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-800/80 border border-slate-700 text-xs text-amber-300 font-medium">
-                <Coins className="w-4 h-4" />
-                <span>อัตราแลกเปลี่ยนอ้างอิง: 1 USD ≈ {pricingConfig.thbExchangeRate} THB</span>
+              <div className="flex flex-wrap items-center gap-2">
+                <label className="text-xs text-slate-500 font-medium" htmlFor="cutover-date">เริ่มทดลองวันที่:</label>
+                <input
+                  id="cutover-date"
+                  type="date"
+                  value={cutoverDate}
+                  onChange={(e) => updateCutoverDate(e.target.value)}
+                  className="text-xs bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <button
+                  type="button"
+                  onClick={() => updateCutoverDate(usageStats?.todayDate || new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' }))}
+                  className="text-xs font-medium px-3 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-700"
+                >
+                  ตั้งเป็นวันนี้
+                </button>
+                {cutoverDate && (
+                  <button
+                    type="button"
+                    onClick={() => updateCutoverDate('')}
+                    className="text-xs font-medium px-3 py-1.5 rounded-lg text-slate-500 hover:text-red-600"
+                  >
+                    ล้าง
+                  </button>
+                )}
               </div>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-              {/* Controls: Sliders for School Simulation */}
-              <div className="lg:col-span-6 space-y-5">
-                <h3 className="text-sm font-semibold text-slate-200 uppercase tracking-wider flex items-center gap-2">
-                  <Sliders className="w-4 h-4 text-indigo-400" />
-                  กำหนดตัวแปรจำลองการใช้งานในโรงเรียน
-                </h3>
-
-                {/* Slider 1: Teachers Count */}
-                <div className="space-y-2 bg-slate-800/60 p-3.5 rounded-xl border border-slate-700/60">
-                  <div className="flex justify-between items-center text-xs">
-                    <span className="text-slate-300">จำนวนครูผู้สอนในระบบ:</span>
-                    <span className="font-mono font-bold text-amber-300 text-sm">{simTeachersCount} คน</span>
-                  </div>
-                  <input
-                    type="range"
-                    min="10"
-                    max="400"
-                    step="5"
-                    value={simTeachersCount}
-                    onChange={(e) => setSimTeachersCount(Number(e.target.value))}
-                    className="w-full accent-amber-400 h-2 bg-slate-700 rounded-lg cursor-pointer"
-                  />
-                </div>
-
-                {/* Slider 2: Students Count */}
-                <div className="space-y-2 bg-slate-800/60 p-3.5 rounded-xl border border-slate-700/60">
-                  <div className="flex justify-between items-center text-xs">
-                    <span className="text-slate-300">จำนวนนักเรียน/ผู้เปิดดูตารางเรียน:</span>
-                    <span className="font-mono font-bold text-blue-300 text-sm">{simStudentsCount.toLocaleString()} คน</span>
-                  </div>
-                  <input
-                    type="range"
-                    min="100"
-                    max="6000"
-                    step="100"
-                    value={simStudentsCount}
-                    onChange={(e) => setSimStudentsCount(Number(e.target.value))}
-                    className="w-full accent-blue-400 h-2 bg-slate-700 rounded-lg cursor-pointer"
-                  />
-                </div>
-
-                {/* Slider 3: Daily Schedule Updates */}
-                <div className="space-y-2 bg-slate-800/60 p-3.5 rounded-xl border border-slate-700/60">
-                  <div className="flex justify-between items-center text-xs">
-                    <span className="text-slate-300">ความถี่การแก้ไข/ปรับตารางสอนต่อวัน:</span>
-                    <span className="font-mono font-bold text-emerald-300 text-sm">{simDailyScheduleUpdates} ครั้ง/วัน</span>
-                  </div>
-                  <input
-                    type="range"
-                    min="0"
-                    max="200"
-                    step="5"
-                    value={simDailyScheduleUpdates}
-                    onChange={(e) => setSimDailyScheduleUpdates(Number(e.target.value))}
-                    className="w-full accent-emerald-400 h-2 bg-slate-700 rounded-lg cursor-pointer"
-                  />
-                </div>
-              </div>
-
-              {/* Results: Financial & Budget Projection Display */}
-              <div className="lg:col-span-6 flex flex-col justify-between bg-slate-800/80 p-5 md:p-6 rounded-xl border border-slate-700">
-                <div>
-                  <div className="flex items-center justify-between mb-4">
-                    <h3 className="text-sm font-semibold text-slate-200">ผลการประเมินงบประมาณ (Budget Projection)</h3>
-                    {simulationResult.isFreeTierCovered ? (
-                      <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
-                        🟢 ครอบคลุมในโควตาฟรี (100% Free)
-                      </span>
-                    ) : (
-                      <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40">
-                        🟡 มีค่าบริการส่วนเกิน
-                      </span>
-                    )}
-                  </div>
-
-                  <div className="space-y-3 text-xs">
-                    <div className="flex justify-between py-2 border-b border-slate-700 text-slate-300">
-                      <span>ประมาณการ Reads ต่อวัน:</span>
-                      <span className="font-mono font-bold text-white">
-                        {simulationResult.estimatedDailyReads.toLocaleString()} reads / 50,000 โควตาฟรี ({simulationResult.readCapacityUsedPercent}%)
-                      </span>
+            <div className="p-5 md:p-6 space-y-4">
+              {!usageStats ? (
+                <p className="text-sm text-slate-400 text-center py-6">รอข้อมูลสถิติด้านบนโหลดก่อน</p>
+              ) : !cutoverDate ? (
+                <p className="text-sm text-slate-500 text-center py-6">เลือก “วันที่เริ่มทดลอง” เพื่อดูรายงานเทียบ (วันที่เริ่มทดลองนับเป็นฝั่ง “หลัง”)</p>
+              ) : beforeAfter && (
+                <>
+                  {(cutoverDate < usageStats.timeRange.startDate || cutoverDate > usageStats.timeRange.endDate) && (
+                    <div className="p-3 bg-amber-50 border border-amber-300 rounded-xl text-xs text-amber-900">
+                      วันที่เริ่มทดลองอยู่นอกช่วงที่ดึงข้อมูล ({usageStats.timeRange.startDate} ถึง {usageStats.timeRange.endDate}) — เลือกช่วงเวลาให้ยาวขึ้นด้านบน (สูงสุด 30 วัน)
                     </div>
-
-                    <div className="flex justify-between py-2 border-b border-slate-700 text-slate-300">
-                      <span>ประมาณการ Writes ต่อวัน:</span>
-                      <span className="font-mono font-bold text-white">
-                        {simulationResult.estimatedDailyWrites.toLocaleString()} writes / 20,000 โควตาฟรี ({simulationResult.writeCapacityUsedPercent}%)
-                      </span>
+                  )}
+                  {!usageStats.bucketing && (
+                    <div className="p-3 bg-amber-50 border border-amber-300 rounded-xl text-xs text-amber-900">
+                      ตัวเลขรายวันยังเป็นรุ่นเก่า (ไม่ตรงวันที่ตามปฏิทิน) — รายงานนี้ใช้เป็นแนวโน้มคร่าว ๆ เท่านั้นจนกว่าจะ deploy functions
                     </div>
-
-                    <div className="grid grid-cols-3 gap-3 pt-3">
-                      <div className="bg-slate-900/80 p-3 rounded-lg border border-slate-700 text-center">
-                        <span className="text-[11px] text-slate-400 block">ค่าใช้จ่ายต่อวัน</span>
-                        <span className="text-lg font-bold font-mono text-white mt-0.5 block">
-                          {simulationResult.dailyCostThb.toFixed(2)} ฿
-                        </span>
-                      </div>
-                      <div className="bg-slate-900/80 p-3 rounded-lg border border-slate-700 text-center">
-                        <span className="text-[11px] text-slate-400 block">ต่อภาคเรียน (4.5 ด.)</span>
-                        <span className="text-lg font-bold font-mono text-amber-300 mt-0.5 block">
-                          {simulationResult.semesterCostThb.toFixed(2)} ฿
-                        </span>
-                      </div>
-                      <div className="bg-slate-900/80 p-3 rounded-lg border border-slate-700 text-center">
-                        <span className="text-[11px] text-slate-400 block">ตลอดทั้งปี (12 ด.)</span>
-                        <span className="text-lg font-bold font-mono text-emerald-400 mt-0.5 block">
-                          {simulationResult.annualCostThb.toFixed(2)} ฿
-                        </span>
-                      </div>
-                    </div>
+                  )}
+                  <div className="overflow-x-auto border border-slate-200 rounded-xl">
+                    <table className="w-full text-left text-xs text-slate-700">
+                      <thead className="bg-slate-100/80 font-semibold border-b border-slate-200">
+                        <tr>
+                          <th className="px-4 py-3">ตัวชี้วัด (เฉลี่ยต่อวัน)</th>
+                          <th className="px-4 py-3 text-right">ก่อนทดลอง</th>
+                          <th className="px-4 py-3 text-right">หลังทดลอง</th>
+                          <th className="px-4 py-3 text-right">เปลี่ยนแปลง</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 font-mono">
+                        {([
+                          ['Document Reads', beforeAfter.before.avgReads, beforeAfter.after.avgReads, beforeAfter.deltaPercent.reads],
+                          ['Document Writes', beforeAfter.before.avgWrites, beforeAfter.after.avgWrites, beforeAfter.deltaPercent.writes],
+                          ['Document Deletes', beforeAfter.before.avgDeletes, beforeAfter.after.avgDeletes, beforeAfter.deltaPercent.deletes],
+                          ['Reads สูงสุดในวันเดียว', beforeAfter.before.peakReads, beforeAfter.after.peakReads, null],
+                        ] as [string, number, number, number | null][]).map(([label, b, a, d]) => (
+                          <tr key={label}>
+                            <td className="px-4 py-2.5 font-sans font-medium text-slate-800">{label}</td>
+                            <td className="px-4 py-2.5 text-right">{b.toLocaleString()}</td>
+                            <td className="px-4 py-2.5 text-right font-bold">{a.toLocaleString()}</td>
+                            <td className={`px-4 py-2.5 text-right font-bold ${d === null ? 'text-slate-400' : d > 0 ? 'text-red-600' : 'text-emerald-600'}`}>
+                              {d === null ? '–' : `${d > 0 ? '+' : ''}${d}%`}
+                            </td>
+                          </tr>
+                        ))}
+                        <tr className="bg-slate-50/60 font-sans text-slate-500">
+                          <td className="px-4 py-2.5">จำนวนวันที่ใช้คำนวณ</td>
+                          <td className="px-4 py-2.5 text-right">
+                            {beforeAfter.before.days} วัน{beforeAfter.before.firstDate ? ` (${beforeAfter.before.firstDate} – ${beforeAfter.before.lastDate})` : ''}
+                          </td>
+                          <td className="px-4 py-2.5 text-right">
+                            {beforeAfter.after.days} วัน{beforeAfter.after.firstDate ? ` (${beforeAfter.after.firstDate} – ${beforeAfter.after.lastDate})` : ''}
+                            {beforeAfter.after.partialOnly ? ' · วันนี้ยังไม่ครบวัน' : ''}
+                          </td>
+                          <td />
+                        </tr>
+                      </tbody>
+                    </table>
                   </div>
-                </div>
-
-                <div className="mt-4 p-3 bg-slate-900/60 rounded-lg text-[11px] text-slate-400 flex items-start gap-2 border border-slate-800">
-                  <Info className="w-4 h-4 text-slate-500 shrink-0 mt-0.5" />
-                  <span>
-                    คำนวณตามอัตราค่าบริการมาตรฐาน Google Cloud Firestore Spark Plan (Free Tier: 50k reads, 20k writes, 1 GiB storage ต่อวัน)
-                  </span>
-                </div>
-              </div>
+                  <ul className="text-[11px] text-slate-500 space-y-1 list-disc pl-5">
+                    <li>วันนี้ (ยังไม่ครบวัน) ไม่ถูกนำไปเฉลี่ย ยกเว้นฝั่ง “หลัง” ยังไม่มีวันที่ครบเลย</li>
+                    <li>วันที่เริ่มทดลองมีการใช้งานปนทั้งสองแบบ ถ้าต้องการความแม่นยำสูงให้เทียบตั้งแต่วันถัดไป</li>
+                    <li>คาดว่าหลังเปิดอ่านจาก subcollection Reads จะเพิ่มประมาณ 800 ต่อการเปิดแอปหนึ่งครั้งต่อผู้ใช้ ส่วน Writes ควรใกล้เดิม</li>
+                    <li>วันที่เริ่มทดลองถูกจำไว้ในเบราว์เซอร์นี้เท่านั้น</li>
+                  </ul>
+                </>
+              )}
             </div>
           </div>
         </div>

@@ -21,6 +21,9 @@ const app = initializeApp(firebaseConfig);
 const dbId = import.meta.env.VITE_FIREBASE_DATABASE_ID;
 const isValidDbId = dbId && dbId !== '(default)' && dbId !== 'none' && dbId !== 'Secret value' && String(dbId).trim() !== '';
 
+/** Database id this client really uses ('' = the (default) database). */
+export const firestoreDatabaseId: string = isValidDbId ? String(dbId).trim() : '';
+
 export const db = isValidDbId
   ? initializeFirestore(app, { experimentalForceLongPolling: true }, String(dbId).trim())
   : initializeFirestore(app, { experimentalForceLongPolling: true });

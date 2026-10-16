@@ -30,6 +30,12 @@ export interface FirestoreUsageResponse {
     dailyAverageDeletes: number;
   };
   fetchedAt: string;
+  /** Present only on the fixed Cloud Function: days are Asia/Bangkok calendar days. Absent = old rolling-24h buckets. */
+  bucketing?: 'calendar-day-bangkok';
+  databaseId?: string | null;
+  seriesFound?: number;
+  metricErrors?: string[];
+  todayDate?: string;
 }
 
 export interface PricingConfig {
@@ -143,5 +149,83 @@ export const calculatePeriodCost = (
     isWithinFreeTier: totalCostUsd === 0,
     freeTierReadPercentage: +freeTierReadPercentage.toFixed(1),
     freeTierWritePercentage: +freeTierWritePercentage.toFixed(1),
+  };
+};
+
+
+/* ---------- Before / after comparison ---------- */
+
+export interface PeriodSummary {
+  /** complete days used for the averages */
+  days: number;
+  firstDate: string | null;
+  lastDate: string | null;
+  totalReads: number;
+  totalWrites: number;
+  totalDeletes: number;
+  avgReads: number;
+  avgWrites: number;
+  avgDeletes: number;
+  peakReads: number;
+  /** true when the group only had today's unfinished day, so the figures are partial-day totals */
+  partialOnly: boolean;
+}
+
+export interface BeforeAfterReport {
+  cutoverDate: string;
+  before: PeriodSummary;
+  after: PeriodSummary;
+  /** % change of the daily average, after vs before (null when "before" is 0 or either side is empty) */
+  deltaPercent: { reads: number | null; writes: number | null; deletes: number | null };
+}
+
+const summarize = (rows: FirestoreDailyMetric[], todayDate: string | undefined): PeriodSummary => {
+  // Today is still running: leave it out of the averages unless it is all we have.
+  const complete = rows.filter(r => r.date !== todayDate);
+  const partialOnly = complete.length === 0 && rows.length > 0;
+  const used = partialOnly ? rows : complete;
+  const sum = (k: 'reads' | 'writes' | 'deletes') => used.reduce((a, r) => a + (r[k] || 0), 0);
+  const n = used.length;
+  const avg = (v: number) => (n === 0 ? 0 : Math.round(v / n));
+  return {
+    days: n,
+    firstDate: used[0]?.date ?? null,
+    lastDate: used[n - 1]?.date ?? null,
+    totalReads: sum('reads'),
+    totalWrites: sum('writes'),
+    totalDeletes: sum('deletes'),
+    avgReads: avg(sum('reads')),
+    avgWrites: avg(sum('writes')),
+    avgDeletes: avg(sum('deletes')),
+    peakReads: used.reduce((m, r) => Math.max(m, r.reads || 0), 0),
+    partialOnly,
+  };
+};
+
+const pct = (before: number, after: number, ok: boolean): number | null =>
+  ok && before > 0 ? +(((after - before) / before) * 100).toFixed(1) : null;
+
+/**
+ * Split daily stats at `cutoverDate` (YYYY-MM-DD): days strictly before it are "before",
+ * the cutover day and later are "after". `todayDate` (unfinished day) is excluded from the averages.
+ */
+export const splitBeforeAfter = (
+  dailyStats: FirestoreDailyMetric[],
+  cutoverDate: string,
+  todayDate?: string
+): BeforeAfterReport => {
+  const sorted = [...dailyStats].sort((a, b) => a.date.localeCompare(b.date));
+  const before = summarize(sorted.filter(r => r.date < cutoverDate), todayDate);
+  const after = summarize(sorted.filter(r => r.date >= cutoverDate), todayDate);
+  const ok = before.days > 0 && after.days > 0;
+  return {
+    cutoverDate,
+    before,
+    after,
+    deltaPercent: {
+      reads: pct(before.avgReads, after.avgReads, ok),
+      writes: pct(before.avgWrites, after.avgWrites, ok),
+      deletes: pct(before.avgDeletes, after.avgDeletes, ok),
+    },
   };
 };

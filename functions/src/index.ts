@@ -3,6 +3,7 @@ import { initializeApp, getApps, getApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import { MetricServiceClient } from '@google-cloud/monitoring';
+import { bangkokDateKey, bangkokMidnightMs, makeDailyBuckets, dateKeyForPoint } from './usageBuckets';
 import { randomUUID } from 'crypto';
 import {
   applyOrgChanges,
@@ -428,7 +429,7 @@ export const cleanupOldActivityLogs = functions.pubsub.schedule('every 24 hours'
  * from the Google Cloud Monitoring API for the project.
  * Restricts access to Administrators only.
  */
-export const getFirestoreUsageStats = functions.https.onCall(async (data: { days?: number }, context: functions.https.CallableContext) => {
+export const getFirestoreUsageStats = functions.https.onCall(async (data: { days?: number; databaseId?: string }, context: functions.https.CallableContext) => {
   // 1. Authorization check
   if (!context.auth) {
     console.warn(`[SECURITY] Unauthorized access attempt to getFirestoreUsageStats: User is unauthenticated at ${new Date().toISOString()}`);
@@ -457,39 +458,28 @@ export const getFirestoreUsageStats = functions.https.onCall(async (data: { days
     );
   }
 
-  const requestedDays = typeof data?.days === 'number' && data.days > 0 && data.days <= 30 ? data.days : 7;
+  const requestedDays = typeof data?.days === 'number' && data.days > 0 && data.days <= 30 ? Math.floor(data.days) : 7;
+  // Only count the database the app really uses (a project can hold several: "(default)", old AI-Studio ones...).
+  // Strict pattern so the value can never break out of the filter string.
+  const rawDb = typeof data?.databaseId === 'string' ? data.databaseId.trim() : '';
+  const databaseId = /^[A-Za-z0-9()_-]{1,63}$/.test(rawDb) ? rawDb : '';
+
   const nowMs = Date.now();
-  const startTimeSeconds = Math.floor((nowMs - requestedDays * 24 * 60 * 60 * 1000) / 1000);
+  // Calendar days in Asia/Bangkok: from 00:00 of the oldest day up to now.
+  const dailyMap = makeDailyBuckets(nowMs, requestedDays);
+  const firstDayStartMs = bangkokMidnightMs(nowMs) - (requestedDays - 1) * 24 * 60 * 60 * 1000;
+  const startTimeSeconds = Math.floor(firstDayStartMs / 1000);
   const endTimeSeconds = Math.floor(nowMs / 1000);
+  const ALIGN_SECONDS = 3600; // hourly points, assigned to Bangkok days below
 
   const metricsToQuery = [
     { key: 'reads', type: 'firestore.googleapis.com/document/read_count' },
     { key: 'writes', type: 'firestore.googleapis.com/document/write_count' },
     { key: 'deletes', type: 'firestore.googleapis.com/document/delete_count' }
-  ];
+  ] as const;
 
-  // Helper to format Date to YYYY-MM-DD in Thailand Timezone (Asia/Bangkok, UTC+7)
-  const formatDateKey = (d: Date): string => {
-    // แปลงเป็นเวลาไทย (UTC+7) อย่างชัดเจน ไม่พึ่ง timezone ของเครื่อง server
-    const bangkokTime = new Date(d.getTime() + 7 * 60 * 60 * 1000);
-    const year = bangkokTime.getUTCFullYear();
-    const month = String(bangkokTime.getUTCMonth() + 1).padStart(2, '0');
-    const day = String(bangkokTime.getUTCDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
-  };
-
-  // Initialize date buckets for requested time range
-  const dailyMap: Record<string, { date: string; reads: number; writes: number; deletes: number }> = {};
-  for (let i = requestedDays - 1; i >= 0; i--) {
-    const d = new Date(nowMs - i * 24 * 60 * 60 * 1000);
-    const dateKey = formatDateKey(d);
-    dailyMap[dateKey] = {
-      date: dateKey,
-      reads: 0,
-      writes: 0,
-      deletes: 0
-    };
-  }
+  const metricErrors: string[] = [];
+  let seriesFound = 0;
 
   try {
     const monitoringClient = new MetricServiceClient();
@@ -499,13 +489,15 @@ export const getFirestoreUsageStats = functions.https.onCall(async (data: { days
       try {
         const request = {
           name: projectName,
-          filter: `metric.type = "${metricDef.type}"`,
+          filter:
+            `metric.type = "${metricDef.type}"` +
+            (databaseId ? ` AND resource.labels.database_id = "${databaseId}"` : ''),
           interval: {
             startTime: { seconds: startTimeSeconds },
             endTime: { seconds: endTimeSeconds }
           },
           aggregation: {
-            alignmentPeriod: { seconds: 86400 }, // 1 day alignment
+            alignmentPeriod: { seconds: ALIGN_SECONDS },
             perSeriesAligner: 'ALIGN_SUM',
             crossSeriesReducer: 'REDUCE_SUM'
           }
@@ -514,13 +506,13 @@ export const getFirestoreUsageStats = functions.https.onCall(async (data: { days
         const [timeSeries] = await monitoringClient.listTimeSeries(request as any);
 
         if (timeSeries && Array.isArray(timeSeries)) {
+          seriesFound += timeSeries.length;
           for (const series of timeSeries) {
             if (series.points && Array.isArray(series.points)) {
               for (const point of series.points) {
                 const pointEndTime = point.interval?.endTime?.seconds;
                 if (pointEndTime) {
-                  const pointDate = new Date(Number(pointEndTime) * 1000);
-                  const dateKey = formatDateKey(pointDate);
+                  const dateKey = dateKeyForPoint(Number(pointEndTime), ALIGN_SECONDS);
                   let pointValue = 0;
                   if (point.value?.int64Value !== undefined && point.value?.int64Value !== null) {
                     pointValue = Number(point.value.int64Value);
@@ -529,9 +521,7 @@ export const getFirestoreUsageStats = functions.https.onCall(async (data: { days
                   }
 
                   if (dailyMap[dateKey]) {
-                    if (metricDef.key === 'reads') dailyMap[dateKey].reads += pointValue;
-                    if (metricDef.key === 'writes') dailyMap[dateKey].writes += pointValue;
-                    if (metricDef.key === 'deletes') dailyMap[dateKey].deletes += pointValue;
+                    dailyMap[dateKey][metricDef.key] += pointValue;
                   }
                 }
               }
@@ -539,8 +529,16 @@ export const getFirestoreUsageStats = functions.https.onCall(async (data: { days
           }
         }
       } catch (metricQueryErr: any) {
-        console.warn(`Query for metric ${metricDef.type} notice:`, metricQueryErr?.message || metricQueryErr);
+        // Never let a failed metric masquerade as "0 usage": report it to the client.
+        const msg = metricQueryErr?.message || String(metricQueryErr);
+        console.warn(`Query for metric ${metricDef.type} failed:`, msg);
+        metricErrors.push(`${metricDef.key}: ${msg}`);
       }
+    }
+
+    if (metricErrors.length === metricsToQuery.length) {
+      // Every query failed -> surface the real reason through the catch below
+      throw new Error(metricErrors[0]);
     }
 
     const dailyStats = Object.values(dailyMap).sort((a, b) => a.date.localeCompare(b.date));
@@ -553,10 +551,15 @@ export const getFirestoreUsageStats = functions.https.onCall(async (data: { days
       success: true,
       projectId,
       source: 'Google Cloud Monitoring API',
+      bucketing: 'calendar-day-bangkok',
+      databaseId: databaseId || null,
+      seriesFound,
+      metricErrors,
+      todayDate: bangkokDateKey(nowMs),
       timeRange: {
         days: requestedDays,
-        startDate: dailyStats[0]?.date || formatDateKey(new Date(nowMs - requestedDays * 86400000)),
-        endDate: dailyStats[dailyStats.length - 1]?.date || formatDateKey(new Date(nowMs))
+        startDate: dailyStats[0]?.date || bangkokDateKey(firstDayStartMs),
+        endDate: dailyStats[dailyStats.length - 1]?.date || bangkokDateKey(nowMs)
       },
       dailyStats,
       totals: {
