@@ -6,7 +6,7 @@
  * Distances come from the campus grid (utils/buildings.ts); the unit is "grid cells".
  * Nothing here blocks scheduling.
  */
-import type { GradeLevel, PeriodSetting, PhysicalRoom, ScheduleEntry, Subject, Teacher } from '../types';
+import type { GradeLevel, PeriodSetting, PhysicalRoom, ScheduleEntry, Subject, Teacher, WalkAck } from '../types';
 import { isLunchPeriodForGrade } from '../components/scheduleUtils';
 import {
   BuildingGrid, GridPos, buildingPositions, buildingDistance, resolveBuildingKey, roomBuilding, roomFloor,
@@ -51,6 +51,8 @@ export interface DayResult {
   segments: Stop[][];
   switches: number;       // building changes over the whole day (information only)
   maxSegmentSwitches: number; // back-to-back building changes in the worst stretch between breaks (this is what the thresholds judge)
+  /** timetable cells to flag: the arrival period of a flagged move */
+  marks: { period: number; severity: Severity; text: string }[];
   legs: Leg[];            // back-to-back moves that actually go somewhere else
   pingPong: { periods: [number, number, number]; labels: [string, string, string] }[];
   severity: Severity;
@@ -69,6 +71,7 @@ const sameLoc = (a: Loc, b: Loc) => a.building === b.building && a.floor === b.f
 /** Analyse one person/class on one day. `stops` must be sorted by period, one per period. */
 export function analyzeDay(day: string, stops: Stop[], positions: Map<string, GridPos[]>, opts: WalkOptions = DEFAULT_WALK_OPTIONS, breaks: number[] = []): DayResult {
   const legs: Leg[] = [];
+  const marks: DayResult['marks'] = [];
   let switches = 0;
   // Stops on either side of a lunch break are separate stretches: people get a rest and can move freely.
   const segments: Stop[][] = [];
@@ -93,7 +96,11 @@ export function analyzeDay(day: string, stops: Stop[], positions: Map<string, Gr
     const sev: Severity = cost >= opts.risk ? 'risk' : cost >= opts.watch ? 'watch' : 'ok';
     legs.push({ fromPeriod: a.period, toPeriod: b.period, from: a.label, to: b.label, cost, severity: sev });
     severity = maxSev(severity, sev);
-    if (sev !== 'ok') reasons.push(`${pa}→${pb} เดิน ${a.label} → ${b.label} (ระยะ ${cost})`);
+    if (sev !== 'ok') {
+      const text = `${pa}→${pb} เดิน ${a.label} → ${b.label} (ระยะ ${cost})`;
+      reasons.push(text);
+      marks.push({ period: b.period, severity: sev, text });
+    }
   }
   // A -> B -> A on consecutive periods, B in another building
   const pingPong: DayResult['pingPong'] = [];
@@ -103,7 +110,9 @@ export function analyzeDay(day: string, stops: Stop[], positions: Map<string, Gr
     if (a.loc.building === c.loc.building && a.loc.building !== b.loc.building) {
       pingPong.push({ periods: [a.period, b.period, c.period], labels: [a.label, b.label, c.label] });
       const cost = legCost(a.loc, b.loc, positions, opts) ?? 0;
-      severity = maxSev(severity, cost >= opts.watch ? 'risk' : 'watch');
+      const pp: Severity = cost >= opts.watch ? 'risk' : 'watch';
+      severity = maxSev(severity, pp);
+      marks.push({ period: c.period, severity: pp, text: `เดินไปกลับ ${a.label} → ${b.label} → ${c.label}` });
       reasons.push(`${a.pl ?? periodName(a.period)}-${c.pl ?? periodName(c.period)} เดินไปกลับ ${a.label} → ${b.label} → ${c.label}`);
     }
   }
@@ -111,7 +120,7 @@ export function analyzeDay(day: string, stops: Stop[], positions: Map<string, Gr
     if (n >= opts.switchRisk) { severity = maxSev(severity, 'risk'); reasons.push(`ย้ายอาคาร ${n} ครั้ง${segName(i) || 'ในวันเดียว'}`); }
     else if (n >= opts.switchWatch) { severity = maxSev(severity, 'watch'); reasons.push(`ย้ายอาคาร ${n} ครั้ง${segName(i) || 'ในวันเดียว'}`); }
   });
-  return { day, stops, segments, maxSegmentSwitches, switches, legs, pingPong, severity, reasons, maxCost: legs.reduce((m, l) => Math.max(m, l.cost), 0) };
+  return { day, stops, segments, maxSegmentSwitches, switches, marks, legs, pingPong, severity, reasons, maxCost: legs.reduce((m, l) => Math.max(m, l.cost), 0) };
 }
 
 /* ---------------- whole timetable ---------------- */
@@ -129,9 +138,11 @@ export interface WalkInput {
 }
 
 export interface SubjectResult extends DayResult { key: string; name: string; group: string }
+/** Identity of a person-day as it is now; an acceptance only holds while this is unchanged. */
+export interface AckInfo { key: string; ack?: WalkAck; accepted: boolean }
 export interface WalkReport {
-  teacherDays: (DayResult & { teacherId: string; name: string; group: string })[];
-  classDays: (DayResult & { gradeLevelId: string; name: string; group: string })[];
+  teacherDays: (DayResult & AckInfo & { teacherId: string; name: string; group: string })[];
+  classDays: (DayResult & AckInfo & { gradeLevelId: string; name: string; group: string })[];
   stats: { entries: number; noLocation: number; notOnGrid: number; splitSkipped: number };
   options: WalkOptions;
 }
@@ -139,6 +150,12 @@ export interface WalkReport {
 const DAY_ORDER = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 const isLunchLike = (s?: Subject) =>
   !!s && ((s.name || '').includes('พักกลางวัน') || (s.subjectCode || '').toUpperCase() === 'LUNCH');
+
+export const walkKey = (kind: 't' | 'c', id: string, day: string, stops: Stop[]): string =>
+  `${kind}|${id}|${day}|${stops.map((s) => `${s.period}:${s.loc.building}:${s.loc.floor}`).join(',')}`;
+
+/** Severity as shown: an accepted flag counts as green. */
+export const effectiveSeverity = (r: { severity: Severity; accepted: boolean }): Severity => (r.accepted ? 'ok' : r.severity);
 
 export function analyzeWalking(input: WalkInput): WalkReport {
   const opts: WalkOptions = { ...DEFAULT_WALK_OPTIONS, ...(input.options || {}) };
@@ -219,7 +236,9 @@ export function analyzeWalking(input: WalkInput): WalkReport {
       const stops = [...periods.values()].sort((a, b) => a.period - b.period);
       const breaks = [...new Set([...(teacherGrades.get(`${tid}|${day}`) ?? [])].flatMap((gid) => lunchFor(gid, day)))];
       const r = analyzeDay(day, stops, positions, opts, breaks);
-      teacherDays.push({ ...r, teacherId: tid, name: t?.name || tid, group: t?.department || '(ไม่ระบุกลุ่มสาระฯ)' });
+      const key = walkKey('t', tid, day, stops);
+      const ack = r.severity === 'ok' ? undefined : (t?.walkAcks || []).find((a) => a.key === key);
+      teacherDays.push({ ...r, key, ack, accepted: !!ack, teacherId: tid, name: t?.name || tid, group: t?.department || '(ไม่ระบุกลุ่มสาระฯ)' });
     }
   }
 
@@ -245,12 +264,14 @@ export function analyzeWalking(input: WalkInput): WalkReport {
         stops.push({ ...list[0], period: p });
       }
       const r = analyzeDay(day, stops, positions, opts, lunchFor(g.id, day));
-      classDays.push({ ...r, gradeLevelId: g.id, name: g.name, group: (parent || g).name });
+      const key = walkKey('c', g.id, day, stops);
+      const ack = r.severity === 'ok' ? undefined : (g.walkAcks || []).find((a) => a.key === key);
+      classDays.push({ ...r, key, ack, accepted: !!ack, gradeLevelId: g.id, name: g.name, group: (parent || g).name });
     }
   }
 
-  const order = (a: DayResult, b: DayResult) =>
-    RANK[b.severity] - RANK[a.severity] || b.maxCost - a.maxCost || b.switches - a.switches ||
+  const order = (a: DayResult & AckInfo, b: DayResult & AckInfo) =>
+    RANK[effectiveSeverity(b)] - RANK[effectiveSeverity(a)] || RANK[b.severity] - RANK[a.severity] || b.maxCost - a.maxCost || b.switches - a.switches ||
     DAY_ORDER.indexOf(a.day) - DAY_ORDER.indexOf(b.day);
   teacherDays.sort(order);
   classDays.sort(order);

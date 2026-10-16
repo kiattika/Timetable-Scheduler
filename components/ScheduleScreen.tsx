@@ -2689,7 +2689,7 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
 
       <Modal isOpen={isWalkModalOpen} onClose={() => setIsWalkModalOpen(false)} title="🚶 ตรวจการเดินระหว่างคาบ" size="2xl">
         <div className="overflow-y-auto" style={{ maxHeight: '75vh' }}>
-          <WalkingCheckScreen appData={appData} />
+          <WalkingCheckScreen appData={appData} setAppData={setAppData as any} />
         </div>
       </Modal>
 

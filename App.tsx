@@ -717,7 +717,7 @@ const App: React.FC = () => {
         case 'adminSettings':
              return <AdminSettingsScreen appData={appData} setAppData={setAppData as any} setCurrentView={setCurrentView} />;
         case 'walkingCheck':
-             return <WalkingCheckScreen appData={appData} onOpenCampusMap={() => setCurrentManageDataSubView('campusMap')} />;
+             return <WalkingCheckScreen appData={appData} setAppData={setAppData as any} onOpenCampusMap={() => setCurrentManageDataSubView('campusMap')} />;
         case 'campusMap':
              return <CampusMapScreen appData={appData} setAppData={setAppData as any} />;
         case 'systemHealth':

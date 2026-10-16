@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { analyzeWalking, analyzeDay, legCost, DEFAULT_WALK_OPTIONS } from '../utils/walkingCheck';
+import { analyzeWalking, analyzeDay, legCost, effectiveSeverity, DEFAULT_WALK_OPTIONS } from '../utils/walkingCheck';
 import { parseGridText, buildingPositions } from '../utils/buildings';
 
 // school layout: 9 on top, 1 below it, 5 | 2 | 6 ... (rotated as on the real map)
@@ -139,5 +139,32 @@ describe('lunch splits the day', () => {
   it('a lunch entry placed for the class also counts as a break', () => {
     const entries = [...day, e('t1', 'Monday', 5, undefined, 'm11', { subjectId: 'lunch' })];
     expect(run(entries, undefined, false).teacherDays[0].segments).toHaveLength(2);
+  });
+});
+
+describe('acceptance (ผู้สอนรับได้)', () => {
+  const entries = () => [e('t1', 'Monday', 0, 'r931'), e('t1', 'Monday', 1, 'r411')];
+  const keyOf = () => run(entries()).teacherDays[0].key;
+  const withAck = (key: string, ents = entries()) => analyzeWalking({
+    entries: ents, rooms, teachers: [{ ...teachers[0], walkAcks: [{ key, level: 'risk', by: 'x', at: '2026-01-01T00:00:00Z', note: 'ok' }] }, teachers[1]] as any,
+    gradeLevels: grades, subjects, periods, grid,
+  }).teacherDays[0];
+  it('a matching acceptance turns the row green but keeps the original level', () => {
+    const d = withAck(keyOf());
+    expect(d.accepted).toBe(true);
+    expect(d.severity).toBe('risk');
+    expect(effectiveSeverity(d)).toBe('ok');
+  });
+  it('moving a period (the day changes) voids the acceptance', () => {
+    const d = withAck(keyOf(), [e('t1', 'Monday', 0, 'r931'), e('t1', 'Monday', 2, 'r411')]);
+    expect(d.accepted).toBe(false);
+  });
+  it('changing a room to another building voids it too', () => {
+    const d = withAck(keyOf(), [e('t1', 'Monday', 0, 'r931'), e('t1', 'Monday', 1, 'r111')]);
+    expect(d.accepted).toBe(false);
+  });
+  it('flagged cells are marked at the arrival period', () => {
+    const d = run(entries()).teacherDays[0];
+    expect(d.marks).toEqual([expect.objectContaining({ period: 1, severity: 'risk' })]);
   });
 });

@@ -16,12 +16,22 @@ export interface Identifiable {
   id: string;
 }
 
+/** A department head / manager recorded that the person (or class) accepts a flagged walking pattern. Valid only while `key` still matches. */
+export interface WalkAck {
+  key: string;
+  level: 'watch' | 'risk';
+  by: string;
+  at: string; // ISO time
+  note?: string;
+}
+
 export interface Teacher extends Identifiable {
   name: string; // ชื่อ-สกุล
   teacherCode?: string; // รหัสครู
   department?: string; // กลุ่มสาระการเรียนรู้
   homeroomGradeLevelIds?: string[]; // Changed: ครูที่ปรึกษาประจำชั้น (can be multiple)
   email?: string; // Added: Email for the teacher
+  walkAcks?: WalkAck[]; // ตรวจการเดิน: รายการที่ผู้สอนรับได้
 }
 
 export type SubjectTeachingMode = 'single' | 'multiple';
@@ -50,6 +60,7 @@ export interface GradeLevel extends Identifiable {
   name: string; 
   homeroomPhysicalRoomId?: string; // ID of the homeroom physical room for this specific grade
   description?: string; // Added: Description for the classroom
+  walkAcks?: WalkAck[]; // ตรวจการเดิน: รายการที่รับได้
 }
 
 export interface Department extends Identifiable {
