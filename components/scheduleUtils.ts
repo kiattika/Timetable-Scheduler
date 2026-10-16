@@ -74,6 +74,14 @@ export const isChildOf = (childGradeLevelId: string, parentGradeLevelId: string,
     return parentIdFromName === parentGradeLevelId;
 };
 
+/**
+ * True when a schedule entry placed on `entryGradeId` already covers the class a teacher is homeroom advisor of:
+ * the entry sits on that very class, or on its parent level (e.g. M.1 for a teacher whose homeroom is M.1/2 — how
+ * level-wide activities are scheduled). Such an entry is NOT a "homeroom changed" discrepancy.
+ */
+export const entryCoversHomeroom = (entryGradeId: string, homeroomGradeIds: string[] | undefined, allGradeLevels: GradeLevel[]): boolean =>
+    (homeroomGradeIds || []).some(h => h === entryGradeId || isChildOf(h, entryGradeId, allGradeLevels));
+
 // Excludes rooms already booked by a DIFFERENT schedule entry at the same day+period.
 // `excludeEntryId` lets an in-progress edit keep showing its own current room as available.
 export const getAvailablePhysicalRooms = (

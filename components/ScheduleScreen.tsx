@@ -16,7 +16,7 @@ import SlotAvailabilityInspectorModal from './SlotAvailabilityInspectorModal';
 import { AuditModal } from './AuditModal';
 import { WalkingCheckScreen, computeWalkReport, countWalkingRisks, makeWalkMarkGetter } from './WalkingCheckScreen';
 import { usePersistedState } from '../utils/usePersistedState';
-import { getParentGradeLevelId, getChildGradeLevelIds, isParentGrade, isChildOf, isSharable, getAvailablePhysicalRooms, isLunchPeriodForGrade } from './scheduleUtils';
+import { getParentGradeLevelId, getChildGradeLevelIds, isParentGrade, isChildOf, isSharable, getAvailablePhysicalRooms, isLunchPeriodForGrade, entryCoversHomeroom } from './scheduleUtils';
 import { useTouchDrag } from '../hooks/useTouchDrag';
 import { ReviewWizardModal, Discrepancy, DetailRow } from './ReviewWizardModal';
 
@@ -245,7 +245,11 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
       ];
 
       // Check 1: Teacher's homeroom changed
-      if (subject.isHomeroomAdvisorySubject && teacher) {
+      // Not a discrepancy when the entry is on the parent level (e.g. M.1) of a class that one of its teachers advises —
+      // that is how level-wide activities are scheduled.
+      const coversTeacherHomeroom = entry.teacherIds.some(tid =>
+        entryCoversHomeroom(entry.gradeLevelId, teachers.find(t => t.id === tid)?.homeroomGradeLevelIds, gradeLevels));
+      if (subject.isHomeroomAdvisorySubject && teacher && !coversTeacherHomeroom) {
         const firstHomeroomId = teacher.homeroomGradeLevelIds?.[0];
         if (firstHomeroomId && entry.gradeLevelId !== firstHomeroomId && entry.ackedHomeroomGradeId !== firstHomeroomId) {
           const targetGrade = gradeLevels.find(gl => gl.id === firstHomeroomId);
