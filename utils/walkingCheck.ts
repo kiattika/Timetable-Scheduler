@@ -49,8 +49,8 @@ export interface DayResult {
   stops: Stop[];
   /** stops split at the lunch break: [before lunch, after lunch]; a single group when there is no lunch in between */
   segments: Stop[][];
-  switches: number;       // building changes over the whole day
-  maxSegmentSwitches: number; // worst single stretch between breaks (this is what the thresholds judge)
+  switches: number;       // building changes over the whole day (information only)
+  maxSegmentSwitches: number; // back-to-back building changes in the worst stretch between breaks (this is what the thresholds judge)
   legs: Leg[];            // back-to-back moves that actually go somewhere else
   pingPong: { periods: [number, number, number]; labels: [string, string, string] }[];
   severity: Severity;
@@ -77,7 +77,8 @@ export function analyzeDay(day: string, stops: Stop[], positions: Map<string, Gr
     const prev = last?.[last.length - 1];
     if (!prev || breaks.some((b) => prev.period < b && b < st.period)) segments.push([st]); else last.push(st);
   }
-  const segSwitches = segments.map((seg) => seg.reduce((n, st, i) => n + (i > 0 && seg[i - 1].loc.building !== st.loc.building ? 1 : 0), 0));
+  // Only moves between back-to-back periods count towards the "too many moves" limit: a free period in between is time to walk.
+  const segSwitches = segments.map((seg) => seg.reduce((n, st, i) => n + (i > 0 && st.period - seg[i - 1].period === 1 && seg[i - 1].loc.building !== st.loc.building ? 1 : 0), 0));
   const maxSegmentSwitches = segSwitches.reduce((m, n) => Math.max(m, n), 0);
   const segName = (i: number) => (segments.length === 1 ? '' : segments.length === 2 ? (i === 0 ? ' ก่อนพักกลางวัน' : ' หลังพักกลางวัน') : ` ช่วงที่ ${i + 1}`);
   let severity: Severity = 'ok';

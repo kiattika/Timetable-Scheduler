@@ -6,7 +6,7 @@ import { parseGridText, buildingPositions } from '../utils/buildings';
 const grid = parseGridText(',9,\n,1,\n5,2,6\n,3,7\n,4,8');
 const { positions } = buildingPositions(grid);
 const room = (id: string, code: string, extra: any = {}) => ({ id, code, name: code, type: 'x', ...extra });
-const rooms: any[] = [room('r931', '931'), room('r111', '111'), room('r411', '411'), room('r211', '211'), room('r921', '921'), room('r911', '911')];
+const rooms: any[] = [room('r931', '931'), room('r111', '111'), room('r411', '411'), room('r211', '211'), room('r921', '921'), room('r911', '911'), room('r311', '311')];
 const teachers: any[] = [{ id: 't1', name: 'ครูหนึ่ง', department: 'คณิต' }, { id: 't2', name: 'ครูสอง', department: 'ไทย' }];
 const grades: any[] = [{ id: 'm1', name: 'M.1' }, { id: 'm11', name: 'M.1/1', homeroomPhysicalRoomId: 'r111' }, { id: 'm12', name: 'M.1/2', homeroomPhysicalRoomId: 'r211' }];
 const subjects: any[] = [{ id: 's', name: 'วิชา', periodsPerWeek: 1 }, { id: 'lunch', name: 'พักกลางวัน' }];
@@ -52,12 +52,24 @@ describe('teacher checks', () => {
     expect(d.pingPong).toHaveLength(1);
     expect(d.severity).not.toBe('ok');
   });
-  it('many building switches in a day', () => {
-    const d = run([
-      e('t1', 'Friday', 0, 'r111'), e('t1', 'Friday', 2, 'r211'), e('t1', 'Friday', 4, 'r111'),
-      e('t1', 'Friday', 6, 'r211'),
-    ], undefined, false).teacherDays[0];
-    expect(d.switches).toBe(3);
+  it('many back-to-back building changes in a stretch', () => {
+    const d = run([0, 1, 2, 3].map((p, i) => e('t1', 'Friday', p, i % 2 === 0 ? 'r111' : 'r211')), { switchWatch: 3, switchRisk: 9 }).teacherDays[0];
+    expect(d.maxSegmentSwitches).toBe(3);
+    expect(d.reasons.join()).toContain('ย้ายอาคาร 3 ครั้ง');
+  });
+  it('changes separated by a free period do not count as moves (time to walk)', () => {
+    const d = run([0, 2, 4, 6].map((p, i) => e('t1', 'Friday', p, i % 2 === 0 ? 'r111' : 'r211')), undefined, false).teacherDays[0];
+    expect(d.maxSegmentSwitches).toBe(0);
+    expect(d.severity).toBe('ok');
+  });
+  it('free period between buildings is normal: P1 building 4, P2 free, P3-P4 building 9', () => {
+    const d = run([e('t1', 'Monday', 1, 'r411'), e('t1', 'Monday', 3, 'r911'), e('t1', 'Monday', 4, 'r911')]).teacherDays[0];
+    expect(d.legs).toHaveLength(0);
+    expect(d.severity).toBe('ok');
+  });
+  it('building 3 -> 9 back to back, free period, back to 3 is "ควรดู" (not ok, not risk)', () => {
+    const d = run([e('t1', 'Monday', 1, 'r311'), e('t1', 'Monday', 2, 'r911'), e('t1', 'Monday', 4, 'r311')]).teacherDays[0];
+    expect(d.legs).toHaveLength(1);
     expect(d.severity).toBe('watch');
   });
   it('entry without a room uses the class homeroom', () => {
@@ -108,20 +120,20 @@ it('thresholds are adjustable', () => {
 });
 
 describe('lunch splits the day', () => {
-  const day = [0, 2, 4, 6, 8, 10].map((p, i) => e('t1', 'Monday', p, i % 2 === 0 ? 'r111' : 'r211'));
-  it('without lunch info 5 building changes is risk', () => {
-    expect(run(day, undefined, false).teacherDays[0].severity).toBe('risk');
+  // morning P0-P4 alternate between buildings 1 and 2 back to back, afternoon P6-P9 too
+  const day = [0, 1, 2, 3, 4, 6, 7, 8, 9].map((p, i) => e('t1', 'Monday', p, i % 2 === 0 ? 'r111' : 'r211'));
+  it('without lunch info the break is just a 1-period gap and the stretch is the whole day', () => {
+    const d = run(day, undefined, false).teacherDays[0];
+    expect(d.segments).toHaveLength(1);
+    expect(d.maxSegmentSwitches).toBe(7);
   });
   it('with lunch at P5 the two halves are judged separately', () => {
     const d = run(day).teacherDays[0];
-    expect(d.segments.map((s) => s.length)).toEqual([3, 3]);
-    expect(d.switches).toBe(5);
-    expect(d.maxSegmentSwitches).toBe(2);
-    expect(d.severity).toBe('ok');
+    expect(d.segments.map((s) => s.length)).toEqual([5, 4]);
+    expect(d.maxSegmentSwitches).toBe(4);
   });
   it('a stretch of switches before lunch is named in the reason', () => {
-    const d = run([0, 2, 4, 6].map((p, i) => e('t1', 'Monday', p, i % 2 === 0 ? 'r111' : 'r211')), { switchWatch: 2, switchRisk: 9 }).teacherDays[0];
-    expect(d.severity).toBe('watch');
+    const d = run([0, 1, 2].map((p, i) => e('t1', 'Monday', p, i % 2 === 0 ? 'r111' : 'r211')).concat([e('t1', 'Monday', 6, 'r111')]), { switchWatch: 2, switchRisk: 9 }).teacherDays[0];
     expect(d.reasons.join()).toContain('ก่อนพักกลางวัน');
   });
   it('a lunch entry placed for the class also counts as a break', () => {

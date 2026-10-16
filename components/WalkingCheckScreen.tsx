@@ -133,7 +133,7 @@ export const WalkingCheckScreen: React.FC<Props> = ({ appData, onOpenCampusMap }
         <div className="bg-white border border-slate-200 rounded-xl p-4 grid grid-cols-2 md:grid-cols-5 gap-3 text-sm">
           {([
             ['floorWeight', 'ค่าบันไดต่อชั้น'], ['watch', 'ควรดู (ระยะ ≥)'], ['risk', 'เสี่ยง (ระยะ ≥)'],
-            ['switchWatch', 'ย้ายอาคาร/วัน ควรดู'], ['switchRisk', 'ย้ายอาคาร/วัน เสี่ยง'],
+            ['switchWatch', 'ย้ายอาคารคาบติดกัน ควรดู (ครั้ง/ช่วง)'], ['switchRisk', 'ย้ายอาคารคาบติดกัน เสี่ยง (ครั้ง/ช่วง)'],
           ] as [keyof WalkOptions, string][]).map(([k, label]) => (
             <label key={k} className="flex flex-col gap-1">
               <span className="text-slate-600">{label}</span>
