@@ -937,6 +937,9 @@ export const assistantUpdateEntity = functions.https.onCall(async (
   // Department authorization against a plain (non-transactional, lock-free) read.
   const authorize = (appDoc: Record<string, any>, existing: any, effectiveOp: 'create' | 'update' | 'delete') => {
     if (!isAssistant) return;
+    // Schedule entries: an assistant may arrange the whole school's timetable (agreed policy). Department scope
+    // still applies to teachers / subjects / teacherSubjectAssignments below. Role, org claim and quota checks above still apply.
+    if (type === 'scheduleEntries') return;
     if (assignedDepartments.length === 0) {
       throw new functions.https.HttpsError('permission-denied', 'No departments assigned to this account.');
     }

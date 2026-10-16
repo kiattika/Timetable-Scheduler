@@ -442,15 +442,7 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
             alert("Only managers can edit entries for parent grade levels.");
             return;
         }
-        if (appData.currentUser?.role === 'assistant') {
-            const assignedDepts = appData.currentUser?.assignedDepartments || [];
-            const entryTeachers = entry.teacherIds.map(tid => appData.teachers.find(t => t.id === tid));
-            const hasAccess = entryTeachers.some(t => t?.department && assignedDepts.includes(t.department));
-            if (!hasAccess) {
-              alert("คุณไม่สามารถแก้ไขตารางสอนของกลุ่มสาระที่คุณไม่ได้ดูแลได้");
-              return;
-            }
-        }
+    // assistants may edit the whole school's schedule (department scope applies to teachers / subjects / assignments only)
     }
 
     closeContextMenu();
@@ -544,15 +536,7 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
       alert("You do not have permission to clear schedule entries.");
       return;
     }
-    if (appData.currentUser?.role === 'assistant') {
-      const assignedDepts = appData.currentUser?.assignedDepartments || [];
-      const entryTeachers = entryToClearDetails.teacherIds.map(tid => appData.teachers.find(t => t.id === tid));
-      const hasAccess = entryTeachers.some(t => t?.department && assignedDepts.includes(t.department));
-      if (!hasAccess) {
-        alert("คุณไม่สามารถลบตารางสอนของกลุ่มสาระที่คุณไม่ได้ดูแลได้");
-        return;
-      }
-    }
+    // assistants may edit the whole school's schedule (department scope applies to teachers / subjects / assignments only)
 
     setEntryToClearId(entryId);
     setIsConfirmClearModalOpen(true);
@@ -686,15 +670,7 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
     }
     if (!copiedScheduleEntryData || !permissions.canModifyScheduleEntries) return;
 
-    if (appData.currentUser?.role === 'assistant') {
-      const assignedDepts = appData.currentUser?.assignedDepartments || [];
-      const entryTeachers = copiedScheduleEntryData.teacherIds.map(tid => appData.teachers.find(t => t.id === tid));
-      const hasAccess = entryTeachers.some(t => t?.department && assignedDepts.includes(t.department));
-      if (!hasAccess) {
-        alert("คุณไม่สามารถวางตารางสอนของกลุ่มสาระที่คุณไม่ได้ดูแลได้");
-        return;
-      }
-    }
+    // assistants may edit the whole school's schedule (department scope applies to teachers / subjects / assignments only)
 
     let { gradeLevelId, subjectId, teacherIds, physicalRoomId } = copiedScheduleEntryData;
     const { day: targetDay, period: targetPeriod, viewType } = targetSlotInfo;
@@ -875,12 +851,7 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
           return Array.from(depts);
       };
 
-      const hasAssistantAccess = (entryItem: ScheduleEntry) => {
-          if (!isAssistant) return true;
-          if (assignedDepts.length === 0) return false;
-          const depts = getEntryDepts(entryItem);
-          return depts.some(d => assignedDepts.includes(d));
-      };
+      const hasAssistantAccess = (_entryItem: ScheduleEntry) => true; // assistants may edit the whole school's schedule
 
       let canEditThisEntry = isInheritedEntryFromParent ? false : (isParentGrade(existingEntry.gradeLevelId, gradeLevels) 
                                 ? permissions.canPerformManagerActions 
@@ -954,12 +925,7 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
         return Array.from(depts);
     };
 
-    const hasAssistantAccess = (entryItem: ScheduleEntry) => {
-        if (!isAssistant) return true;
-        if (assignedDepts.length === 0) return false;
-        const depts = getEntryDepts(entryItem);
-        return depts.some(d => assignedDepts.includes(d));
-    };
+    const hasAssistantAccess = (_entryItem: ScheduleEntry) => true; // assistants may edit the whole school's schedule
 
     if (copiedScheduleEntryData && !existingEntry) { 
       let canPasteEntry = permissions.canModifyScheduleEntries;
@@ -1393,15 +1359,7 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
         event.preventDefault(); 
         return;
     }
-    if (appData.currentUser?.role === 'assistant') {
-      const assignedDepts = appData.currentUser?.assignedDepartments || [];
-      const entryTeachers = entryData.teacherIds.map(tid => appData.teachers.find(t => t.id === tid));
-      const hasAccess = entryTeachers.some(t => t?.department && assignedDepts.includes(t.department));
-      if (!hasAccess) {
-        event.preventDefault(); 
-        return;
-      }
-    }
+    // assistants may edit the whole school's schedule (department scope applies to teachers / subjects / assignments only)
 
     const bundledEntries = scheduleEntries.filter(e => 
         e.day === entryData.day && 
@@ -1986,10 +1944,6 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
 
     if (subjectDetails?.type === 'TEACHER_ONLY') {
         let eligible = [...teachers];
-        if (appData.currentUser?.role === 'assistant') {
-            const assignedDepts = appData.currentUser?.assignedDepartments || [];
-            eligible = eligible.filter(t => t.department && assignedDepts.includes(t.department));
-        }
         return sortMatchedTeachers(eligible);
     }
 
@@ -2008,10 +1962,6 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
             advisoryTeachers = teachers.filter(t => t.homeroomGradeLevelIds?.includes(targetGradeId));
         }
 
-        if (appData.currentUser?.role === 'assistant') {
-            const assignedDepts = appData.currentUser?.assignedDepartments || [];
-            advisoryTeachers = advisoryTeachers.filter(t => t.department && assignedDepts.includes(t.department));
-        }
         return sortMatchedTeachers(advisoryTeachers);
     }
 
@@ -2025,10 +1975,6 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
             }
         });
         let broadTeachers = teachers.filter(t => autoTeacherIds.has(t.id));
-        if (appData.currentUser?.role === 'assistant') {
-            const assignedDepts = appData.currentUser?.assignedDepartments || [];
-            broadTeachers = broadTeachers.filter(t => t.department && assignedDepts.includes(t.department));
-        }
         return sortMatchedTeachers(broadTeachers);
     }
 
@@ -2060,10 +2006,6 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
     const teacherIdsFromLinks = new Set(relevantAssignments.map(tsa => tsa.teacherId));
     let eligibleTeachers = teachers.filter(t => teacherIdsFromLinks.has(t.id));
 
-    if (appData.currentUser?.role === 'assistant') {
-        const assignedDepts = appData.currentUser?.assignedDepartments || [];
-        eligibleTeachers = eligibleTeachers.filter(t => t.department && assignedDepts.includes(t.department));
-    }
     return sortMatchedTeachers(eligibleTeachers);
 
   }, [assignmentModalContext, currentAssignment.subjectId, currentAssignment.gradeLevelId, teachers, subjects, teacherSubjectAssignments, gradeLevels]);
