@@ -41,3 +41,21 @@ export function makeDailyBuckets(nowMs: number, days: number): Record<string, Da
 export function dateKeyForPoint(endSeconds: number, alignmentSeconds: number = HOUR_S): string {
   return bangkokDateKey((endSeconds - alignmentSeconds / 2) * 1000);
 }
+
+/**
+ * Decide whether a Monitoring time series belongs to the wanted Firestore database, from the
+ * series' own monitored-resource labels. (Filtering inside the Monitoring filter string is brittle
+ * — the label/resource combination differs between metric versions and an invalid one makes the
+ * whole query fail with INVALID_ARGUMENT — so the filtering is done here instead.)
+ *   'match'     -> database_id equals `wanted`
+ *   'other'     -> a different database
+ *   'unlabeled' -> the series carries no database_id at all (cannot tell; caller keeps it)
+ */
+export function classifySeriesDatabase(
+  labels: Record<string, string> | null | undefined,
+  wanted: string,
+): 'match' | 'other' | 'unlabeled' {
+  const id = labels && typeof labels === 'object' ? labels.database_id : undefined;
+  if (typeof id !== 'string' || id === '') return 'unlabeled';
+  return id === wanted ? 'match' : 'other';
+}

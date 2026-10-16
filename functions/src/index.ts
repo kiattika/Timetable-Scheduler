@@ -3,7 +3,7 @@ import { initializeApp, getApps, getApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import { MetricServiceClient } from '@google-cloud/monitoring';
-import { bangkokDateKey, bangkokMidnightMs, makeDailyBuckets, dateKeyForPoint } from './usageBuckets';
+import { bangkokDateKey, bangkokMidnightMs, makeDailyBuckets, dateKeyForPoint, classifySeriesDatabase } from './usageBuckets';
 import { randomUUID } from 'crypto';
 import {
   applyOrgChanges,
@@ -480,6 +480,8 @@ export const getFirestoreUsageStats = functions.https.onCall(async (data: { days
 
   const metricErrors: string[] = [];
   let seriesFound = 0;
+  const databasesSeen = new Set<string>();
+  let unlabeledIncluded = false;
 
   try {
     const monitoringClient = new MetricServiceClient();
@@ -489,25 +491,31 @@ export const getFirestoreUsageStats = functions.https.onCall(async (data: { days
       try {
         const request = {
           name: projectName,
-          filter:
-            `metric.type = "${metricDef.type}"` +
-            (databaseId ? ` AND resource.labels.database_id = "${databaseId}"` : ''),
+          // Filter on the metric only; the database is picked per series below (see classifySeriesDatabase).
+          filter: `metric.type = "${metricDef.type}"`,
           interval: {
             startTime: { seconds: startTimeSeconds },
             endTime: { seconds: endTimeSeconds }
           },
           aggregation: {
             alignmentPeriod: { seconds: ALIGN_SECONDS },
-            perSeriesAligner: 'ALIGN_SUM',
-            crossSeriesReducer: 'REDUCE_SUM'
+            perSeriesAligner: 'ALIGN_SUM'
+            // no crossSeriesReducer: keep one series per database so we can tell them apart
           }
         };
 
         const [timeSeries] = await monitoringClient.listTimeSeries(request as any);
 
         if (timeSeries && Array.isArray(timeSeries)) {
-          seriesFound += timeSeries.length;
           for (const series of timeSeries) {
+            const resLabels = (series.resource?.labels || null) as Record<string, string> | null;
+            if (resLabels?.database_id) databasesSeen.add(resLabels.database_id);
+            if (databaseId) {
+              const cls = classifySeriesDatabase(resLabels, databaseId);
+              if (cls === 'other') continue;
+              if (cls === 'unlabeled') unlabeledIncluded = true;
+            }
+            seriesFound += 1;
             if (series.points && Array.isArray(series.points)) {
               for (const point of series.points) {
                 const pointEndTime = point.interval?.endTime?.seconds;
@@ -554,6 +562,8 @@ export const getFirestoreUsageStats = functions.https.onCall(async (data: { days
       bucketing: 'calendar-day-bangkok',
       databaseId: databaseId || null,
       seriesFound,
+      databasesSeen: [...databasesSeen].sort(),
+      databaseFilterApplied: !!databaseId && !unlabeledIncluded,
       metricErrors,
       todayDate: bangkokDateKey(nowMs),
       timeRange: {

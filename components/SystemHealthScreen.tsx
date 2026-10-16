@@ -630,6 +630,12 @@ export const SystemHealthScreen: React.FC<SystemHealthScreenProps> = ({
                     <span>ดึงบาง Metric ไม่สำเร็จ ตัวเลขที่เป็น 0 อาจไม่ใช่ค่าจริง: {usageStats.metricErrors.join(' | ')}</span>
                   </div>
                 )}
+                {usageStats.bucketing && usageStats.databaseId && usageStats.databasesSeen && usageStats.databasesSeen.length > 0 && !usageStats.databasesSeen.includes(usageStats.databaseId) && (
+                  <div className="p-3 bg-amber-50 border border-amber-300 rounded-xl text-xs text-amber-900 flex items-start gap-2">
+                    <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                    <span>ไม่พบ Metric ของฐานข้อมูล <code>{usageStats.databaseId}</code> — ในโปรเจกต์นี้พบเฉพาะ: {usageStats.databasesSeen.join(', ')} ตรวจว่า VITE_FIREBASE_DATABASE_ID ตรงกับฐานที่ใช้จริง</span>
+                  </div>
+                )}
                 {usageStats.bucketing && usageStats.seriesFound === 0 && (
                   <div className="p-3 bg-amber-50 border border-amber-300 rounded-xl text-xs text-amber-900 flex items-start gap-2">
                     <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />

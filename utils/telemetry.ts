@@ -34,6 +34,8 @@ export interface FirestoreUsageResponse {
   bucketing?: 'calendar-day-bangkok';
   databaseId?: string | null;
   seriesFound?: number;
+  databasesSeen?: string[];
+  databaseFilterApplied?: boolean;
   metricErrors?: string[];
   todayDate?: string;
 }

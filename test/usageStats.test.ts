@@ -57,3 +57,16 @@ describe('splitBeforeAfter', () => {
     expect(z.deltaPercent.reads).toBeNull();
   });
 });
+
+import { classifySeriesDatabase } from '../functions/src/usageBuckets';
+describe('classifySeriesDatabase', () => {
+  it('matches by database_id label', () => {
+    expect(classifySeriesDatabase({ database_id: 'smartschool' }, 'smartschool')).toBe('match');
+    expect(classifySeriesDatabase({ database_id: '(default)' }, 'smartschool')).toBe('other');
+  });
+  it('keeps series that carry no database_id (cannot tell)', () => {
+    expect(classifySeriesDatabase({}, 'smartschool')).toBe('unlabeled');
+    expect(classifySeriesDatabase(null, 'smartschool')).toBe('unlabeled');
+    expect(classifySeriesDatabase(undefined, 'smartschool')).toBe('unlabeled');
+  });
+});
