@@ -14,7 +14,7 @@ import ContextMenu from './ContextMenu';
 import GradeLevelPlannerView from './GradeLevelPlannerView'; 
 import SlotAvailabilityInspectorModal from './SlotAvailabilityInspectorModal'; 
 import { AuditModal } from './AuditModal';
-import { WalkingCheckScreen, countWalkingRisks } from './WalkingCheckScreen';
+import { WalkingCheckScreen, computeWalkReport, countWalkingRisks, makeWalkMarkGetter } from './WalkingCheckScreen';
 import { usePersistedState } from '../utils/usePersistedState';
 import { getParentGradeLevelId, getChildGradeLevelIds, isParentGrade, isChildOf, isSharable, getAvailablePhysicalRooms, isLunchPeriodForGrade } from './scheduleUtils';
 import { useTouchDrag } from '../hooks/useTouchDrag';
@@ -61,7 +61,10 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
   const [isScheduleVisible, setIsScheduleVisible] = useState<boolean>(true);
   const [isAuditModalOpen, setIsAuditModalOpen] = useState<boolean>(false);
   const [isWalkModalOpen, setIsWalkModalOpen] = useState<boolean>(false);
-  const walkRisks = useMemo(() => countWalkingRisks(appData), [appData.scheduleEntries, appData.physicalRooms, appData.teachers, appData.gradeLevels, appData.subjects, appData.periodSettings, appData.organizationSettings, appData.currentUser]);
+  const [walkOptVer, setWalkOptVer] = useState(0); // bumped when thresholds change in the modal
+  const walkReport = useMemo(() => computeWalkReport(appData), [appData.scheduleEntries, appData.physicalRooms, appData.teachers, appData.gradeLevels, appData.subjects, appData.periodSettings, appData.organizationSettings?.buildingGrid, walkOptVer]);
+  const walkRisks = useMemo(() => countWalkingRisks(walkReport, appData), [walkReport, appData.currentUser]);
+  const getWalkMark = useMemo(() => makeWalkMarkGetter(walkReport, appData), [walkReport, appData.currentUser]);
   const [isReviewModalOpen, setIsReviewModalOpen] = useState<boolean>(false);
   const [ignoredDiscrepancyIds, setIgnoredDiscrepancyIds] = useState<string[]>([]);
 
@@ -2424,6 +2427,7 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
     isScheduleVisible,
     setIsScheduleVisible,
     openPrintOptionsModal, // Pass this down
+    getWalkMark,
   };
 
 
@@ -2689,7 +2693,7 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
 
       <Modal isOpen={isWalkModalOpen} onClose={() => setIsWalkModalOpen(false)} title="🚶 ตรวจการเดินระหว่างคาบ" size="2xl">
         <div className="overflow-y-auto" style={{ maxHeight: '75vh' }}>
-          <WalkingCheckScreen appData={appData} setAppData={setAppData as any} />
+          <WalkingCheckScreen appData={appData} setAppData={setAppData as any} onOptionsChange={() => setWalkOptVer((v) => v + 1)} />
         </div>
       </Modal>
 

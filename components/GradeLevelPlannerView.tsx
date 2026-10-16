@@ -4,7 +4,8 @@ import { thaiGradeName } from '../utils/subjectCode';
 
 import React, { useState, useMemo, useEffect, DragEvent, MouseEvent as ReactMouseEvent } from 'react';
 import { usePersistedState } from '../utils/usePersistedState';
-import { AppData, DayOfWeek, PeriodSetting, ScheduleEntry, Subject, Teacher, PhysicalRoom, GradeLevel, AssignmentModalContext, ContextMenuTargetInfo, ScreenAccessProps, OrganizationSettings, SingleScheduleTableProps, PrintWithOptionsModalProps } from '../types';
+import { AppData, DayOfWeek, PeriodSetting, ScheduleEntry, Subject, Teacher, PhysicalRoom, GradeLevel, AssignmentModalContext, ContextMenuTargetInfo, ScreenAccessProps, OrganizationSettings, SingleScheduleTableProps, PrintWithOptionsModalProps, WalkMarkGetter } from '../types';
+import { WalkDot } from './WalkDot';
 import { DAYS_OF_WEEK_ORDERED, Icons } from '../constants';
 import { isParentGrade as checkIsParentGradeUtil, getParentGradeLevelId as getParentIdUtil, isLunchPeriodForGrade } from './scheduleUtils';
 import Modal from './Modal';
@@ -43,7 +44,7 @@ export const GradeLevelScheduleTable: React.FC<SingleScheduleTableProps & {
   handleSlotContextMenu, onSlotSelect, openAssignmentModal,
   handleLocalDragStart, handleLocalDragOver, handleLocalDragLeave, handleLocalDrop, handleDragEnd,
   draggedEntryId, permissions, gradeHierarchyHelpers, isPrint, selectedCohort,
-  startTouchDrag, handleTouchMove, finishTouchDrag
+  startTouchDrag, handleTouchMove, finishTouchDrag, getWalkMark
 }) => {
   const { gradeLevels } = appData;
   const scheduleEntries = Array.isArray(appData.scheduleEntries) ? appData.scheduleEntries : [];
@@ -176,6 +177,7 @@ export const GradeLevelScheduleTable: React.FC<SingleScheduleTableProps & {
             if (e.key === 'Enter' || e.key === ' ') onSlotSelect(day, periodIndex);
           }}
         >
+        {!isPrint && selectedGradeLevelId && <WalkDot mark={getWalkMark?.('c', selectedGradeLevelId, day, periodIndex)} />}
         {cellEntries.length > 0 ? (
           <div className="flex flex-col gap-1 h-full print:gap-0 print:overflow-hidden">
             {cellEntries.map(entry => {
@@ -416,6 +418,7 @@ interface GradeLevelPlannerViewPropsExtended extends ScreenAccessProps {
   isScheduleVisible: boolean; 
   setIsScheduleVisible: React.Dispatch<React.SetStateAction<boolean>>;
   openPrintOptionsModal: (itemType: 'gradeLevel', currentItemId: string | null) => void;
+  getWalkMark?: WalkMarkGetter;
   onGradeBlockSelect?: (blockInfo: { gradeLevelId: string; day: DayOfWeek; period: number; teacherIds: string[], physicalRoomId?: string } | null) => void;
 }
 
@@ -658,6 +661,7 @@ const GradeLevelPlannerView: React.FC<GradeLevelPlannerViewPropsExtended> = (pro
        {isScheduleVisible && selectedGradeLevelId ? (
            <GradeLevelScheduleTable
              selectedCohort={selectedCohort}
+             getWalkMark={props.getWalkMark}
              appData={appData}
              periodSettings={periodSettings}
              itemId={selectedGradeLevelId}

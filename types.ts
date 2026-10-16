@@ -25,6 +25,10 @@ export interface WalkAck {
   note?: string;
 }
 
+/** Walking-check flag shown as a small dot in a timetable cell. */
+export interface WalkMark { severity: 'ok' | 'watch' | 'risk'; accepted: boolean; text: string }
+export type WalkMarkGetter = (kind: 't' | 'c', id: string, day: string, period: number) => WalkMark | null;
+
 export interface Teacher extends Identifiable {
   name: string; // ชื่อ-สกุล
   teacherCode?: string; // รหัสครู
@@ -352,4 +356,5 @@ export interface SingleScheduleTableProps {
   startTouchDrag?: (e: React.TouchEvent, entryId: string, entryData: ScheduleEntry) => void;
   handleTouchMove?: (e: React.TouchEvent) => void;
   finishTouchDrag?: (e: React.TouchEvent) => void;
+  getWalkMark?: WalkMarkGetter; // จุดสีเตือนการเดิน (ตรวจการเดิน) ในช่องตาราง
 }

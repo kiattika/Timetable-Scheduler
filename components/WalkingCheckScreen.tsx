@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
-import { AppData, WalkAck } from '../types';
-import { analyzeWalking, DEFAULT_WALK_OPTIONS, WalkOptions, Severity, DayResult, AckInfo, effectiveSeverity } from '../utils/walkingCheck';
+import { AppData, WalkAck, WalkMark, WalkMarkGetter } from '../types';
+import { analyzeWalking, DEFAULT_WALK_OPTIONS, WalkOptions, Severity, DayResult, AckInfo, WalkReport, effectiveSeverity } from '../utils/walkingCheck';
 import { gridFromStored } from '../utils/buildings';
 import { thaiGradeName } from '../utils/subjectCode';
 
@@ -16,7 +16,7 @@ const EDGE_CLASS: Record<Severity, string> = { ok: 'border-l-emerald-500', watch
 const DOT: Record<Severity, string> = { ok: '🟢', watch: '🟡', risk: '🔴' };
 const OPT_KEY = 'tt.walkOptions';
 
-const loadOptions = (): WalkOptions => {
+export const loadWalkOptions = (): WalkOptions => {
   try {
     const raw = localStorage.getItem(OPT_KEY);
     if (raw) return { ...DEFAULT_WALK_OPTIONS, ...JSON.parse(raw) };
@@ -30,16 +30,18 @@ interface Props {
   appData: AppData;
   setAppData?: React.Dispatch<React.SetStateAction<AppData | null>>;
   onOpenCampusMap?: () => void;
+  /** called after the thresholds are changed so other parts of the page can recompute */
+  onOptionsChange?: () => void;
 }
 
-export const WalkingCheckScreen: React.FC<Props> = ({ appData, setAppData, onOpenCampusMap }) => {
+export const WalkingCheckScreen: React.FC<Props> = ({ appData, setAppData, onOpenCampusMap, onOptionsChange }) => {
   const isAssistant = appData.currentUser?.role === 'assistant';
   const [tab, setTab] = useState<'teachers' | 'classes'>('teachers');
   const [group, setGroup] = useState('');
   const [filter, setFilter] = useState<'risk' | 'watch' | 'accepted' | 'all'>('watch');
   const [acceptingKey, setAcceptingKey] = useState<string | null>(null);
   const [noteDraft, setNoteDraft] = useState('');
-  const [options, setOptions] = useState<WalkOptions>(loadOptions);
+  const [options, setOptions] = useState<WalkOptions>(loadWalkOptions);
   const [showOpts, setShowOpts] = useState(false);
 
   const role = appData.currentUser?.role;
@@ -63,10 +65,12 @@ export const WalkingCheckScreen: React.FC<Props> = ({ appData, setAppData, onOpe
     const next = { ...options, [k]: n };
     setOptions(next);
     try { localStorage.setItem(OPT_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+    onOptionsChange?.();
   };
   const resetOpts = () => {
     setOptions({ ...DEFAULT_WALK_OPTIONS });
     try { localStorage.removeItem(OPT_KEY); } catch { /* ignore */ }
+    onOptionsChange?.();
   };
 
   if (!report) {
@@ -259,19 +263,48 @@ export const WalkingCheckScreen: React.FC<Props> = ({ appData, setAppData, onOpe
   );
 };
 
-/** Count of risky teacher/class days for the badge on the schedule page (same rules as the screen). */
-export const countWalkingRisks = (appData: AppData): number | null => {
+/** One analysis for the whole schedule page (badge + cell dots). null while no campus grid exists. */
+export const computeWalkReport = (appData: AppData): WalkReport | null => {
   const grid = gridFromStored((appData.organizationSettings as any)?.buildingGrid);
   if (grid.length === 0) return null;
-  let options = DEFAULT_WALK_OPTIONS;
-  try { const raw = localStorage.getItem(OPT_KEY); if (raw) options = { ...DEFAULT_WALK_OPTIONS, ...JSON.parse(raw) }; } catch { /* ignore */ }
-  const r = analyzeWalking({
+  return analyzeWalking({
     entries: appData.scheduleEntries || [], rooms: (appData.physicalRooms || []) as any, teachers: appData.teachers || [],
-    gradeLevels: appData.gradeLevels || [], subjects: appData.subjects || [], periods: appData.periodSettings || [], grid, options,
+    gradeLevels: appData.gradeLevels || [], subjects: appData.subjects || [], periods: appData.periodSettings || [], grid,
+    options: loadWalkOptions(),
   });
+};
+
+/** Which rows this user may see: assistants only their own departments' teachers; managers and above everything. */
+const visibleRows = (r: WalkReport, appData: AppData) => {
   const role = appData.currentUser?.role;
   const assigned = appData.currentUser?.assignedDepartments || [];
-  // assistants: only their own departments' teachers; managers and above: the whole school
-  if (role === 'assistant') return r.teacherDays.filter((x) => assigned.includes(x.group) && effectiveSeverity(x) === 'risk').length;
-  return r.teacherDays.filter((x) => effectiveSeverity(x) === 'risk').length + r.classDays.filter((x) => effectiveSeverity(x) === 'risk').length;
+  if (role === 'assistant') return { teachers: r.teacherDays.filter((x) => assigned.includes(x.group)), classes: [] as WalkReport['classDays'] };
+  return { teachers: r.teacherDays, classes: r.classDays };
 };
+
+export const countWalkingRisks = (r: WalkReport | null, appData: AppData): number | null => {
+  if (!r) return null;
+  const v = visibleRows(r, appData);
+  return [...v.teachers, ...v.classes].filter((x) => effectiveSeverity(x) === 'risk').length;
+};
+
+/** Cell lookup for the timetable dots: flagged (or accepted) arrival periods only. */
+export const makeWalkMarkGetter = (r: WalkReport | null, appData: AppData): WalkMarkGetter => {
+  const map = new Map<string, WalkMark>();
+  if (r) {
+    const v = visibleRows(r, appData);
+    const add = (kind: 't' | 'c', id: string, row: DayResult & AckInfo) => {
+      if (row.severity === 'ok') return;
+      for (const m of row.marks) {
+        const k = `${kind}|${id}|${row.day}|${m.period}`;
+        const prev = map.get(k);
+        const sev: Severity = prev && RANK_SEV[prev.severity] > RANK_SEV[m.severity] ? prev.severity : m.severity;
+        map.set(k, { severity: sev, accepted: row.accepted, text: prev ? `${prev.text}\n${m.text}` : m.text });
+      }
+    };
+    v.teachers.forEach((x) => add('t', x.teacherId, x));
+    v.classes.forEach((x) => add('c', x.gradeLevelId, x));
+  }
+  return (kind, id, day, period) => map.get(`${kind}|${id}|${day}|${period}`) ?? null;
+};
+const RANK_SEV: Record<Severity, number> = { ok: 0, watch: 1, risk: 2 };

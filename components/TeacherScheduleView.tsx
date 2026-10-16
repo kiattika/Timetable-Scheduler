@@ -2,7 +2,8 @@ import { formatRoomDisplay, formatRoomShort } from "../utils/stringUtils";
 import SearchableSelect from './SearchableSelect';
 
 import React, { useState, useMemo, useEffect, DragEvent, MouseEvent as ReactMouseEvent } from 'react';
-import { AppData, DayOfWeek, PeriodSetting, ScheduleEntry, Subject, Teacher, PhysicalRoom, GradeLevel, AssignmentModalContext, ContextMenuTargetInfo, ScreenAccessProps, OrganizationSettings, SingleScheduleTableProps } from '../types';
+import { AppData, DayOfWeek, PeriodSetting, ScheduleEntry, Subject, Teacher, PhysicalRoom, GradeLevel, AssignmentModalContext, ContextMenuTargetInfo, ScreenAccessProps, OrganizationSettings, SingleScheduleTableProps, WalkMarkGetter } from '../types';
+import { WalkDot } from './WalkDot';
 import { DAYS_OF_WEEK_ORDERED, Icons } from '../constants';
 import { isParentGrade } from './scheduleUtils'; // Import from new utils file
 
@@ -35,7 +36,7 @@ export const TeacherScheduleTable: React.FC<SingleScheduleTableProps & {
   appData, periodSettings, itemId: selectedTeacherId, getEntryDisplay, tableView,
   handleSlotContextMenu, onSlotSelect, openAssignmentModal,
   handleLocalDragStart, handleLocalDragOver, handleLocalDragLeave, handleLocalDrop, handleDragEnd,
-  draggedEntryId, permissions, isPrint, startTouchDrag, handleTouchMove, finishTouchDrag
+  draggedEntryId, permissions, isPrint, startTouchDrag, handleTouchMove, finishTouchDrag, getWalkMark
 }) => {
   const { scheduleEntries, gradeLevels, teachers } = appData;
   const selectedTeacher = teachers.find(t => t.id === selectedTeacherId);
@@ -157,6 +158,7 @@ export const TeacherScheduleTable: React.FC<SingleScheduleTableProps & {
           if (e.key === 'Enter' || e.key === ' ') onSlotSelect(day, periodIndex);
         }}
       >
+        {!isPrint && <WalkDot mark={getWalkMark?.('t', selectedTeacherId, day, periodIndex)} />}
         {entry && displayInfo ? (
           <div
             draggable={isDraggable}
@@ -343,6 +345,7 @@ interface TeacherScheduleViewPropsExtended extends ScreenAccessProps {
   openPrintOptionsModal: (itemType: 'teacher', currentItemId: string | null) => void;
   selectedTeacherId: string | null;
   onTeacherIdChange: (id: string | null) => void;
+  getWalkMark?: WalkMarkGetter;
 }
 
 const TeacherScheduleView: React.FC<TeacherScheduleViewPropsExtended> = ({
@@ -364,7 +367,8 @@ const TeacherScheduleView: React.FC<TeacherScheduleViewPropsExtended> = ({
   onTeacherIdChange,
   startTouchDrag,
   handleTouchMove,
-  finishTouchDrag
+  finishTouchDrag,
+  getWalkMark
 }) => {
   const { teachers } = appData; 
   const [tableView, setTableView] = useState<TableView>('daysAsCols'); 
@@ -500,6 +504,7 @@ const TeacherScheduleView: React.FC<TeacherScheduleViewPropsExtended> = ({
             startTouchDrag={startTouchDrag}
             handleTouchMove={handleTouchMove}
             finishTouchDrag={finishTouchDrag}
+            getWalkMark={getWalkMark}
           />
       ) : (
         <div className="text-center py-16 text-slate-500 bg-white shadow-md rounded-lg border border-slate-200">
