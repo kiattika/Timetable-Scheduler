@@ -2,6 +2,7 @@
 import React, { useState, useEffect, ChangeEvent, FormEvent } from 'react';
 import { OrganizationSettings, ScreenAccessProps, DayOfWeek, User } from '../types';
 import { Icons } from '../constants';
+import { shrinkImageDataUrl, dataUrlBytes, formatKB, SHRINK_THRESHOLD_BYTES } from '../utils/imageShrink';
 import { fetchAppData, resetSemesterTimetable, ORG_ID } from '../api';
 import { buildTimetableBackupPayload, triggerJsonDownload } from '../utils/backup';
 import { generateOfficialMemoPdf, generateSchoolOrderPdf } from '../utils/officialDocumentsPdf';
@@ -100,9 +101,11 @@ const OrganizationSettingsScreen: React.FC<OrganizationSettingsScreenProps> = ({
         return;
       }
       const reader = new FileReader();
-      reader.onloadend = () => {
-        setLogoPreview(reader.result as string);
-        setCurrentSettings(prev => ({ ...prev, logoUrl: reader.result as string }));
+      reader.onloadend = async () => {
+        let result = reader.result as string;
+        try { result = await shrinkImageDataUrl(result); } catch { /* keep original if it cannot be decoded */ }
+        setLogoPreview(result);
+        setCurrentSettings(prev => ({ ...prev, logoUrl: result }));
       };
       reader.onerror = () => {
         setError("เกิดข้อผิดพลาดในการอ่านไฟล์โลโก้");
@@ -138,9 +141,11 @@ const OrganizationSettingsScreen: React.FC<OrganizationSettingsScreenProps> = ({
         return;
       }
       const reader = new FileReader();
-      reader.onloadend = () => {
-        setEmblemPreview(reader.result as string);
-        setCurrentSettings(prev => ({ ...prev, emblemUrl: reader.result as string }));
+      reader.onloadend = async () => {
+        let result = reader.result as string;
+        try { result = await shrinkImageDataUrl(result); } catch { /* keep original if it cannot be decoded */ }
+        setEmblemPreview(result);
+        setCurrentSettings(prev => ({ ...prev, emblemUrl: result }));
       };
       reader.onerror = () => {
         setError("เกิดข้อผิดพลาดในการอ่านไฟล์รูปครุฑ");
@@ -161,6 +166,21 @@ const OrganizationSettingsScreen: React.FC<OrganizationSettingsScreenProps> = ({
     const fileInput = document.getElementById('emblemUrl') as HTMLInputElement;
     if (fileInput) {
       fileInput.value = "";
+    }
+  };
+
+  const shrinkExistingImages = async () => {
+    setSuccessMessage(null);
+    setError(null);
+    try {
+      const logo = currentSettings.logoUrl ? await shrinkImageDataUrl(currentSettings.logoUrl) : undefined;
+      const emblem = currentSettings.emblemUrl ? await shrinkImageDataUrl(currentSettings.emblemUrl) : undefined;
+      setCurrentSettings(prev => ({ ...prev, logoUrl: logo, emblemUrl: emblem }));
+      setLogoPreview(logo || null);
+      setEmblemPreview(emblem || null);
+      setSuccessMessage('ลดขนาดรูปแล้ว — กด "บันทึก" เพื่อใช้งานจริง');
+    } catch (err: any) {
+      setError(err?.message || 'ลดขนาดรูปไม่สำเร็จ');
     }
   };
 
@@ -446,6 +466,17 @@ const OrganizationSettingsScreen: React.FC<OrganizationSettingsScreenProps> = ({
                 <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
             </label>
         </div>
+
+        {(dataUrlBytes(currentSettings.logoUrl) + dataUrlBytes(currentSettings.emblemUrl)) > SHRINK_THRESHOLD_BYTES && (
+          <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800 flex flex-wrap items-center gap-3">
+            <span>
+              รูปโลโก้ {formatKB(dataUrlBytes(currentSettings.logoUrl))} + รูปครุฑ {formatKB(dataUrlBytes(currentSettings.emblemUrl))} ถูกเก็บรวมในฐานข้อมูลหลัก (จำกัดทั้งระบบ 1 MB) รูปใหญ่ทำให้บันทึกข้อมูลอื่นไม่ได้
+            </span>
+            <button type="button" onClick={shrinkExistingImages} className="px-3 py-1.5 rounded-md bg-amber-600 text-white hover:bg-amber-700">
+              ลดขนาดรูป
+            </button>
+          </div>
+        )}
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
