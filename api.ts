@@ -3,7 +3,7 @@ import { DEFAULT_PERIOD_SETTINGS, PREDEFINED_SUBJECT_COLORS } from './constants'
 import { db, auth, functions } from './lib/firebase';
 import { doc, getDoc, setDoc, deleteDoc, collection, getDocs, writeBatch, query, orderBy, limit, deleteField, runTransaction } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
-import { computeOrgChanges, diffById, diffAssistantEntities, canonicalKey, failureKey, classifySaveError, describeSaveError, reconcileServerWithLocal, ORG_ARRAY_FIELDS, cleanUndefined as cleanUndefinedShared } from './lib/orgChangesClient';
+import { computeOrgChanges, nextCommitTarget, MAX_OPS_PER_COMMIT, diffById, diffAssistantEntities, canonicalKey, failureKey, classifySaveError, describeSaveError, reconcileServerWithLocal, ORG_ARRAY_FIELDS, cleanUndefined as cleanUndefinedShared } from './lib/orgChangesClient';
 import { normalizeLoadedSubject, normalizeLoadedSubjects, normalizeLoadedOrganizationSettings, CURRENT_ORG_SCHEMA_VERSION } from './lib/normalizeAppData';
 
 export { computeOrgChanges, diffById, diffAssistantEntities, canonicalKey, failureKey, classifySaveError, describeSaveError, reconcileServerWithLocal, ORG_ARRAY_FIELDS, normalizeLoadedSubject, normalizeLoadedSubjects, normalizeLoadedOrganizationSettings, CURRENT_ORG_SCHEMA_VERSION };
@@ -478,7 +478,7 @@ export const persistAssistantChanges = async (
  * changeset hash is blocked (no auto-retry storm) until the user changes something;
  * on success / retryable failure the baseline advances / stays put accordingly.
  */
-export const persistOrgChanges = async (
+const persistOrgChangesOnce = async (
   prev: AppData | null,
   next: AppData,
   orgId: string = ORG_ID,
@@ -543,6 +543,35 @@ export const persistOrgChanges = async (
     }
   }
   return result;
+};
+
+/**
+ * Admin/manager autosave entry point. Splits very large changesets (bulk import) into several commits of at most
+ * MAX_OPS_PER_COMMIT entities and advances the persisted baseline after each, so progress is kept even if a later
+ * chunk fails and is retried on the next cycle.
+ */
+export const persistOrgChanges = async (
+  prev: AppData | null,
+  next: AppData,
+  orgId: string = ORG_ID,
+  knownFailed?: Map<string, string>,
+): Promise<PersistResult> => {
+  if (!prev) return persistOrgChangesOnce(prev, next, orgId, knownFailed);
+  let cur: AppData = prev;
+  const agg: PersistResult = { permanentFailures: [], retryableFailures: 0, persistedBaseline: cur, progressed: false };
+  for (let guard = 0; guard < 60; guard++) {
+    const { changes, hasChanges } = computeOrgChanges(cur, next);
+    if (!hasChanges) break;
+    const { target, isFinal } = nextCommitTarget(cur, next, changes);
+    const r = await persistOrgChangesOnce(cur, target, orgId, knownFailed);
+    agg.permanentFailures.push(...r.permanentFailures);
+    agg.retryableFailures += r.retryableFailures;
+    agg.progressed = agg.progressed || r.progressed;
+    cur = r.persistedBaseline;
+    agg.persistedBaseline = cur;
+    if (isFinal || r.retryableFailures > 0 || r.permanentFailures.length > 0 || !r.progressed) break;
+  }
+  return agg;
 };
 
 export { buildTimetableBackupPayload, triggerJsonDownload } from './utils/backup';

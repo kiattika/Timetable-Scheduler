@@ -329,3 +329,45 @@ export const reconcileServerWithLocal = <T extends Record<string, any>>(
   );
   return out as T;
 };
+
+// Largest number of entity upserts/deletes sent to commitOrgChanges in one call. A big bulk import (hundreds of
+// subjects at once) used to go as ONE changeset, which can exceed the function's 60 s limit and then fail forever.
+export const MAX_OPS_PER_COMMIT = 100;
+
+/** Next step towards `next`: `next` itself when small enough, otherwise `cur` plus the first `maxOps` entity ops. */
+export const nextCommitTarget = (
+  cur: any,
+  next: any,
+  changes: Record<string, any>,
+  maxOps: number = MAX_OPS_PER_COMMIT,
+): { target: any; isFinal: boolean } => {
+  let total = 0;
+  for (const f of ORG_ARRAY_FIELDS) {
+    const c = changes[f];
+    if (c) total += (c.upsert?.length || 0) + (c.deleteIds?.length || 0);
+  }
+  if (total <= maxOps) return { target: next, isFinal: true };
+
+  const target: any = JSON.parse(JSON.stringify(cur));
+  let budget = maxOps;
+  for (const f of ORG_ARRAY_FIELDS) {
+    const c = changes[f];
+    if (!c || budget <= 0) continue;
+    let arr: any[] = Array.isArray(target[f]) ? target[f] : [];
+    const dels: string[] = (c.deleteIds || []).slice(0, budget);
+    if (dels.length) {
+      const del = new Set(dels);
+      arr = arr.filter((e) => !(e && del.has(e.id)));
+      budget -= dels.length;
+    }
+    const ups: any[] = budget > 0 ? (c.upsert || []).slice(0, budget) : [];
+    for (const u of ups) {
+      const i = arr.findIndex((e) => e && e.id === u.id);
+      if (i >= 0) arr[i] = u; else arr.push(u);
+    }
+    budget -= ups.length;
+    target[f] = arr;
+  }
+  return { target, isFinal: false };
+};
+
