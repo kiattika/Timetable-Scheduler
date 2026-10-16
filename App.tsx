@@ -20,6 +20,7 @@ import InformationScreen from './components/InformationScreen';
 import { AdminSettingsScreen } from './components/AdminSettingsScreen';
 import { SystemHealthScreen } from './components/SystemHealthScreen';
 import { CampusMapScreen } from './components/CampusMapScreen';
+import { WalkingCheckScreen } from './components/WalkingCheckScreen';
 import { exportScheduleGridPdf } from './utils/schedulePdfExport';
 import { GradeLevelScheduleTable } from './components/GradeLevelPlannerView';
 import { TeacherScheduleTable } from './components/TeacherScheduleView';
@@ -34,7 +35,7 @@ import { db } from './lib/firebase';
 import { doc, getDoc, getDocFromServer } from 'firebase/firestore';
 
 type View = 'schedule' | 'manageData' | 'importData'; 
-type ManageDataSubView = EntityType | TeacherAssignmentType | PeriodSettingsType | 'organizationSettings' | UserManagementType | AcademicStructureType | TeacherLoadReportType | 'informationReports' | 'adminSettings' | 'departments' | 'resourceTypes' | 'systemHealth' | 'campusMap';
+type ManageDataSubView = EntityType | TeacherAssignmentType | PeriodSettingsType | 'organizationSettings' | UserManagementType | AcademicStructureType | TeacherLoadReportType | 'informationReports' | 'adminSettings' | 'departments' | 'resourceTypes' | 'systemHealth' | 'campusMap' | 'walkingCheck';
 
 const MAX_EXCEL_CELL_LENGTH = 32000; 
 
@@ -474,6 +475,11 @@ const App: React.FC = () => {
       plural: 'Manage Permissions',
       getIcon: () => Icons.Users,
     },
+    walkingCheck: {
+      singular: 'Walking Check',
+      plural: 'ตรวจการเดินระหว่างคาบ',
+      getIcon: () => Icons.Activity,
+    },
     campusMap: {
       singular: 'Campus Map',
       plural: 'ผังอาคาร',
@@ -583,8 +589,8 @@ const App: React.FC = () => {
 
     if (currentView === 'manageData') {
       const screenAccessProps: ScreenAccessProps = { permissions };
-      const allowedAssistantSubViews: ManageDataSubView[] = ['teachers', 'subjects', 'teacherSubjectAssignments'];
-      const allowedManagerSubViews: ManageDataSubView[] = ['teachers', 'subjects', 'teacherSubjectAssignments'];
+      const allowedAssistantSubViews: ManageDataSubView[] = ['teachers', 'subjects', 'teacherSubjectAssignments', 'walkingCheck'];
+      const allowedManagerSubViews: ManageDataSubView[] = ['teachers', 'subjects', 'teacherSubjectAssignments', 'walkingCheck'];
 
       if (appData.currentUser.role === 'assistant' && !allowedAssistantSubViews.includes(currentManageDataSubView)) {
         setCurrentManageDataSubView('subjects'); 
@@ -710,6 +716,8 @@ const App: React.FC = () => {
              return <TeacherLoadReportScreen appData={appData} />;
         case 'adminSettings':
              return <AdminSettingsScreen appData={appData} setAppData={setAppData as any} setCurrentView={setCurrentView} />;
+        case 'walkingCheck':
+             return <WalkingCheckScreen appData={appData} onOpenCampusMap={() => setCurrentManageDataSubView('campusMap')} />;
         case 'campusMap':
              return <CampusMapScreen appData={appData} setAppData={setAppData as any} />;
         case 'systemHealth':
@@ -852,6 +860,7 @@ const App: React.FC = () => {
     'gradeLevels',
     'physicalRooms',
     'campusMap',
+    'walkingCheck',
     'teacherSubjectAssignments',
     'informationReports',
     'teacherLoadReport',
@@ -1038,8 +1047,8 @@ const App: React.FC = () => {
                   isActive={currentView === 'manageData'}
                   onClick={() => {
                     setCurrentView('manageData');
-                    const allowedAssistantViews: ManageDataSubView[] = ['teachers', 'subjects', 'teacherSubjectAssignments'];
-                    const allowedManagerViews: ManageDataSubView[] = ['teachers', 'subjects', 'teacherSubjectAssignments'];
+                    const allowedAssistantViews: ManageDataSubView[] = ['teachers', 'subjects', 'teacherSubjectAssignments', 'walkingCheck'];
+                    const allowedManagerViews: ManageDataSubView[] = ['teachers', 'subjects', 'teacherSubjectAssignments', 'walkingCheck'];
                     let defaultSubView: ManageDataSubView = 'organizationSettings'; 
                     if (appData.currentUser?.role === 'assistant') {
                         defaultSubView = allowedAssistantViews.includes(currentManageDataSubView as ManageDataSubView) ? currentManageDataSubView : 'subjects';
@@ -1059,12 +1068,12 @@ const App: React.FC = () => {
                     if (!config) return null; 
 
                     if (appData.currentUser?.role === 'assistant') {
-                        const allowedAssistantSidebarViews: ManageDataSubView[] = ['teachers', 'subjects', 'teacherSubjectAssignments'];
+                        const allowedAssistantSidebarViews: ManageDataSubView[] = ['teachers', 'subjects', 'teacherSubjectAssignments', 'walkingCheck'];
                         if (!allowedAssistantSidebarViews.includes(entityKey)) {
                             return null; 
                         }
                     } else if (appData.currentUser?.role === 'manager') {
-                        const allowedManagerSidebarViews: ManageDataSubView[] = ['teachers', 'subjects', 'teacherSubjectAssignments'];
+                        const allowedManagerSidebarViews: ManageDataSubView[] = ['teachers', 'subjects', 'teacherSubjectAssignments', 'walkingCheck'];
                         if (!allowedManagerSidebarViews.includes(entityKey)) {
                             return null; 
                         }
