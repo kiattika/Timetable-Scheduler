@@ -19,6 +19,7 @@ import { TeacherLoadReportScreen } from './components/TeacherLoadReportScreen';
 import InformationScreen from './components/InformationScreen';
 import { AdminSettingsScreen } from './components/AdminSettingsScreen';
 import { SystemHealthScreen } from './components/SystemHealthScreen';
+import { CampusMapScreen } from './components/CampusMapScreen';
 import { exportScheduleGridPdf } from './utils/schedulePdfExport';
 import { GradeLevelScheduleTable } from './components/GradeLevelPlannerView';
 import { TeacherScheduleTable } from './components/TeacherScheduleView';
@@ -33,7 +34,7 @@ import { db } from './lib/firebase';
 import { doc, getDoc, getDocFromServer } from 'firebase/firestore';
 
 type View = 'schedule' | 'manageData' | 'importData'; 
-type ManageDataSubView = EntityType | TeacherAssignmentType | PeriodSettingsType | 'organizationSettings' | UserManagementType | AcademicStructureType | TeacherLoadReportType | 'informationReports' | 'adminSettings' | 'departments' | 'resourceTypes' | 'systemHealth';
+type ManageDataSubView = EntityType | TeacherAssignmentType | PeriodSettingsType | 'organizationSettings' | UserManagementType | AcademicStructureType | TeacherLoadReportType | 'informationReports' | 'adminSettings' | 'departments' | 'resourceTypes' | 'systemHealth' | 'campusMap';
 
 const MAX_EXCEL_CELL_LENGTH = 32000; 
 
@@ -423,6 +424,8 @@ const App: React.FC = () => {
           placeholder: 'Select Type'
         },
         { name: 'capacity', label: 'Capacity (ความจุ)', type: 'number', required: false, placeholder: 'e.g., 40' },
+        { name: 'building', label: 'Building (อาคาร)', type: 'text', required: false, placeholder: 'เว้นว่าง = เดาจากรหัส 3 หลัก' },
+        { name: 'floor', label: 'Floor (ชั้น)', type: 'number', required: false, placeholder: 'เว้นว่าง = เดาจากรหัส 3 หลัก' },
       ],
       getIcon: () => Icons.PhysicalRoom,
     },
@@ -470,6 +473,11 @@ const App: React.FC = () => {
       singular: 'Admin Setting',
       plural: 'Manage Permissions',
       getIcon: () => Icons.Users,
+    },
+    campusMap: {
+      singular: 'Campus Map',
+      plural: 'ผังอาคาร',
+      getIcon: () => Icons.PhysicalRoom,
     },
     systemHealth: {
       singular: 'System Health',
@@ -702,6 +710,8 @@ const App: React.FC = () => {
              return <TeacherLoadReportScreen appData={appData} />;
         case 'adminSettings':
              return <AdminSettingsScreen appData={appData} setAppData={setAppData as any} setCurrentView={setCurrentView} />;
+        case 'campusMap':
+             return <CampusMapScreen appData={appData} setAppData={setAppData as any} />;
         case 'systemHealth':
              return <SystemHealthScreen appData={appData} setAppData={setAppData as any} />;
         case 'teachers':
@@ -841,6 +851,7 @@ const App: React.FC = () => {
     'subjects',
     'gradeLevels',
     'physicalRooms',
+    'campusMap',
     'teacherSubjectAssignments',
     'informationReports',
     'teacherLoadReport',
@@ -1067,7 +1078,7 @@ const App: React.FC = () => {
                         return null;
                     }
 
-                    if (entityKey === 'adminSettings') {
+                    if (entityKey === 'adminSettings' || entityKey === 'campusMap') {
                         if (appData.currentUser?.role !== 'admin') {
                             return null;
                         }

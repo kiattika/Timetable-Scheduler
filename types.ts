@@ -68,6 +68,8 @@ export interface PhysicalRoom extends Identifiable {
   name: string; // Location Name / Description
   type: RoomType; // Location Type
   capacity?: number; // Capacity
+  building?: string; // เลขอาคาร (เช่น '9') — ว่าง = เดาจากรหัสห้อง 3 หลัก
+  floor?: number; // ชั้น
 }
 
 export interface PeriodSetting {
@@ -123,6 +125,7 @@ export interface OrganizationSettings {
   schoolHolidays?: string; // วันหยุด (คั่นด้วยบรรทัดใหม่)
   operatingDays?: DayOfWeek[]; // วันที่จัดการเรียนการสอน
   isLocked?: boolean; // ล็อคตารางเรียนประจำภาคเรียน
+  buildingGrid?: { cells: string[] }[]; // ผังอาคาร (แถว x คอลัมน์ ของเลขอาคาร) เก็บเป็น array ของ object เพราะ Firestore ห้าม nested array
   readFromSubcollections?: boolean; // เปิดอ่านข้อมูลจากแฟ้มย่อย (Phase 2) ทั้งระบบ — ตั้งจากหน้า System Health
   allowedDomain?: string; // โดเมนที่อนุญาต
   schoolAdminEmail?: string; // อีเมลแอดมินโรงเรียน
