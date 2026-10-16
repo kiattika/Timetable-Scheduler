@@ -248,10 +248,10 @@ d('Teacher–Subject assignment lifecycle', () => {
 });
 
 // ---------------------------------------------------------------------------
-// 4. Schedule entry lifecycle (doc field + subcollection mirror)
+// 4. Schedule entry lifecycle (subcollection only — the main doc has a 1 MiB limit)
 // ---------------------------------------------------------------------------
 d('Schedule entry lifecycle', () => {
-  it('create → queryable in BOTH the doc field and the subcollection', async () => {
+  it('create → stored in the subcollection (never as an array on the main doc)', async () => {
     await applyOrgChanges(db, db.doc(APP_DOC), {
       scheduleEntries: {
         upsert: [{ id: 'se-1', gradeLevelId: 'g1', subjectId: 's-seed', teacherIds: ['t-seed'], physicalRoomId: 'r1', day: 'Monday', period: 0 }],
@@ -259,13 +259,13 @@ d('Schedule entry lifecycle', () => {
       },
     }, 'manager');
 
-    expect((await readDoc()).scheduleEntries.find((e: any) => e.id === 'se-1')).toMatchObject({ subjectId: 's-seed', period: 0 });
+    expect((await readDoc()).scheduleEntries).toBeUndefined();
     const sub = await scheduleDoc('se-1');
     expect(sub.exists).toBe(true);
     expect(sub.data()).toMatchObject({ id: 'se-1', gradeLevelId: 'g1', teacherIds: ['t-seed'] });
   });
 
-  it('update → both views reflect the new period; delete → gone from both', async () => {
+  it('update → subcollection reflects the new period; delete → gone', async () => {
     await applyOrgChanges(db, db.doc(APP_DOC), {
       scheduleEntries: { upsert: [{ id: 'se-1', gradeLevelId: 'g1', subjectId: 's-seed', teacherIds: ['t-seed'], day: 'Monday', period: 0 }], deleteIds: [] },
     }, 'manager');
@@ -273,13 +273,11 @@ d('Schedule entry lifecycle', () => {
     await applyOrgChanges(db, db.doc(APP_DOC), {
       scheduleEntries: { upsert: [{ id: 'se-1', gradeLevelId: 'g1', subjectId: 's-seed', teacherIds: ['t-seed'], day: 'Monday', period: 3 }], deleteIds: [] },
     }, 'manager');
-    expect((await readDoc()).scheduleEntries.find((e: any) => e.id === 'se-1').period).toBe(3);
     expect((await scheduleDoc('se-1')).data()!.period).toBe(3);
 
     await applyOrgChanges(db, db.doc(APP_DOC), {
       scheduleEntries: { upsert: [], deleteIds: ['se-1'] },
     }, 'manager');
-    expect((await readDoc()).scheduleEntries.find((e: any) => e.id === 'se-1')).toBeUndefined();
     expect((await scheduleDoc('se-1')).exists).toBe(false);
   });
 });
@@ -330,7 +328,7 @@ d('Cross-entity read consistency', () => {
     // subcollection mirror in sync with the doc field
     const subIds = (await db.doc(APP_DOC).collection('scheduleEntries').listDocuments()).map((r) => r.id).sort();
     expect(subIds).toEqual(['e1']);
-    expect((doc.scheduleEntries as any[]).map((e) => e.id)).toEqual(['e1']);
+    expect(doc.scheduleEntries).toBeUndefined(); // timetable lives only in the subcollection
 
     // identity + settings never touched by the content path
     expect((doc.users as any[]).map((u) => u.id)).toEqual(['admin1']);
@@ -363,7 +361,7 @@ d('Schedule conflict detection — KNOWN GAP (documented, not fixed in Phase 0)'
     //     assertion that the permissive behaviour is correct. Conflict detection
     //     is a separate, later priority per the architecture review.
     expect(res.rejected).toEqual([]);
-    const ids = (await readDoc()).scheduleEntries.map((e: any) => e.id).sort();
+    const ids = (await db.doc(APP_DOC).collection('scheduleEntries').listDocuments()).map((r) => r.id).sort();
     expect(ids).toEqual(['clash-a', 'clash-b']);
   });
 });

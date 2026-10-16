@@ -979,7 +979,37 @@ export const assistantUpdateEntity = functions.https.onCall(async (
     }
   };
 
+  // scheduleEntries live ONLY in their subcollection (never as an array on the 1 MiB main document).
+  const subcollectionOnly = type === 'scheduleEntries';
+
+  const coreSubcollectionOnly = async (): Promise<{ entity: any }> => {
+    const snap = await appDocRef.get();
+    if (!snap.exists) {
+      throw new functions.https.HttpsError('not-found', `apps/${orgId} does not exist.`);
+    }
+    const appDoc = snap.data() || {};
+    const existingSnap = await subDocRef.get();
+    const existing = existingSnap.exists ? { ...(existingSnap.data() as any), id: entityId } : undefined;
+    if (op !== 'create' && !existing) {
+      throw new functions.https.HttpsError('not-found', `${type}/${entityId} not found.`);
+    }
+    if (op === 'update' && existing && canon({ ...existing, ...payload }) === canon(existing)) {
+      finish('no-op update (payload semantically matches server)');
+      return { entity: existing };
+    }
+    const effectiveOp: 'create' | 'update' | 'delete' = op === 'create' && existing ? 'update' : op;
+    authorize(appDoc, existing, effectiveOp);
+    if (effectiveOp === 'delete') {
+      await subDocRef.delete();
+      return { entity: null };
+    }
+    const merged = effectiveOp === 'update' ? { ...existing, ...payload } : payload;
+    await subDocRef.set(merged, { merge: true });
+    return { entity: merged };
+  };
+
   const core = async (): Promise<{ entity: any }> => {
+    if (subcollectionOnly) return coreSubcollectionOnly();
     const snap = await appDocRef.get();
     if (!snap.exists) {
       throw new functions.https.HttpsError('not-found', `apps/${orgId} does not exist.`);

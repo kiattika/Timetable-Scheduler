@@ -64,6 +64,15 @@ export const PROTECTED_ORG_FIELDS = ['users', 'authorizedAdmins'] as const;
 
 export type CallerRole = 'admin' | 'manager';
 
+/**
+ * Fields stored ONLY as one-doc-per-entity subcollections (`apps/{orgId}/{field}/{id}`), never as an array on the
+ * monolithic `apps/{orgId}` document. The main document has a hard 1 MiB limit; a full timetable (~2,400 entries
+ * x ~480 B) alone exceeds it, which made every save fail once the document filled up.
+ */
+export const SUBCOLLECTION_ONLY_FIELDS = ['scheduleEntries'] as const;
+export const isSubcollectionOnlyField = (f: string): boolean =>
+  (SUBCOLLECTION_ONLY_FIELDS as readonly string[]).includes(f);
+
 /** Order-insensitive canonical serialization (object keys sorted, array order kept). */
 export const canon = (x: any): string => {
   if (x === undefined || x === null) return 'null';
@@ -130,6 +139,7 @@ export function mergeOrgChanges(
   serverDoc: Record<string, any>,
   changes: OrgChanges,
   callerRole: CallerRole,
+  extra: { scheduleEntries?: IdItem[] } = {},
 ): { updates: Record<string, any>; summary: MergeSummary; rejected: RejectedChange[] } {
   const updates: Record<string, any> = {};
   const summary: MergeSummary = {};
@@ -155,6 +165,7 @@ export function mergeOrgChanges(
 
   // ---- array-of-object fields: merge by id ----
   for (const field of ORG_ARRAY_FIELDS) {
+    if (isSubcollectionOnlyField(field)) continue; // applied straight to its subcollection, see applyScheduleEntryChanges
     const change = changes[field];
     if (!change) continue;
     const upsertList = change.upsert || [];
@@ -167,7 +178,7 @@ export function mergeOrgChanges(
 
     // teacherSubjectAssignments: skip (don't apply) a delete of one still on the timetable.
     if (field === 'teacherSubjectAssignments' && deleteIds.size > 0) {
-      const schedule = asArray(serverDoc.scheduleEntries);
+      const schedule = asArray(extra.scheduleEntries ?? serverDoc.scheduleEntries);
       for (const id of Array.from(deleteIds)) {
         const asm = byId.get(id);
         if (!asm) continue;
@@ -390,6 +401,7 @@ async function syncAllEntityMirrors(
   updates: Record<string, any>,
 ): Promise<void> {
   for (const field of MIRRORED_ENTITY_FIELDS) {
+    if (isSubcollectionOnlyField(field)) continue; // handled by applyScheduleEntryChanges
     const change = changes[field as keyof OrgChanges] as FieldChange | undefined;
     if (!change) continue;
     const authoritative: IdItem[] =
@@ -401,6 +413,70 @@ async function syncAllEntityMirrors(
       Array.isArray(updates.periodSettings) ? updates.periodSettings : asArray(server.periodSettings);
     await mirrorPeriodSettingsDoc(appDocRef, authoritative);
   }
+}
+
+/**
+ * Apply scheduleEntries upserts/deletes straight to the subcollection (the only place they live). Idempotent
+ * (`set merge` / `delete`), so a client retry of the same changeset is safe. Per-field merge semantics match the
+ * old `{...existing, ...item}` array merge.
+ */
+export async function applyScheduleEntryChanges(
+  appDocRef: DocumentReference,
+  change: FieldChange | undefined,
+): Promise<{ upserts: number; deletes: number }> {
+  if (!change) return { upserts: 0, deletes: 0 };
+  const coll = appDocRef.collection('scheduleEntries');
+  const ops: Promise<any>[] = [];
+  const del = new Set((change.deleteIds || []).filter((x): x is string => typeof x === 'string' && !!x));
+  let upserts = 0;
+  for (const item of change.upsert || []) {
+    if (!item || typeof item.id !== 'string' || del.has(item.id)) continue;
+    ops.push(coll.doc(item.id).set(item, { merge: true }));
+    upserts++;
+  }
+  for (const id of del) ops.push(coll.doc(id).delete());
+  await runChunked(ops);
+  return { upserts, deletes: del.size };
+}
+
+/**
+ * One-time cleanup of the legacy `scheduleEntries` ARRAY on the main document. Any legacy entry that is missing from
+ * the subcollection is copied there first (the main document used to be authoritative), so removing the array can
+ * never lose data. Returns true when the legacy field existed (caller then deletes it in the main-doc update).
+ */
+export async function healLegacyScheduleEntries(
+  appDocRef: DocumentReference,
+  server: Record<string, any>,
+  db: Firestore,
+  log: (m: string) => void = () => {},
+): Promise<boolean> {
+  if (!('scheduleEntries' in server)) return false;
+  const legacy = asArray(server.scheduleEntries);
+  if (legacy.length > 0) {
+    const coll = appDocRef.collection('scheduleEntries');
+    let healed = 0;
+    for (let i = 0; i < legacy.length; i += 200) {
+      const slice = legacy.slice(i, i + 200);
+      const snaps = await db.getAll(...slice.map((e) => coll.doc(e.id)));
+      const ops: Promise<any>[] = [];
+      snaps.forEach((snap: any, idx: number) => {
+        if (!snap.exists) { ops.push(coll.doc(slice[idx].id).set(slice[idx], { merge: true })); healed++; }
+      });
+      await runChunked(ops);
+    }
+    log(`legacy scheduleEntries array: ${legacy.length} entries, ${healed} copied to subcollection before removal`);
+  }
+  return true;
+}
+
+/** Entries relevant to the "assignment still on the timetable" guard, read from the subcollection by subjectId. */
+async function scheduleEntriesForSubjects(appDocRef: DocumentReference, subjectIds: string[]): Promise<IdItem[]> {
+  const out = new Map<string, IdItem>();
+  for (const sid of subjectIds) {
+    const snap = await appDocRef.collection('scheduleEntries').where('subjectId', '==', sid).get();
+    snap.docs.forEach((d: any) => out.set(d.id, { ...(d.data() as any), id: d.id }));
+  }
+  return Array.from(out.values());
 }
 
 async function writeActivityLogs(appDocRef: DocumentReference, logs: IdItem[]): Promise<void> {
@@ -451,11 +527,34 @@ export async function applyOrgChanges(
       );
     }
 
-    const { updates, summary, rejected } = mergeOrgChanges(server, changes, callerRole);
+    // scheduleEntries live only in their subcollection now. For the "assignment still in use" guard read just the
+    // entries of the affected subjects (plus any legacy array entries still on the doc).
+    let scheduleForGuard: IdItem[] | undefined;
+    const tsaDeletes = changes.teacherSubjectAssignments?.deleteIds || [];
+    if (tsaDeletes.length > 0) {
+      const asmById = new Map(asArray(server.teacherSubjectAssignments).map((a: any) => [a.id, a]));
+      const subjectIds = Array.from(new Set(tsaDeletes.map((id) => (asmById.get(id) as any)?.subjectId).filter((x): x is string => typeof x === 'string')));
+      const fromSub = await scheduleEntriesForSubjects(appDocRef, subjectIds);
+      const merged = new Map<string, IdItem>(asArray(server.scheduleEntries).map((e) => [e.id, e] as [string, IdItem]));
+      fromSub.forEach((e) => merged.set(e.id, e));
+      scheduleForGuard = Array.from(merged.values());
+    }
+
+    const { updates, summary, rejected } = mergeOrgChanges(server, changes, callerRole, { scheduleEntries: scheduleForGuard });
     if (rejected.length) log(`rejected ${rejected.length} change(s): ${JSON.stringify(rejected)}`);
+
+    // Legacy `scheduleEntries` array on the main doc: copy any stragglers to the subcollection, then drop the field.
+    const hadLegacyEntries = await healLegacyScheduleEntries(appDocRef, server, db, log);
+    if (hadLegacyEntries) updates.scheduleEntries = FieldValue.delete();
+
+    const applyEntries = async () => {
+      const r = await applyScheduleEntryChanges(appDocRef, changes.scheduleEntries);
+      if (changes.scheduleEntries) summary.scheduleEntries = { upserts: r.upserts, deletes: r.deletes, length: -1 };
+    };
 
     if (Object.keys(updates).length === 0) {
       await syncAllEntityMirrors(appDocRef, changes, server, updates);
+      await applyEntries();
       await writeActivityLogs(appDocRef, opts.activityLogs || []);
       log(`no doc-field changes; re-asserted mirror subcollections`);
       return { summary, attempts: attempt, conflicts, rejected };
@@ -464,6 +563,7 @@ export async function applyOrgChanges(
     try {
       await appDocRef.update(updates, { lastUpdateTime: snap.updateTime! });
       await syncAllEntityMirrors(appDocRef, changes, server, updates);
+      await applyEntries();
       await writeActivityLogs(appDocRef, opts.activityLogs || []);
       log(`committed on attempt ${attempt} after ${conflicts} conflict(s): ${JSON.stringify(summary)}`);
       return { summary, attempts: attempt, conflicts, rejected };
@@ -499,8 +599,10 @@ export async function applyOrgReplace(
   const log = opts.log ?? (() => {});
   const managed: Record<string, any> = {};
   for (const f of ORG_ARRAY_FIELDS) {
+    if (isSubcollectionOnlyField(f)) continue; // never written to the main doc (see SUBCOLLECTION_ONLY_FIELDS)
     if (Array.isArray(fullDoc[f])) managed[f] = fullDoc[f];
   }
+  const restoredEntries: IdItem[] | null = Array.isArray(fullDoc.scheduleEntries) ? asArray(fullDoc.scheduleEntries) : null;
   if (fullDoc.organizationSettings && typeof fullDoc.organizationSettings === 'object') {
     managed.organizationSettings = fullDoc.organizationSettings;
   }
@@ -522,20 +624,23 @@ export async function applyOrgReplace(
     const snap = await appDocRef.get();
     if (!snap.exists) throw new OrgChangeError('not-found', `${appDocRef.path} does not exist.`);
     try {
-      await appDocRef.set(managed, { merge: true });
+      // A restore replaces the whole timetable, so also drop any legacy array left on the main document.
+      await appDocRef.set({ ...managed, ...(restoredEntries ? { scheduleEntries: FieldValue.delete() } : {}) }, { merge: true });
       // Phase 1: rebuild the mirror for each field the restore actually wrote to
       // the doc. A field absent from `managed` (not in the backup) leaves BOTH
       // the doc array and its mirror untouched — never wipe a mirror whose source
       // array we did not replace.
       for (const f of MIRRORED_ENTITY_FIELDS) {
+        if (isSubcollectionOnlyField(f)) continue;
         if (Array.isArray(managed[f])) await rebuildEntityMirror(appDocRef, f, asArray(managed[f]));
       }
+      if (restoredEntries) await rebuildEntityMirror(appDocRef, 'scheduleEntries', restoredEntries);
       if (Array.isArray(managed.periodSettings)) {
         await mirrorPeriodSettingsDoc(appDocRef, asArray(managed.periodSettings));
       }
       log(
         `restore replace committed (attempt ${attempt}): ` +
-          `${asArray(managed.scheduleEntries).length} schedule entries, mirrors rebuilt`,
+          `${(restoredEntries || []).length} schedule entries, mirrors rebuilt`,
       );
       return { attempts: attempt };
     } catch (err: any) {
@@ -654,6 +759,11 @@ export async function verifyOrgConsistency(
   for (const field of MIRRORED_ENTITY_FIELDS) {
     const mirrorSnap = await appDocRef.collection(field).get();
     const mirrorArr = mirrorSnap.docs.map((d) => ({ ...(d.data() as any), id: d.id }));
+    if (isSubcollectionOnlyField(field) && !(field in server)) {
+      // Subcollection IS the source of truth; nothing on the main doc to compare against.
+      fields.push({ field, docCount: mirrorArr.length, mirrorCount: mirrorArr.length, missingInMirror: [], extraInMirror: [], contentMismatch: [], ok: true });
+      continue;
+    }
     fields.push(compareEntityField(field, asArray(server[field]), mirrorArr));
   }
 

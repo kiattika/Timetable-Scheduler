@@ -171,3 +171,25 @@ describe('sanitizeOrgChanges — never accept protected/unknown fields', () => {
     expect(clean.subjects?.deleteIds).toEqual(['ok']);
   });
 });
+
+describe('mergeOrgChanges — scheduleEntries are subcollection-only', () => {
+  it('never produces a main-doc update for scheduleEntries', () => {
+    const { updates, summary } = mergeOrgChanges(
+      { scheduleEntries: [] },
+      { scheduleEntries: { upsert: [{ id: 'e1', subjectId: 's1' }], deleteIds: [] } },
+      'admin',
+    );
+    expect(updates.scheduleEntries).toBeUndefined();
+    expect(summary.scheduleEntries).toBeUndefined();
+  });
+
+  it('uses the supplied entries (not the doc array) for the assignment-in-use guard', () => {
+    const { rejected } = mergeOrgChanges(
+      { teacherSubjectAssignments: [{ id: 'a1', teacherId: 't1', subjectId: 's1', gradeLevelId: 'g1' }] },
+      { teacherSubjectAssignments: { upsert: [], deleteIds: ['a1'] } },
+      'admin',
+      { scheduleEntries: [{ id: 'e1', teacherIds: ['t1'], subjectId: 's1', gradeLevelId: 'g1' }] },
+    );
+    expect(rejected.map((r) => r.id)).toEqual(['a1']);
+  });
+});
