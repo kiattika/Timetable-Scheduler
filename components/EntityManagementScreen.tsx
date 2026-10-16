@@ -959,7 +959,7 @@ const EntityManagementScreen = <T extends Identifiable,>({
             {searchTerm ? `No ${entityNamePlural.toLowerCase()} found matching your search.` : `No ${entityNamePlural.toLowerCase()} found. Click "Add New ${entityNameSingular}" to get started.`}
         </p>
       ) : (
-        <div className={`overflow-auto rounded-md border border-slate-200 ${entityType === 'subjects' ? 'max-h-[68vh]' : ''}`}>
+        <div className={`overflow-auto rounded-md border border-slate-200 max-h-[68vh]`}>
           <table className="min-w-full divide-y divide-slate-200">
             <thead className="bg-slate-50 sticky top-0 z-10">
               <tr>
