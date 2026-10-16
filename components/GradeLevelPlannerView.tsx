@@ -513,6 +513,44 @@ const GradeLevelPlannerView: React.FC<GradeLevelPlannerViewPropsExtended> = (pro
   const assistantSelectedSubject = subjects.find(s => s.id === assistantSubjectId);
   const assistantSelectedTeacherIds = assistantSelectedTSA ? [assistantSelectedTSA.teacherId] : [];
 
+  // Which parts of the subject's scheduling pattern (e.g. "2/1" = one 2-period block + one single) are still unplaced
+  // for the selected class, so the assistant proposes a whole block when a block is what is missing.
+  const patternInfo = useMemo(() => {
+    if (!assistantSelectedSubject || !selectedGradeLevelId) return null;
+    const subj = assistantSelectedSubject;
+    const total = subj.periodsPerWeek ?? 0;
+    let parts = (subj.schedulingPattern || '').split('/').map(x => parseInt(x.trim(), 10)).filter(n => Number.isFinite(n) && n > 0);
+    const sum = parts.reduce((a, b) => a + b, 0);
+    const inconsistent = parts.length > 0 && total > 0 && sum !== total;
+    if (parts.length === 0 || inconsistent) parts = Array(Math.max(total, 1)).fill(1);
+
+    const mine = scheduleEntries.filter(e =>
+      e.subjectId === assistantSubjectId &&
+      (e.gradeLevelId === selectedGradeLevelId || (checkIsParentGrade(selectedGradeLevelId, gradeLevels) && gradeHierarchyHelpers.isChildOf(e.gradeLevelId, selectedGradeLevelId, gradeLevels)))
+    );
+    const placedSizes: number[] = [];
+    const byBlock = new Map<string, number>();
+    mine.forEach(e => {
+      if (e.blockId) byBlock.set(e.blockId, (byBlock.get(e.blockId) || 0) + 1);
+      else placedSizes.push(1);
+    });
+    byBlock.forEach(n => placedSizes.push(n));
+
+    const remaining = [...parts];
+    for (const size of placedSizes) {
+      let units = size;
+      while (units > 0 && remaining.length > 0) {
+        const fit = remaining.filter(r => r <= units);
+        if (fit.length === 0) { remaining.splice(remaining.indexOf(Math.min(...remaining)), 1); break; }
+        const take = Math.max(...fit);
+        remaining.splice(remaining.indexOf(take), 1);
+        units -= take;
+      }
+    }
+    remaining.sort((a, b) => b - a);
+    return { pattern: subj.schedulingPattern || '', parts, remaining, next: remaining.length > 0 ? remaining[0] : 1, inconsistent };
+  }, [assistantSelectedSubject, assistantSubjectId, selectedGradeLevelId, scheduleEntries, gradeLevels, gradeHierarchyHelpers, checkIsParentGrade]);
+
   const smartSuggestions = useMemo(() => {
     if (!assistantSelectedSubject || !selectedGradeLevelId || assistantSelectedTeacherIds.length === 0) return [];
     const scheduledPeriods = scheduleEntries.filter(e => 
@@ -541,33 +579,62 @@ const GradeLevelPlannerView: React.FC<GradeLevelPlannerViewPropsExtended> = (pro
       classCountByDay.set(e.day, (classCountByDay.get(e.day) || 0) + 1);
       if (e.subjectId === assistantSubjectId) sameSubjectDays.add(e.day);
     });
-    // Length of the teaching run that would include `p` if the teacher also taught at `p`
-    const runLengthWith = (taken: Set<number>, p: number) => {
-      let len = 1;
-      for (let i = p - 1; taken.has(i); i--) len++;
-      for (let i = p + 1; taken.has(i); i++) len++;
-      return len;
+    const blockSize = Math.max(1, patternInfo?.next ?? 1);
+    const subjType = (assistantSelectedSubject as any).type as string | undefined;
+    const useTeacherFactors = subjType !== 'STUDENT_ONLY';   // no teacher involved → ignore teacher load
+    const useClassFactors = subjType !== 'TEACHER_ONLY';     // students not involved → ignore class load
+    const classPeriodsByDay = new Map<string, Set<number>>();
+    scheduleEntries.forEach(e => {
+      if (e.gradeLevelId !== selectedGradeLevelId) return;
+      if (!classPeriodsByDay.has(e.day)) classPeriodsByDay.set(e.day, new Set());
+      classPeriodsByDay.get(e.day)!.add(e.period);
+    });
+    const runWithBlock = (taken: Set<number>, start: number, size: number) => {
+      const withBlock = new Set(taken);
+      for (let i = 0; i < size; i++) withBlock.add(start + i);
+      let lo = start, hi = start + size - 1;
+      while (withBlock.has(lo - 1)) lo--;
+      while (withBlock.has(hi + 1)) hi++;
+      return hi - lo + 1;
     };
 
-    const candidates: { day: DayOfWeek; periodIndex: number; score: number; reasons: string[] }[] = [];
+    const candidates: { day: DayOfWeek; periodIndex: number; size: number; score: number; reasons: string[] }[] = [];
     for (const day of operatingDays) {
       const taken = teacherPeriodsByDay.get(day) || new Set<number>();
+      const classTaken = classPeriodsByDay.get(day) || new Set<number>();
       const teacherDay = taken.size;
-      const classDay = classCountByDay.get(day) || 0;
-      for (let pIndex = 0; pIndex < periodSettings.length; pIndex++) {
-        const conflict = checkConflicts(day, pIndex, assistantSelectedTeacherIds, '', selectedGradeLevelId, assistantSubjectId, null, 1);
-        if (conflict) continue;
+      const classDay = classTaken.size;
+      for (let pIndex = 0; pIndex + blockSize <= periodSettings.length; pIndex++) {
+        // every period of the block must be free for the teacher, the class and the room
+        let blocked = false;
+        for (let k = 0; k < blockSize && !blocked; k++) {
+          if (checkConflicts(day, pIndex + k, assistantSelectedTeacherIds, '', selectedGradeLevelId, assistantSubjectId, null, blockSize)) blocked = true;
+        }
+        if (blocked) continue;
 
-        const run = runLengthWith(taken, pIndex);
         const sameSubjectToday = sameSubjectDays.has(day);
-        let score = teacherDay * 3 + classDay * 1.5 + pIndex * 0.01;
-        const reasons: string[] = [`ครูสอนวันนี้ ${teacherDay} คาบ`];
-        if (run >= 5) { score += 30; reasons.push(`จะสอนติดกัน ${run} คาบ`); }
-        else if (run === 4) { score += 15; reasons.push('จะสอนติดกัน 4 คาบ'); }
-        else if (run === 3) { score += 4; }
+        let score = pIndex * 0.01;
+        const reasons: string[] = [];
+        if (blockSize > 1) reasons.push(`บล็อก ${blockSize} คาบติดกัน`);
+
+        if (useTeacherFactors) {
+          score += teacherDay * 3;
+          reasons.push(`ครูสอนวันนี้ ${teacherDay} คาบ`);
+          const run = runWithBlock(taken, pIndex, blockSize);
+          if (run >= 5) { score += 30; reasons.push(`ครูจะสอนติดกัน ${run} คาบ`); }
+          else if (run === 4) { score += 15; reasons.push('ครูจะสอนติดกัน 4 คาบ'); }
+          else if (run === 3) { score += 4; }
+          if (teacherDay >= 6) reasons.push('วันนี้ครูค่อนข้างหนัก');
+        }
+        if (useClassFactors) {
+          score += classDay * 1.5;
+          const classRun = runWithBlock(classTaken, pIndex, blockSize);
+          if (classRun >= 6) { score += 12; reasons.push(`นักเรียนจะเรียนติดกัน ${classRun} คาบ`); }
+          else if (classRun === 5) { score += 5; }
+          if (classDay >= 7) reasons.push(`ห้องเรียนมี ${classDay} คาบในวันนี้`);
+        }
         if (sameSubjectToday) { score += 4; reasons.push('วิชานี้มีในวันนั้นแล้ว'); }
-        if (teacherDay >= 6) reasons.push('วันนี้ครูค่อนข้างหนัก');
-        candidates.push({ day, periodIndex: pIndex, score, reasons });
+        candidates.push({ day, periodIndex: pIndex, size: blockSize, score, reasons });
       }
     }
 
@@ -588,7 +655,7 @@ const GradeLevelPlannerView: React.FC<GradeLevelPlannerViewPropsExtended> = (pro
     }
     const suggestions = picked.sort((a, b) => a.score - b.score);
     return suggestions;
-  }, [assistantSelectedSubject, selectedGradeLevelId, assistantSelectedTeacherIds, scheduleEntries, gradeLevels, gradeHierarchyHelpers, checkIsParentGrade, appData.organizationSettings?.operatingDays, periodSettings, checkConflicts, assistantSubjectId]);
+  }, [assistantSelectedSubject, selectedGradeLevelId, assistantSelectedTeacherIds, scheduleEntries, gradeLevels, gradeHierarchyHelpers, checkIsParentGrade, appData.organizationSettings?.operatingDays, periodSettings, checkConflicts, assistantSubjectId, patternInfo]);
 
   const activeConflict = useMemo(() => {
     if (!assistantSelectedSubject || !selectedGradeLevelId || assistantSelectedTeacherIds.length === 0 || !assistantTargetDay || assistantTargetPeriod === '') return null;
@@ -635,22 +702,28 @@ const GradeLevelPlannerView: React.FC<GradeLevelPlannerViewPropsExtended> = (pro
     };
   }, [assistantSelectedTeacherIds, teachers, scheduleEntries]);
 
-  const applyAssistantSuggestion = (day: DayOfWeek, periodIndex: number) => {
+  const applyAssistantSuggestion = (day: DayOfWeek, periodIndex: number, size: number = 1) => {
     if (appData.organizationSettings?.isLocked) {
       alert("ตารางเรียนถูกล็อค ไม่สามารถแก้ไขได้");
       return;
     }
     if (!selectedGradeLevelId || !assistantSubjectId || assistantSelectedTeacherIds.length === 0) return;
-    const newEntry: ScheduleEntry = {
-      id: crypto.randomUUID(),
-      day: day,
-      period: periodIndex,
-      gradeLevelId: selectedGradeLevelId,
-      subjectId: assistantSubjectId,
-      teacherIds: assistantSelectedTeacherIds,
-      totalInBlock: 1,
-    };
-    setAppData(prev => ({ ...prev, scheduleEntries: [...prev.scheduleEntries, newEntry] }));
+    const blockId = size > 1 ? crypto.randomUUID() : undefined;
+    const newEntries: ScheduleEntry[] = [];
+    for (let i = 0; i < size; i++) {
+      newEntries.push({
+        id: crypto.randomUUID(),
+        day: day,
+        period: periodIndex + i,
+        gradeLevelId: selectedGradeLevelId,
+        subjectId: assistantSubjectId,
+        teacherIds: assistantSelectedTeacherIds,
+        blockId,
+        blockIndex: size > 1 ? i : undefined,
+        totalInBlock: size > 1 ? size : 1,
+      } as ScheduleEntry);
+    }
+    setAppData(prev => ({ ...prev, scheduleEntries: [...prev.scheduleEntries, ...newEntries] }));
     setAssistantTargetDay('');
     setAssistantTargetPeriod('');
   };
@@ -861,6 +934,16 @@ const GradeLevelPlannerView: React.FC<GradeLevelPlannerViewPropsExtended> = (pro
                               <Icons.Sparkles size={16} className="mr-1" />
                               ข้อเสนอแนะ 3 คาบที่เหมาะสมที่สุด
                           </h4>
+                          {patternInfo && (patternInfo.pattern || patternInfo.inconsistent) && (
+                              <p className="text-[11px] text-slate-500 mb-2">
+                                  รูปแบบคาบ {patternInfo.pattern || '-'}
+                                  {patternInfo.inconsistent
+                                      ? ' (ไม่ตรงกับจำนวนคาบ/สัปดาห์ จึงแนะนำเป็นคาบเดี่ยว)'
+                                      : patternInfo.remaining.length > 0
+                                          ? ` · ที่ยังเหลือ: ${patternInfo.remaining.map(n => `${n} คาบ`).join(' + ')} (ตอนนี้แนะนำ ${patternInfo.next} คาบ${patternInfo.next > 1 ? 'ติดกัน' : ''})`
+                                          : ''}
+                              </p>
+                          )}
                           {smartSuggestions.length > 0 ? (
                               <ul className="space-y-2">
                                   {smartSuggestions.map((sug, idx) => {
@@ -868,11 +951,11 @@ const GradeLevelPlannerView: React.FC<GradeLevelPlannerViewPropsExtended> = (pro
                                       return (
                                           <li key={idx} className="p-2 border border-purple-200 rounded bg-purple-50 flex items-center justify-between gap-2">
                                               <span className="text-xs text-purple-800 font-medium">
-                                                  {sug.day}, {periodLabel}
+                                                  {sug.day}, {periodLabel}{sug.size > 1 ? `–${periodSettings[sug.periodIndex + sug.size - 1]?.label || `P${sug.periodIndex + sug.size - 1}`}` : ''}
                                                   <span className="block text-[11px] font-normal text-slate-500 mt-0.5">{sug.reasons.join(' · ')}</span>
                                               </span>
                                               <button 
-                                                  onClick={() => applyAssistantSuggestion(sug.day, sug.periodIndex)}
+                                                  onClick={() => applyAssistantSuggestion(sug.day, sug.periodIndex, sug.size)}
                                                   className="px-2 py-1 bg-purple-600 hover:bg-purple-700 text-white rounded text-xs transition-colors"
                                               >
                                                   เลือก
