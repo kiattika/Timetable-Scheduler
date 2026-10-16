@@ -135,6 +135,7 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
 
   type ViewState = { day: DayOfWeek, period: number, gradeLevelId?: string, teacherId?: string, physicalRoomId?: string };
   const [selectedBlock, setSelectedBlock] = useState<ViewState | null>(null);
+  const [viewingGradeLevelId, setViewingGradeLevelId] = usePersistedState<string | null>('tt.sched.grade', null);
   const [viewingTeacherId, setViewingTeacherId] = usePersistedState<string | null>('tt.sched.teacher', null);
   const [viewingPhysicalRoomId, setViewingPhysicalRoomId] = usePersistedState<string | null>('tt.sched.room', null);
 
@@ -2400,6 +2401,20 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
   ) : null;
 
 
+  /** Make the class, teacher and room tables all show the entry that was clicked in one of them. */
+  const syncViewsToEntry = (entry: ScheduleEntry, keep: { teacherId?: string; physicalRoomId?: string }) => {
+    setViewingGradeLevelId(entry.gradeLevelId);
+    if (!keep.teacherId && entry.teacherIds.length > 0) setViewingTeacherId(entry.teacherIds[0]);
+    if (!keep.physicalRoomId && entry.physicalRoomId) setViewingPhysicalRoomId(entry.physicalRoomId);
+    setSelectedBlock({
+      day: entry.day,
+      period: entry.period,
+      gradeLevelId: entry.gradeLevelId,
+      teacherId: keep.teacherId ?? entry.teacherIds[0],
+      physicalRoomId: keep.physicalRoomId ?? entry.physicalRoomId,
+    });
+  };
+
   const commonPlannerProps = {
     appData,
     periodSettings,
@@ -2493,6 +2508,8 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
         {/* We no longer render tabs to switch views. Instead we render all 3 views. */}
         <GradeLevelPlannerView 
             {...commonPlannerProps}
+            selectedGradeLevelId={viewingGradeLevelId}
+            onGradeLevelIdChange={setViewingGradeLevelId}
             onGradeBlockSelect={(blockInfo) => {
                 if (blockInfo) {
                     setSelectedBlock({
@@ -2513,11 +2530,23 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 mt-6">
             <TeacherScheduleView
                 {...commonPlannerProps}
+                onSlotSelect={(day: DayOfWeek, period: number) => {
+                  commonPlannerProps.onSlotSelect(day, period);
+                  // Clicking a cell in the teacher table makes the class and room tables follow it
+                  const entry = viewingTeacherId ? scheduleEntries.find(e => e.teacherIds.includes(viewingTeacherId) && e.day === day && e.period === period) : undefined;
+                  if (entry) syncViewsToEntry(entry, { teacherId: viewingTeacherId || undefined });
+                }}
                 selectedTeacherId={viewingTeacherId}
                 onTeacherIdChange={setViewingTeacherId}
             />
             <RoomUsageView
                 {...commonPlannerProps}
+                onSlotSelect={(day: DayOfWeek, period: number) => {
+                  commonPlannerProps.onSlotSelect(day, period);
+                  // Clicking a cell in the room table makes the class and teacher tables follow it
+                  const entry = viewingPhysicalRoomId ? scheduleEntries.find(e => e.physicalRoomId === viewingPhysicalRoomId && e.day === day && e.period === period) : undefined;
+                  if (entry) syncViewsToEntry(entry, { physicalRoomId: viewingPhysicalRoomId || undefined });
+                }}
                 selectedPhysicalRoomId={viewingPhysicalRoomId}
                 onPhysicalRoomIdChange={setViewingPhysicalRoomId}
             />

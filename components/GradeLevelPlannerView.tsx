@@ -419,6 +419,8 @@ interface GradeLevelPlannerViewPropsExtended extends ScreenAccessProps {
   setIsScheduleVisible: React.Dispatch<React.SetStateAction<boolean>>;
   openPrintOptionsModal: (itemType: 'gradeLevel', currentItemId: string | null) => void;
   getWalkMark?: WalkMarkGetter;
+  selectedGradeLevelId?: string | null;
+  onGradeLevelIdChange?: (id: string | null) => void;
   onGradeBlockSelect?: (blockInfo: { gradeLevelId: string; day: DayOfWeek; period: number; teacherIds: string[], physicalRoomId?: string } | null) => void;
 }
 
@@ -436,7 +438,11 @@ const GradeLevelPlannerView: React.FC<GradeLevelPlannerViewPropsExtended> = (pro
   const getParentGradeLevelIdFromUtil = getParentIdUtil;
   const checkIsParentGrade = checkIsParentGradeUtil;
 
-  const [selectedGradeLevelId, setSelectedGradeLevelId] = usePersistedState<string | null>('tt.sched.grade', null);
+  // The schedule page owns the selection (so a click in the teacher / room table can switch the class too);
+  // used standalone it falls back to its own remembered selection.
+  const [localGradeId, setLocalGradeId] = usePersistedState<string | null>('tt.sched.grade', null);
+  const selectedGradeLevelId = props.selectedGradeLevelId !== undefined ? props.selectedGradeLevelId : localGradeId;
+  const setSelectedGradeLevelId = props.onGradeLevelIdChange ?? setLocalGradeId;
   const [tableView, setTableView] = useState<TableView>('daysAsCols'); 
 
   const [assistantSubjectId, setAssistantSubjectId] = useState<string>('');
