@@ -336,6 +336,17 @@ export const SystemHealthScreen: React.FC<SystemHealthScreenProps> = ({
   const storageUsageMB = +(approximateStorageBytes / (1024 * 1024)).toFixed(2);
   const storagePercentOfFreeGB = +((storageUsageMB / 1024) * 100).toFixed(2);
 
+  // Main Firestore document (apps/{org}) — the one that has the hard 1 MiB limit. Timetable entries and activity logs
+  // live in their own subcollections, so they do not count here. Approximation: JSON bytes of the fields stored on it.
+  const MAIN_DOC_LIMIT_BYTES = 1024 * 1024;
+  const MAIN_DOC_FIELDS = ['teachers', 'subjects', 'gradeLevels', 'physicalRooms', 'departments', 'resourceTypes', 'teacherSubjectAssignments', 'periodSettings', 'organizationSettings', 'users', 'authorizedAdmins'];
+  const mainDocFieldBytes = MAIN_DOC_FIELDS
+    .map(f => ({ field: f, bytes: (appData as any)?.[f] === undefined ? 0 : new Blob([JSON.stringify((appData as any)[f])]).size }))
+    .sort((a, b) => b.bytes - a.bytes);
+  const mainDocBytes = mainDocFieldBytes.reduce((sum, x) => sum + x.bytes, 0);
+  const mainDocPercent = Math.round((mainDocBytes / MAIN_DOC_LIMIT_BYTES) * 100);
+  const mainDocTone = mainDocPercent >= 85 ? 'text-red-600' : mainDocPercent >= 70 ? 'text-amber-600' : 'text-emerald-600';
+
   // Real Cost Breakdown based ONLY on actual Monitoring API data
   const realCostBreakdown = useMemo(() => {
     if (!usageStats || !usageStats.dailyStats || usageStats.dailyStats.length === 0) {
@@ -676,7 +687,13 @@ export const SystemHealthScreen: React.FC<SystemHealthScreenProps> = ({
                       {storageUsageMB} MB
                     </div>
                     <p className="text-xs text-slate-500 mt-1">
-                      นับจากข้อมูลที่โหลดในเบราว์เซอร์ ไม่ใช่ขนาดที่เก็บจริงบน Firestore
+                      นับจากข้อมูลที่โหลดในเบราว์เซอร์ (รวมตารางสอนและบันทึกกิจกรรม) ไม่ใช่ขนาดที่เก็บจริงบน Firestore
+                    </p>
+                    <p className={`text-xs font-semibold mt-2 ${mainDocTone}`}>
+                      เอกสารหลัก ≈ {(mainDocBytes / 1024).toFixed(0)} KB จาก 1,024 KB ({mainDocPercent}%)
+                    </p>
+                    <p className="text-[11px] text-slate-500 mt-0.5">
+                      ใหญ่สุด: {mainDocFieldBytes.slice(0, 3).map(x => `${x.field} ${(x.bytes / 1024).toFixed(0)} KB`).join(' · ')}
                     </p>
                   </div>
 
