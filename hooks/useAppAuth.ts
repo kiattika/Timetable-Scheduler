@@ -5,6 +5,12 @@ import { db, auth } from '../lib/firebase';
 import { doc, collection, onSnapshot, query, orderBy, limit, type Query, type DocumentReference } from 'firebase/firestore';
 import { DEFAULT_PERIOD_SETTINGS } from '../constants';
 import { logActivity, logLoginAttempt } from '../lib/logger';
+import { READ_FLIP_ENTITY_FIELDS, PERIOD_SETTINGS_DOC_ID, resolveEntityList, resolvePeriodSettings } from '../lib/subcollectionReads';
+
+// Phase 2 read-flip switch. OFF by default: the app reads the entity arrays from the
+// monolithic apps/{orgId} doc exactly as before. Set VITE_READ_FROM_SUBCOLLECTIONS=true
+// to read them from the Phase-1 mirror subcollections instead (see docs/phase-2-read-flip-runbook.md).
+const READ_FROM_SUBCOLLECTIONS = (import.meta as any).env?.VITE_READ_FROM_SUBCOLLECTIONS === 'true';
 
 export const useAppAuth = (
   appData: AppData | null,
@@ -33,6 +39,7 @@ export const useAppAuth = (
     let unsubMainDoc: (() => void) | null = null;
     let unsubSchedule: (() => void) | null = null;
     let unsubLogs: (() => void) | null = null;
+    const unsubMirrors: Array<() => void> = [];
 
     const loadData = async () => {
       setIsLoadingInitialData(true);
@@ -73,6 +80,13 @@ export const useAppAuth = (
         let mainParsedData: any = null;
         let mainDocFired = false;
 
+        // Phase 2: mirror subcollection snapshots (null = not reported / unusable -> fall back to doc array)
+        const mirrorLists: Record<string, any[] | null> = {};
+        let mirrorPeriodDoc: any | null = null;
+        const mirrorFired = new Set<string>();
+        const MIRROR_LABELS = [...READ_FLIP_ENTITY_FIELDS, 'periodSettings'];
+        const reportedDivergence = new Set<string>();
+
         // Bounded retry for a listener that fails with `permission-denied` — the
         // token-propagation race above. Per-listener state; each re-attach clears
         // the previous timer + unsub so retries never stack or duplicate.
@@ -81,6 +95,7 @@ export const useAppAuth = (
           label: string,
           build: () => Query | DocumentReference,
           onSnap: (snap: any) => void,
+          onGiveUp?: () => void,
         ): (() => void) => {
           let attempts = 0;
           let unsub: (() => void) | null = null;
@@ -115,9 +130,11 @@ export const useAppAuth = (
                 } else if (code === 'permission-denied') {
                   console.error(`[auth] ${label}: gave up after ${attempts} permission-denied retries.`);
                   if (label === 'main-doc' && isMounted) setDataLoadError('permission-denied');
+                  onGiveUp?.();
                 } else {
                   // Non-permission error — do NOT retry (would mask a real bug).
                   console.warn(`[useAppAuth] ${label} listener error:`, code || error?.message || error);
+                  onGiveUp?.();
                 }
               },
             );
@@ -132,12 +149,28 @@ export const useAppAuth = (
           // faster subcollection listener would flash guest/sample data (and the
           // login gate) while main-doc is still retrying.
           if (!mainDocFired) return;
+          // Read-flip: wait until EVERY mirror listener has reported (or given up),
+          // otherwise a half-loaded state (e.g. teachers=[]) would reach the autosave baseline.
+          if (READ_FROM_SUBCOLLECTIONS && mirrorFired.size < MIRROR_LABELS.length) return;
           const md = mainParsedData || {};
+
+          const pickList = (field: typeof READ_FLIP_ENTITY_FIELDS[number]): any[] => {
+            if (!READ_FROM_SUBCOLLECTIONS) return md[field] || [];
+            const { items, report } = resolveEntityList(mirrorLists[field] ?? null, md[field]);
+            if ((report.onlyInMirror.length || report.onlyInDoc.length) && !reportedDivergence.has(field)) {
+              reportedDivergence.add(field);
+              console.warn(`[read-flip] ${field}: mirror and doc differ (onlyInMirror=${report.onlyInMirror.length}, onlyInDoc=${report.onlyInDoc.length}) — run migrate-to-subcollections.ts --verify-only`);
+            }
+            return items;
+          };
+          const pickedPeriodSettings: any[] = READ_FROM_SUBCOLLECTIONS
+            ? resolvePeriodSettings<any>(mirrorPeriodDoc, md.periodSettings).items
+            : (md.periodSettings || []);
 
           // Single shared normaliser — MUST match fetchAppData / executeRestore,
           // otherwise a subject's diff baseline and current state have different
           // key sets and every save re-sends it as "changed".
-          const subjectsWithDefaults = normalizeLoadedSubjects(md.subjects);
+          const subjectsWithDefaults = normalizeLoadedSubjects(pickList('subjects'));
 
           const existingUsers: User[] = md.users || [];
           const existingUser = existingUsers.find(u => u.email.toLowerCase().trim() === userEmail);
@@ -191,13 +224,13 @@ export const useAppAuth = (
           const updatedData: AppData = {
             departments: safeUpsert(md.departments, DEFAULT_DEPARTMENTS),
             resourceTypes: safeUpsert(md.resourceTypes, DEFAULT_RESOURCE_TYPES),
-            teachers: md.teachers || [],
+            teachers: pickList('teachers'),
             subjects: subjectsWithDefaults,
-            gradeLevels: md.gradeLevels || [],
-            physicalRooms: md.physicalRooms || [],
+            gradeLevels: pickList('gradeLevels'),
+            physicalRooms: pickList('physicalRooms'),
             scheduleEntries: finalScheduleEntries,
-            periodSettings: md.periodSettings || DEFAULT_PERIOD_SETTINGS,
-            teacherSubjectAssignments: md.teacherSubjectAssignments || [],
+            periodSettings: (READ_FROM_SUBCOLLECTIONS ? (pickedPeriodSettings.length > 0 ? pickedPeriodSettings : null) : md.periodSettings) || DEFAULT_PERIOD_SETTINGS,
+            teacherSubjectAssignments: pickList('teacherSubjectAssignments'),
             organizationSettings: normalizeLoadedOrganizationSettings(md.organizationSettings || null),
             users: newUsers,
             activityLogs: finalActivityLogs,
@@ -265,6 +298,31 @@ export const useAppAuth = (
           },
         );
 
+        // 4. Phase 2 (flag-gated): mirror subcollections for the other entity arrays.
+        if (READ_FROM_SUBCOLLECTIONS) {
+          const markFired = (label: string) => { mirrorFired.add(label); updateCombinedAppData(); };
+          for (const field of READ_FLIP_ENTITY_FIELDS) {
+            unsubMirrors.push(makeRetryingListener(
+              `mirror:${field}`,
+              () => collection(db, 'apps', ORG_ID, field),
+              (colSnap: any) => {
+                mirrorLists[field] = colSnap.docs.map((d: any) => ({ ...d.data(), id: d.id }));
+                markFired(field);
+              },
+              () => { mirrorLists[field] = null; markFired(field); },
+            ));
+          }
+          unsubMirrors.push(makeRetryingListener(
+            'mirror:periodSettings',
+            () => doc(db, 'apps', ORG_ID, 'periodSettings', PERIOD_SETTINGS_DOC_ID),
+            (docSnap: any) => {
+              mirrorPeriodDoc = docSnap.exists() ? docSnap.data() : null;
+              markFired('periodSettings');
+            },
+            () => { mirrorPeriodDoc = null; markFired('periodSettings'); },
+          ));
+        }
+
       } catch (error) {
         console.error("Failed to fetch/subscribe to initial app data:", error);
         if (!isMounted) return;
@@ -288,6 +346,7 @@ export const useAppAuth = (
       if (unsubMainDoc) unsubMainDoc();
       if (unsubSchedule) unsubSchedule();
       if (unsubLogs) unsubLogs();
+      unsubMirrors.forEach(u => u());
     };
   }, [isAuthChecking, firebaseUser?.email]);
 
