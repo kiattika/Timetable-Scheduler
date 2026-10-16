@@ -77,3 +77,43 @@ describe('resolvePeriodSettings', () => {
     expect(resolvePeriodSettings({ items: [] }, [P('p1')]).source).toBe('doc');
   });
 });
+
+import { resolveReadFlip, compareField, comparePeriodSettings } from '../lib/subcollectionReads';
+
+describe('resolveReadFlip precedence', () => {
+  it('defaults to off', () => {
+    expect(resolveReadFlip({ local: null, global: undefined, build: false })).toEqual({ enabled: false, origin: 'default' });
+  });
+  it('build env turns it on when nothing else is set', () => {
+    expect(resolveReadFlip({ local: null, global: undefined, build: true })).toEqual({ enabled: true, origin: 'build' });
+  });
+  it('system-wide setting beats the build env, in both directions', () => {
+    expect(resolveReadFlip({ local: null, global: false, build: true })).toEqual({ enabled: false, origin: 'global' });
+    expect(resolveReadFlip({ local: null, global: true, build: false })).toEqual({ enabled: true, origin: 'global' });
+  });
+  it('this-browser override beats everything (and can force OFF)', () => {
+    expect(resolveReadFlip({ local: 'on', global: false, build: false })).toEqual({ enabled: true, origin: 'local' });
+    expect(resolveReadFlip({ local: 'off', global: true, build: true })).toEqual({ enabled: false, origin: 'local' });
+  });
+});
+
+describe('browser consistency check', () => {
+  const a = { id: 'a', name: 'A', x: 1 };
+  it('ok when identical regardless of key order', () => {
+    expect(compareField('t', [a], [{ x: 1, name: 'A', id: 'a' }]).ok).toBe(true);
+  });
+  it('reports missing / extra / mismatched ids', () => {
+    const r = compareField('t', [a, { id: 'b' }, { id: 'c', v: 1 }], [a, { id: 'c', v: 2 }, { id: 'z' }]);
+    expect(r.missingInMirror).toEqual(['b']);
+    expect(r.extraInMirror).toEqual(['z']);
+    expect(r.contentMismatch).toEqual(['c']);
+    expect(r.ok).toBe(false);
+  });
+  it('periodSettings: a pure re-order is a mismatch', () => {
+    const p = [{ id: '1' }, { id: '2' }];
+    expect(comparePeriodSettings(p, p).ok).toBe(true);
+    const r = comparePeriodSettings(p, [{ id: '2' }, { id: '1' }]);
+    expect(r.ok).toBe(false);
+    expect(r.contentMismatch).toContain('__order__');
+  });
+});

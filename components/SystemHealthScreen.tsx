@@ -4,6 +4,8 @@ import { Icons } from '../constants';
 import { collection, getDocs, limit, orderBy, query, deleteDoc, doc } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { db, functions, firestoreDatabaseId } from '../lib/firebase';
+import { readLocalReadFlip, writeLocalReadFlip, getActiveReadFlip, resolveReadFlip } from '../lib/subcollectionReads';
+import { verifyMirrorsInBrowser, type MirrorVerifyReport } from '../lib/mirrorVerifyClient';
 import { pruneActivityLogs, saveAppData, ORG_ID } from '../api';
 import {
   FirestoreDailyMetric,
@@ -82,6 +84,30 @@ export const SystemHealthScreen: React.FC<SystemHealthScreenProps> = ({
     setCutoverDate(v);
     try { v ? localStorage.setItem(CUTOVER_KEY, v) : localStorage.removeItem(CUTOVER_KEY); } catch { /* ignore */ }
   };
+
+  // Phase 2 read-source controls (per-browser override, system-wide setting, in-browser verify)
+  const [localReadFlip, setLocalReadFlip] = useState<'on' | 'off' | null>(() => readLocalReadFlip());
+  const [confirmGlobal, setConfirmGlobal] = useState<boolean | null>(null); // value waiting for confirmation
+  const [verifyState, setVerifyState] = useState<{ loading: boolean; report: MirrorVerifyReport | null; error: string | null }>({ loading: false, report: null, error: null });
+  const activeReadFlip = getActiveReadFlip();
+  const globalReadFlip = (appData.organizationSettings as any)?.readFromSubcollections as boolean | undefined;
+  const wantedReadFlip = resolveReadFlip({ local: localReadFlip, global: globalReadFlip, build: (import.meta as any).env?.VITE_READ_FROM_SUBCOLLECTIONS === 'true' });
+  const changeLocalReadFlip = (v: 'on' | 'off' | null) => { writeLocalReadFlip(v); setLocalReadFlip(v); };
+  const applyGlobalReadFlip = (v: boolean) => {
+    setAppData?.((prev) => prev ? ({ ...prev, organizationSettings: { ...(prev.organizationSettings as any), readFromSubcollections: v } }) : prev);
+    setConfirmGlobal(null);
+  };
+  const runVerify = async () => {
+    setVerifyState({ loading: true, report: null, error: null });
+    try {
+      setVerifyState({ loading: false, report: await verifyMirrorsInBrowser(ORG_ID), error: null });
+    } catch (e: any) {
+      setVerifyState({ loading: false, report: null, error: e?.message || String(e) });
+    }
+  };
+  // The users mirror is informational; the read-flip only depends on the entity fields + periodSettings.
+  const entitiesVerifiedOk = !!verifyState.report && verifyState.report.fields.filter((f) => f.field !== 'users').every((f) => f.ok);
+  const originLabel = (o?: string) => o === 'local' ? 'ตั้งเฉพาะเครื่องนี้' : o === 'global' ? 'ตั้งทั้งระบบ' : o === 'build' ? 'ค่าตอน deploy' : 'ค่าเริ่มต้น';
 
   const isAdmin = appData.currentUser?.role === 'admin';
   const orgId = ORG_ID;
@@ -713,6 +739,142 @@ export const SystemHealthScreen: React.FC<SystemHealthScreenProps> = ({
             )}
           </div>
 
+          {/* Phase 2: read source controls */}
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+            <div className="p-5 md:p-6 border-b border-slate-200 bg-slate-50/60">
+              <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                <Database className="w-5 h-5 text-indigo-600" />
+                แหล่งอ่านข้อมูล: เอกสารหลัก / แฟ้มย่อย (Phase 2)
+              </h2>
+              <p className="text-xs text-slate-500 mt-0.5">
+                ตอนนี้หน้านี้อ่านข้อมูลจาก{' '}
+                <strong className={activeReadFlip?.enabled ? 'text-indigo-700' : 'text-slate-800'}>
+                  {activeReadFlip?.enabled ? 'แฟ้มย่อย (หลายแฟ้ม)' : 'เอกสารหลักก้อนเดียว'}
+                </strong>{' '}
+                ({originLabel(activeReadFlip?.origin)}) · การเขียนบันทึกยังลงทั้งสองที่เสมอ
+              </p>
+            </div>
+            <div className="p-5 md:p-6 space-y-6">
+              {/* 0. verify */}
+              <div className="space-y-3">
+                <div className="flex flex-wrap items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={runVerify}
+                    disabled={verifyState.loading}
+                    className="text-xs font-semibold px-4 py-2 rounded-lg bg-slate-800 text-white hover:bg-slate-700 disabled:opacity-50 flex items-center gap-2"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${verifyState.loading ? 'animate-spin' : ''}`} />
+                    ตรวจสอบสำเนาแฟ้มย่อยตอนนี้ (Verify)
+                  </button>
+                  <span className="text-[11px] text-slate-500">เทียบเอกสารหลักกับแฟ้มย่อยทุกรายการ · อ่านอย่างเดียว · ใช้ประมาณ 800 reads ต่อครั้ง</span>
+                </div>
+                {verifyState.error && (
+                  <div className="p-3 bg-red-50 border border-red-300 rounded-xl text-xs text-red-800">ตรวจสอบไม่สำเร็จ: {verifyState.error}</div>
+                )}
+                {verifyState.report && (
+                  <div className="space-y-2">
+                    <div className={`p-3 rounded-xl text-xs font-semibold border ${entitiesVerifiedOk ? 'bg-emerald-50 border-emerald-300 text-emerald-800' : 'bg-red-50 border-red-300 text-red-800'}`}>
+                      {entitiesVerifiedOk ? '✅ สำเนาตรงกับเอกสารหลักทุกรายการ พร้อมเปิดอ่านจากแฟ้มย่อยได้' : '❌ พบรายการที่ไม่ตรงกัน — ยังไม่ควรเปิดอ่านจากแฟ้มย่อย'}
+                      <span className="font-normal text-slate-500"> · ตรวจเมื่อ {new Date(verifyState.report.checkedAt).toLocaleTimeString('th-TH')} · {verifyState.report.reads.toLocaleString()} reads</span>
+                    </div>
+                    <div className="overflow-x-auto border border-slate-200 rounded-xl">
+                      <table className="w-full text-left text-xs text-slate-700">
+                        <thead className="bg-slate-100/80 font-semibold border-b border-slate-200">
+                          <tr>
+                            <th className="px-3 py-2">ข้อมูล</th>
+                            <th className="px-3 py-2 text-right">เอกสารหลัก</th>
+                            <th className="px-3 py-2 text-right">แฟ้มย่อย</th>
+                            <th className="px-3 py-2 text-right">ขาดในแฟ้มย่อย</th>
+                            <th className="px-3 py-2 text-right">เกินในแฟ้มย่อย</th>
+                            <th className="px-3 py-2 text-right">เนื้อหาต่างกัน</th>
+                            <th className="px-3 py-2 text-center">ผล</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100 font-mono">
+                          {verifyState.report.fields.map((f) => (
+                            <tr key={f.field}>
+                              <td className="px-3 py-2 font-sans font-medium text-slate-800">{f.field}{f.field === 'users' && <span className="ml-1 text-[10px] text-slate-400">(ข้อมูลประกอบ)</span>}</td>
+                              <td className="px-3 py-2 text-right">{f.docCount}</td>
+                              <td className="px-3 py-2 text-right">{f.mirrorCount}</td>
+                              <td className="px-3 py-2 text-right">{f.missingInMirror.length}</td>
+                              <td className="px-3 py-2 text-right">{f.extraInMirror.length}</td>
+                              <td className="px-3 py-2 text-right" title={f.contentMismatch.slice(0, 5).join(', ')}>{f.contentMismatch.length}</td>
+                              <td className="px-3 py-2 text-center font-sans">{f.ok ? '✅' : '❌'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* 1. this browser only */}
+              <div className="space-y-2">
+                <h3 className="text-sm font-bold text-slate-800">1) ทดลองเฉพาะเครื่องนี้ (คนอื่นไม่ถูกกระทบ)</h3>
+                <div className="inline-flex bg-slate-100 p-1 rounded-lg text-xs font-medium">
+                  {([[null, 'ตามระบบ'], ['on', 'เปิดเฉพาะเครื่องนี้'], ['off', 'ปิดเฉพาะเครื่องนี้']] as ['on' | 'off' | null, string][]).map(([v, label]) => (
+                    <button
+                      key={String(v)}
+                      type="button"
+                      onClick={() => changeLocalReadFlip(v)}
+                      className={`px-3 py-1.5 rounded-md transition-colors ${localReadFlip === v ? 'bg-white text-slate-900 shadow-sm font-bold' : 'text-slate-600 hover:text-slate-900'}`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-[11px] text-slate-500">“ปิดเฉพาะเครื่องนี้” ใช้เป็นทางออกถ้าเปิดทั้งระบบแล้วมีปัญหา</p>
+              </div>
+
+              {/* 2. system-wide */}
+              <div className="space-y-2">
+                <h3 className="text-sm font-bold text-slate-800">2) เปิดทั้งระบบ (ทุกคนจะอ่านจากแฟ้มย่อยเมื่อเปิดแอปครั้งถัดไป)</h3>
+                <div className="flex flex-wrap items-center gap-3">
+                  <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${globalReadFlip ? 'bg-indigo-100 text-indigo-800' : 'bg-slate-100 text-slate-700'}`}>
+                    สถานะทั้งระบบ: {globalReadFlip ? 'เปิด' : 'ปิด'}
+                  </span>
+                  {confirmGlobal === null && (
+                    <button
+                      type="button"
+                      onClick={() => setConfirmGlobal(!globalReadFlip)}
+                      disabled={!globalReadFlip && !entitiesVerifiedOk}
+                      title={!globalReadFlip && !entitiesVerifiedOk ? 'ต้องกด Verify แล้วผ่านก่อน' : undefined}
+                      className={`text-xs font-semibold px-4 py-2 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed ${globalReadFlip ? 'bg-white border border-red-300 text-red-700 hover:bg-red-50' : 'bg-indigo-600 text-white hover:bg-indigo-700'}`}
+                    >
+                      {globalReadFlip ? 'ปิดทั้งระบบ' : 'เปิดทั้งระบบ'}
+                    </button>
+                  )}
+                  {!globalReadFlip && !entitiesVerifiedOk && confirmGlobal === null && (
+                    <span className="text-[11px] text-amber-700">กดตรวจสอบสำเนาให้ผ่านก่อน จึงจะเปิดได้</span>
+                  )}
+                </div>
+                {confirmGlobal !== null && (
+                  <div className="p-3 bg-amber-50 border border-amber-300 rounded-xl text-xs text-amber-900 space-y-2">
+                    <p>
+                      {confirmGlobal
+                        ? 'ยืนยันเปิดอ่านจากแฟ้มย่อยทั้งระบบ? ผู้ใช้ทุกคนจะอ่านประมาณ 800 เอกสารต่อการเปิดแอปหนึ่งครั้ง ถ้ามีปัญหากดปิดได้ทันที ข้อมูลไม่เสียหาย'
+                        : 'ยืนยันปิดการอ่านจากแฟ้มย่อยทั้งระบบ? ทุกคนจะกลับไปอ่านจากเอกสารหลักเมื่อเปิดแอปครั้งถัดไป'}
+                    </p>
+                    <div className="flex gap-2">
+                      <button type="button" onClick={() => applyGlobalReadFlip(confirmGlobal)} className="px-3 py-1.5 rounded-lg bg-slate-800 text-white font-semibold hover:bg-slate-700">ยืนยัน</button>
+                      <button type="button" onClick={() => setConfirmGlobal(null)} className="px-3 py-1.5 rounded-lg bg-white border border-slate-300 text-slate-700 hover:bg-slate-50">ยกเลิก</button>
+                    </div>
+                  </div>
+                )}
+                <p className="text-[11px] text-slate-500">ค่านี้บันทึกลง Firestore ด้วยระบบบันทึกอัตโนมัติเดิม เครื่องที่เปิดแอปอยู่แล้วจะยังใช้แหล่งเดิมจนกว่าจะรีโหลดหน้า</p>
+              </div>
+
+              {(wantedReadFlip.enabled !== !!activeReadFlip?.enabled) && (
+                <div className="p-3 bg-blue-50 border border-blue-300 rounded-xl text-xs text-blue-900 flex flex-wrap items-center justify-between gap-2">
+                  <span>เปลี่ยนการตั้งค่าแล้ว ต้องรีโหลดหน้าเพื่อให้มีผล (รอสักครู่ให้ระบบบันทึกค่าทั้งระบบเสร็จก่อนรีโหลด)</span>
+                  <button type="button" onClick={() => window.location.reload()} className="px-3 py-1.5 rounded-lg bg-blue-600 text-white font-semibold hover:bg-blue-700">รีโหลดหน้า</button>
+                </div>
+              )}
+            </div>
+          </div>
+
           {/* Before / After trial report */}
           <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
             <div className="p-5 md:p-6 border-b border-slate-200 bg-slate-50/60 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
@@ -722,7 +884,7 @@ export const SystemHealthScreen: React.FC<SystemHealthScreenProps> = ({
                   รายงานเทียบก่อน / หลังทดลอง
                 </h2>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  เลือกวันที่เริ่มทดลอง (เช่น วันที่เปิด VITE_READ_FROM_SUBCOLLECTIONS) ระบบจะแยกสถิติเป็น “ก่อน” และ “หลัง” ให้เทียบกัน
+                  เลือกวันที่เริ่มทดลอง (เช่น วันที่เปิดอ่านจากแฟ้มย่อย) ระบบจะแยกสถิติเป็น “ก่อน” และ “หลัง” ให้เทียบกัน
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-2">

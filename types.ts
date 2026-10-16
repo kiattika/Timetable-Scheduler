@@ -123,6 +123,7 @@ export interface OrganizationSettings {
   schoolHolidays?: string; // วันหยุด (คั่นด้วยบรรทัดใหม่)
   operatingDays?: DayOfWeek[]; // วันที่จัดการเรียนการสอน
   isLocked?: boolean; // ล็อคตารางเรียนประจำภาคเรียน
+  readFromSubcollections?: boolean; // เปิดอ่านข้อมูลจากแฟ้มย่อย (Phase 2) ทั้งระบบ — ตั้งจากหน้า System Health
   allowedDomain?: string; // โดเมนที่อนุญาต
   schoolAdminEmail?: string; // อีเมลแอดมินโรงเรียน
   orderNumber?: string; // เลขที่คำสั่ง เช่น "371/2569"

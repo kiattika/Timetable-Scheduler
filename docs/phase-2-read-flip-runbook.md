@@ -30,9 +30,15 @@ the main doc — small and security-relevant).
    25 rooms + 490 links + periodSettings) vs 1 doc before. Watch the read quota in the
    GCP console for a day.
 
-## Turn on / roll back
-- On: set `VITE_READ_FROM_SUBCOLLECTIONS=true` in the AI Studio secrets and publish.
-- Roll back: set it to `false` (or remove it) and publish. No data change involved.
+## Turn on / roll back (buttons in the app)
+System Health -> "แหล่งอ่านข้อมูล: เอกสารหลัก / แฟ้มย่อย (Phase 2)" (admin only):
+- **Verify** button = the in-browser equivalent of `migrate-to-subcollections.ts --verify-only` (~800 reads).
+- **1) This browser only** (ตามระบบ / เปิด / ปิด): localStorage, affects nobody else. "ปิดเฉพาะเครื่องนี้" is the escape hatch.
+- **2) System-wide**: stored in `organizationSettings.readFromSubcollections` (saved through the normal autosave,
+  no functions change). Enabling is blocked until Verify passes in this session. Everyone picks it up on next app load.
+- Precedence: this browser > system-wide > `VITE_READ_FROM_SUBCOLLECTIONS` (build env, still supported) > off.
+- The choice is made once per page load (first main-doc snapshot); after pressing a button, reload the page.
+- Roll back: press the same button the other way (or "ปิดเฉพาะเครื่องนี้" first if you cannot reach the page normally).
 
 ## Smoke test after turning on
 - Log in as admin: teacher / subject / link counts match the Manage pages before the flip.

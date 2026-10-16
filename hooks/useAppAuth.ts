@@ -5,12 +5,15 @@ import { db, auth } from '../lib/firebase';
 import { doc, collection, onSnapshot, query, orderBy, limit, type Query, type DocumentReference } from 'firebase/firestore';
 import { DEFAULT_PERIOD_SETTINGS } from '../constants';
 import { logActivity, logLoginAttempt } from '../lib/logger';
-import { READ_FLIP_ENTITY_FIELDS, PERIOD_SETTINGS_DOC_ID, resolveEntityList, resolvePeriodSettings } from '../lib/subcollectionReads';
+import { READ_FLIP_ENTITY_FIELDS, PERIOD_SETTINGS_DOC_ID, resolveEntityList, resolvePeriodSettings, resolveReadFlip, readLocalReadFlip, setActiveReadFlip } from '../lib/subcollectionReads';
 
 // Phase 2 read-flip switch. OFF by default: the app reads the entity arrays from the
-// monolithic apps/{orgId} doc exactly as before. Set VITE_READ_FROM_SUBCOLLECTIONS=true
-// to read them from the Phase-1 mirror subcollections instead (see docs/phase-2-read-flip-runbook.md).
-const READ_FROM_SUBCOLLECTIONS = (import.meta as any).env?.VITE_READ_FROM_SUBCOLLECTIONS === 'true';
+// monolithic apps/{orgId} doc exactly as before. It can be turned on (see resolveReadFlip):
+//   1. per browser  — button in System Health (localStorage), or
+//   2. system-wide  — button in System Health (organizationSettings.readFromSubcollections), or
+//   3. at build     — VITE_READ_FROM_SUBCOLLECTIONS=true.
+// The choice is made ONCE per page load, at the first main-doc snapshot; changing it later needs a reload.
+const READ_FROM_SUBCOLLECTIONS_BUILD = (import.meta as any).env?.VITE_READ_FROM_SUBCOLLECTIONS === 'true';
 
 export const useAppAuth = (
   appData: AppData | null,
@@ -86,6 +89,8 @@ export const useAppAuth = (
         const mirrorFired = new Set<string>();
         const MIRROR_LABELS = [...READ_FLIP_ENTITY_FIELDS, 'periodSettings'];
         const reportedDivergence = new Set<string>();
+        let READ_FROM_SUBCOLLECTIONS = false; // decided at the first main-doc snapshot
+        let readFlipDecided = false;
 
         // Bounded retry for a listener that fails with `permission-denied` — the
         // token-propagation race above. Per-listener state; each re-attach clears
@@ -263,6 +268,31 @@ export const useAppAuth = (
           setIsDataLoaded(true);
         };
 
+        // Phase 2: attach the mirror subcollection listeners (only when the read-flip is on for this page load).
+        const attachMirrors = () => {
+          const markFired = (label: string) => { mirrorFired.add(label); updateCombinedAppData(); };
+          for (const field of READ_FLIP_ENTITY_FIELDS) {
+            unsubMirrors.push(makeRetryingListener(
+              `mirror:${field}`,
+              () => collection(db, 'apps', ORG_ID, field),
+              (colSnap: any) => {
+                mirrorLists[field] = colSnap.docs.map((d: any) => ({ ...d.data(), id: d.id }));
+                markFired(field);
+              },
+              () => { mirrorLists[field] = null; markFired(field); },
+            ));
+          }
+          unsubMirrors.push(makeRetryingListener(
+            'mirror:periodSettings',
+            () => doc(db, 'apps', ORG_ID, 'periodSettings', PERIOD_SETTINGS_DOC_ID),
+            (docSnap: any) => {
+              mirrorPeriodDoc = docSnap.exists() ? docSnap.data() : null;
+              markFired('periodSettings');
+            },
+            () => { mirrorPeriodDoc = null; markFired('periodSettings'); },
+          ));
+        };
+
         // 1. Real-time listener for main doc (apps/{ORG_ID}) — retries permission-denied.
         unsubMainDoc = makeRetryingListener(
           'main-doc',
@@ -270,6 +300,20 @@ export const useAppAuth = (
           (docSnap: any) => {
             mainDocFired = true;
             mainParsedData = docSnap.exists() ? docSnap.data() : null;
+            if (!readFlipDecided) {
+              readFlipDecided = true;
+              const decision = resolveReadFlip({
+                local: readLocalReadFlip(),
+                global: mainParsedData?.organizationSettings?.readFromSubcollections,
+                build: READ_FROM_SUBCOLLECTIONS_BUILD,
+              });
+              READ_FROM_SUBCOLLECTIONS = decision.enabled;
+              setActiveReadFlip(decision);
+              if (decision.enabled) {
+                console.info(`[read-flip] reading from subcollections (source: ${decision.origin})`);
+                attachMirrors();
+              }
+            }
             updateCombinedAppData();
           },
         );
@@ -298,30 +342,6 @@ export const useAppAuth = (
           },
         );
 
-        // 4. Phase 2 (flag-gated): mirror subcollections for the other entity arrays.
-        if (READ_FROM_SUBCOLLECTIONS) {
-          const markFired = (label: string) => { mirrorFired.add(label); updateCombinedAppData(); };
-          for (const field of READ_FLIP_ENTITY_FIELDS) {
-            unsubMirrors.push(makeRetryingListener(
-              `mirror:${field}`,
-              () => collection(db, 'apps', ORG_ID, field),
-              (colSnap: any) => {
-                mirrorLists[field] = colSnap.docs.map((d: any) => ({ ...d.data(), id: d.id }));
-                markFired(field);
-              },
-              () => { mirrorLists[field] = null; markFired(field); },
-            ));
-          }
-          unsubMirrors.push(makeRetryingListener(
-            'mirror:periodSettings',
-            () => doc(db, 'apps', ORG_ID, 'periodSettings', PERIOD_SETTINGS_DOC_ID),
-            (docSnap: any) => {
-              mirrorPeriodDoc = docSnap.exists() ? docSnap.data() : null;
-              markFired('periodSettings');
-            },
-            () => { mirrorPeriodDoc = null; markFired('periodSettings'); },
-          ));
-        }
 
       } catch (error) {
         console.error("Failed to fetch/subscribe to initial app data:", error);
