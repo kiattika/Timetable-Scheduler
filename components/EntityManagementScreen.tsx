@@ -44,6 +44,8 @@ const EntityManagementScreen = <T extends Identifiable,>({
   const [searchTerm, setSearchTerm] = useState('');
   // Subjects page: department filter + bulk colour tool
   const [selectedDepartmentFilter, setSelectedDepartmentFilter] = useState('');
+  // '' = all, '1' / '2' = offered in that semester (incl. subjects open every semester), '__every__' = only those open every semester
+  const [selectedSemesterFilter, setSelectedSemesterFilter] = useState('');
   const [isColorToolOpen, setIsColorToolOpen] = useState(false);
   const [colorMode, setColorMode] = useState<SubjectColorMode>('gradient');
   const [colorBase, setColorBase] = useState('#3B82F6');
@@ -657,6 +659,15 @@ const EntityManagementScreen = <T extends Identifiable,>({
       }
     }
 
+    if (entityType === 'subjects' && selectedSemesterFilter) {
+      if (selectedSemesterFilter === '__every__') {
+        const list = (item as any).applicableSemesters;
+        if (Array.isArray(list) && list.length > 0) return false;
+      } else if (!subjectOfferedInSemester(item, selectedSemesterFilter)) {
+        return false;
+      }
+    }
+
     if (Object.prototype.hasOwnProperty.call(item, 'name') && typeof (item as any).name === 'string') {
       if (String((item as any).name).toLowerCase().includes(searchTerm.toLowerCase())) {
         return true;
@@ -908,6 +919,19 @@ const EntityManagementScreen = <T extends Identifiable,>({
                 options={[{ value: '', label: 'ทุกกลุ่มสาระฯ (All Departments)' }, ...subjectDepartments.map(d => ({ value: d, label: d }))]}
               />
             </div>
+            <div className="sm:w-56">
+              <SearchableSelect
+                value={selectedSemesterFilter}
+                onChange={setSelectedSemesterFilter}
+                placeholder="กรองภาคเรียน"
+                options={[
+                  { value: '', label: 'ทุกภาคเรียน (แสดงทั้งหมด)' },
+                  { value: '1', label: 'ภาคเรียนที่ 1 (รวมวิชาที่เปิดทุกภาค)' },
+                  { value: '2', label: 'ภาคเรียนที่ 2 (รวมวิชาที่เปิดทุกภาค)' },
+                  { value: '__every__', label: 'เฉพาะวิชาที่เปิดทุกภาคเรียน' },
+                ]}
+              />
+            </div>
             <button
               type="button"
               onClick={() => setIsColorToolOpen(true)}
@@ -1039,7 +1063,8 @@ const EntityManagementScreen = <T extends Identifiable,>({
           <div className="space-y-4 text-sm">
             <p className="text-slate-600">
               ใช้กับรายวิชาที่แสดงอยู่ <b>{filteredItems.length}</b> รายการ
-              {selectedDepartmentFilter ? ` (กลุ่มสาระฯ: ${selectedDepartmentFilter})` : ''} — เรียงตามรหัสวิชา
+              {selectedDepartmentFilter ? ` (กลุ่มสาระฯ: ${selectedDepartmentFilter})` : ''}
+              {selectedSemesterFilter ? ` (ภาคเรียน: ${selectedSemesterFilter === '__every__' ? 'เปิดทุกภาค' : selectedSemesterFilter})` : ''} — เรียงตามรหัสวิชา
               <br /><span className="text-xs text-slate-500">ใช้ช่องค้นหา/ตัวกรองกลุ่มสาระฯ เพื่อเลือกกลุ่มย่อย เช่น ค้นหา "ฟิสิกส์" หรือ "ว3"</span>
             </p>
             <div className="space-y-2">
