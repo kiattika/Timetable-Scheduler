@@ -525,17 +525,69 @@ const GradeLevelPlannerView: React.FC<GradeLevelPlannerViewPropsExtended> = (pro
     }
     
     const operatingDays = appData.organizationSettings?.operatingDays || ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"] as DayOfWeek[];
-    const suggestions: {day: DayOfWeek, periodIndex: number}[] = [];
-    
+
+    // --- Workload picture used to rank the free slots (lighter days first) ---
+    const teacherId0 = assistantSelectedTeacherIds[0];
+    const teacherPeriodsByDay = new Map<string, Set<number>>();
+    scheduleEntries.forEach(e => {
+      if (!e.teacherIds.includes(teacherId0)) return;
+      if (!teacherPeriodsByDay.has(e.day)) teacherPeriodsByDay.set(e.day, new Set());
+      teacherPeriodsByDay.get(e.day)!.add(e.period);
+    });
+    const classCountByDay = new Map<string, number>();
+    const sameSubjectDays = new Set<string>();
+    scheduleEntries.forEach(e => {
+      if (e.gradeLevelId !== selectedGradeLevelId) return;
+      classCountByDay.set(e.day, (classCountByDay.get(e.day) || 0) + 1);
+      if (e.subjectId === assistantSubjectId) sameSubjectDays.add(e.day);
+    });
+    // Length of the teaching run that would include `p` if the teacher also taught at `p`
+    const runLengthWith = (taken: Set<number>, p: number) => {
+      let len = 1;
+      for (let i = p - 1; taken.has(i); i--) len++;
+      for (let i = p + 1; taken.has(i); i++) len++;
+      return len;
+    };
+
+    const candidates: { day: DayOfWeek; periodIndex: number; score: number; reasons: string[] }[] = [];
     for (const day of operatingDays) {
+      const taken = teacherPeriodsByDay.get(day) || new Set<number>();
+      const teacherDay = taken.size;
+      const classDay = classCountByDay.get(day) || 0;
       for (let pIndex = 0; pIndex < periodSettings.length; pIndex++) {
         const conflict = checkConflicts(day, pIndex, assistantSelectedTeacherIds, '', selectedGradeLevelId, assistantSubjectId, null, 1);
-        if (!conflict) {
-          suggestions.push({day, periodIndex: pIndex});
-        }
+        if (conflict) continue;
+
+        const run = runLengthWith(taken, pIndex);
+        const sameSubjectToday = sameSubjectDays.has(day);
+        let score = teacherDay * 3 + classDay * 1.5 + pIndex * 0.01;
+        const reasons: string[] = [`ครูสอนวันนี้ ${teacherDay} คาบ`];
+        if (run >= 5) { score += 30; reasons.push(`จะสอนติดกัน ${run} คาบ`); }
+        else if (run === 4) { score += 15; reasons.push('จะสอนติดกัน 4 คาบ'); }
+        else if (run === 3) { score += 4; }
+        if (sameSubjectToday) { score += 4; reasons.push('วิชานี้มีในวันนั้นแล้ว'); }
+        if (teacherDay >= 6) reasons.push('วันนี้ครูค่อนข้างหนัก');
+        candidates.push({ day, periodIndex: pIndex, score, reasons });
       }
     }
-    return suggestions.slice(0, 3);
+
+    // Best three, spread over different days where possible (a day already picked gets a penalty for the next pick)
+    const picked: typeof candidates = [];
+    const pickedDays = new Map<string, number>();
+    const pool = [...candidates];
+    while (picked.length < 3 && pool.length > 0) {
+      let bestIdx = 0;
+      let bestScore = Infinity;
+      pool.forEach((c, i) => {
+        const adj = c.score + (pickedDays.get(c.day) || 0) * 6;
+        if (adj < bestScore) { bestScore = adj; bestIdx = i; }
+      });
+      const [chosen] = pool.splice(bestIdx, 1);
+      picked.push(chosen);
+      pickedDays.set(chosen.day, (pickedDays.get(chosen.day) || 0) + 1);
+    }
+    const suggestions = picked.sort((a, b) => a.score - b.score);
+    return suggestions;
   }, [assistantSelectedSubject, selectedGradeLevelId, assistantSelectedTeacherIds, scheduleEntries, gradeLevels, gradeHierarchyHelpers, checkIsParentGrade, appData.organizationSettings?.operatingDays, periodSettings, checkConflicts, assistantSubjectId]);
 
   const activeConflict = useMemo(() => {
@@ -807,15 +859,18 @@ const GradeLevelPlannerView: React.FC<GradeLevelPlannerViewPropsExtended> = (pro
                       <div>
                           <h4 className="text-sm font-semibold text-purple-800 mb-2 flex items-center">
                               <Icons.Sparkles size={16} className="mr-1" />
-                              ข้อเสนอแนะ 3 คาบที่ว่างตรงกัน
+                              ข้อเสนอแนะ 3 คาบที่เหมาะสมที่สุด
                           </h4>
                           {smartSuggestions.length > 0 ? (
                               <ul className="space-y-2">
                                   {smartSuggestions.map((sug, idx) => {
                                       const periodLabel = periodSettings[sug.periodIndex]?.label || `P${sug.periodIndex}`;
                                       return (
-                                          <li key={idx} className="p-2 border border-purple-200 rounded bg-purple-50 flex items-center justify-between">
-                                              <span className="text-xs text-purple-800 font-medium">{sug.day}, {periodLabel}</span>
+                                          <li key={idx} className="p-2 border border-purple-200 rounded bg-purple-50 flex items-center justify-between gap-2">
+                                              <span className="text-xs text-purple-800 font-medium">
+                                                  {sug.day}, {periodLabel}
+                                                  <span className="block text-[11px] font-normal text-slate-500 mt-0.5">{sug.reasons.join(' · ')}</span>
+                                              </span>
                                               <button 
                                                   onClick={() => applyAssistantSuggestion(sug.day, sug.periodIndex)}
                                                   className="px-2 py-1 bg-purple-600 hover:bg-purple-700 text-white rounded text-xs transition-colors"
