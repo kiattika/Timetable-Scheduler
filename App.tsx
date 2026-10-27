@@ -665,6 +665,13 @@ const App: React.FC = () => {
                     gradeLevels={appData.gradeLevels}
                     setPeriodSettings={(updater) => setAppData(prev => prev ? ({...prev, periodSettings: typeof updater === 'function' ? updater(prev.periodSettings) : updater}) : null)}
                     deletePeriodSetting={handleDeletePeriodSetting}
+                    subjects={appData.subjects}
+                    teachers={appData.teachers}
+                    teacherSubjectAssignments={appData.teacherSubjectAssignments}
+                    scheduleEntries={appData.scheduleEntries}
+                    setScheduleEntries={(updater) => setAppData(prev => prev ? ({...prev, scheduleEntries: updater(prev.scheduleEntries)}) : null)}
+                    currentSemester={appData.organizationSettings?.semester}
+                    operatingDays={(appData.organizationSettings as any)?.operatingDays}
                     {...screenAccessProps}
                  />;
         case 'organizationSettings':
