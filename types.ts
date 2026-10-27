@@ -93,6 +93,15 @@ export interface PeriodSetting {
   startTime: string; // e.g., "08:00"
   endTime: string; // e.g., "08:50"
   lunchGradeLevelIds?: string[]; // Parent grade levels (e.g. M.1) for which this period is lunch break (children included)
+  fixedActivities?: FixedActivity[]; // Subjects reserved in this period (e.g. clubs, scouts, cleaning zone) – see lib/fixedActivities.ts
+}
+
+/** A subject reserved in a period for some parent grade levels on some days; entries are generated from it. */
+export interface FixedActivity {
+  id: string;
+  subjectId: string;
+  gradeLevelIds: string[]; // Parent grade levels (e.g. M.1); the class rooms inside are included
+  days: DayOfWeek[];
 }
 
 export interface ScheduleEntry {
@@ -107,6 +116,7 @@ export interface ScheduleEntry {
   blockIndex?: number; // Optional 0-indexed position within a block
   totalInBlock?: number; // Optional total number of entries in this block
   cohort?: string; // Optional student cohort for split classes
+  fixedActivityId?: string; // Set when generated from a period's fixed activity (so it can be regenerated/removed)
   cachedSubjectName?: string;
   cachedSubjectCode?: string;
   // Homeroom room of the class when this entry was placed/last acknowledged ('' = none).
