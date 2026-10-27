@@ -112,3 +112,27 @@ export const isLunchPeriodForGrade = (
     const parentId = getParentGradeLevelId(gradeLevelId, allGradeLevels);
     return !!parentId && ids.includes(parentId);
 };
+
+/**
+ * Teacher-only subjects (PLC, meetings, clubs…) have no class, so "periods per week" is a quota PER TEACHER,
+ * not one shared pool for the whole 'Non-Student' pseudo-grade. Returns the highest number of periods any one
+ * of `teacherIds` already has for the subject, ignoring entries in `skip`.
+ */
+export const maxTeacherOnlyPeriods = (
+  entries: Array<{ id: string; subjectId?: string; teacherIds?: string[] }>,
+  subjectId: string,
+  teacherIds: string[],
+  skip?: (e: { id: string }) => boolean,
+): number => {
+  let max = 0;
+  for (const tid of teacherIds) {
+    let n = 0;
+    for (const e of entries) {
+      if (e.subjectId !== subjectId || !Array.isArray(e.teacherIds) || !e.teacherIds.includes(tid)) continue;
+      if (skip && skip(e)) continue;
+      n++;
+    }
+    if (n > max) max = n;
+  }
+  return max;
+};

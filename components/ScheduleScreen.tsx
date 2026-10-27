@@ -16,7 +16,7 @@ import SlotAvailabilityInspectorModal from './SlotAvailabilityInspectorModal';
 import { AuditModal } from './AuditModal';
 import { WalkingCheckScreen, computeWalkReport, countWalkingRisks, makeWalkMarkGetter } from './WalkingCheckScreen';
 import { usePersistedState } from '../utils/usePersistedState';
-import { getParentGradeLevelId, getChildGradeLevelIds, isParentGrade, isChildOf, isSharable, getAvailablePhysicalRooms, isLunchPeriodForGrade, entryCoversHomeroom } from './scheduleUtils';
+import { getParentGradeLevelId, getChildGradeLevelIds, isParentGrade, isChildOf, isSharable, getAvailablePhysicalRooms, isLunchPeriodForGrade, entryCoversHomeroom, maxTeacherOnlyPeriods } from './scheduleUtils';
 import { useTouchDrag } from '../hooks/useTouchDrag';
 import { assistantMayArrange, ASSISTANT_CROSS_DEPT_MESSAGE } from '../lib/assistantScope';
 import { ReviewWizardModal, Discrepancy, DetailRow } from './ReviewWizardModal';
@@ -1294,13 +1294,22 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
                 ? [gradeLevelId, ...getChildGradeLevelIds(gradeLevelId, gradeLevels)] 
                 : [gradeLevelId];
 
-        scheduleEntries.forEach(e => {
-            if (gradesToCheckForPpw.includes(e.gradeLevelId) && e.subjectId === subjectId) {
-                 if (!editingEntryId || (editingBlockId ? e.blockId !== editingBlockId : e.id !== editingEntryId)) {
-                    scheduledPeriodsForSubject +=1;
-                 }
-            }
-        });
+        const isTeacherOnlySlot = placingSubjectType === 'TEACHER_ONLY' || gradeLevelId === 'Non-Student';
+        if (isTeacherOnlySlot) {
+            // Quota is per teacher: another teacher may be added to the same subject later without hitting the limit.
+            scheduledPeriodsForSubject = maxTeacherOnlyPeriods(
+                scheduleEntries as any, subjectId, teacherIds || [],
+                e => !!editingEntryId && (editingBlockId ? (e as any).blockId === editingBlockId : e.id === editingEntryId),
+            );
+        } else {
+            scheduleEntries.forEach(e => {
+                if (gradesToCheckForPpw.includes(e.gradeLevelId) && e.subjectId === subjectId) {
+                     if (!editingEntryId || (editingBlockId ? e.blockId !== editingBlockId : e.id !== editingEntryId)) {
+                        scheduledPeriodsForSubject +=1;
+                     }
+                }
+            });
+        }
 
         if (!editingEntryId && (scheduledPeriodsForSubject + assignmentDuration > currentSubjectDetails.periodsPerWeek)) {
             const gradeLevelName = gradeLevels.find(gl => gl.id === gradeLevelId)?.name || 'this grade';
@@ -1980,6 +1989,7 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
     if (!editingEntryId && currentSelectedGradeId) {
         resultSubjects = resultSubjects.filter(subject => {
             if (subject.periodsPerWeek === undefined) return true; 
+            if (subject.type === 'TEACHER_ONLY') return true; // quota is per teacher, checked when saving
             
             let gradesToCheckPpw: string[];
             const targetGradeIsParentForPPW = isParentGrade(currentSelectedGradeId, gradeLevels);
@@ -2213,6 +2223,14 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
         gradesToCheckPpw = [targetGradeId];
     }
     
+    if (currentSubjectDetailsForModal.type === 'TEACHER_ONLY' || targetGradeId === 'Non-Student') {
+        const editing = editingEntryId ? scheduleEntries.find(se => se.id === editingEntryId) : null;
+        return maxTeacherOnlyPeriods(
+            scheduleEntries as any, currentSubjectDetailsForModal.id, currentAssignment.teacherIds || [],
+            e => !!editing && (editing.blockId ? (e as any).blockId === editing.blockId : e.id === editing.id),
+        );
+    }
+
     let count = 0;
     scheduleEntries.forEach(e => {
         if (e.subjectId === currentSubjectDetailsForModal.id && gradesToCheckPpw.includes(e.gradeLevelId)) {
@@ -2226,7 +2244,7 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
         }
     });
     return count;
-  }, [currentAssignment.gradeLevelId, currentSubjectDetailsForModal, scheduleEntries, editingEntryId, gradeLevels]);
+  }, [currentAssignment.gradeLevelId, currentSubjectDetailsForModal, scheduleEntries, editingEntryId, gradeLevels, currentAssignment.teacherIds]);
 
   // Assignment modal fields, extracted so Task 2 can reorder them per viewType without
   // duplicating the modal into separate components. Filtering logic for each field is
