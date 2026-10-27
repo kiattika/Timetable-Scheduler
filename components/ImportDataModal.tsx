@@ -478,6 +478,9 @@ export const ImportDataModal: React.FC<ImportDataModalProps> = ({
             `ห้อง ${r.code}`.toLowerCase() === roomQuery
           );
           newItemData.homeroomPhysicalRoomId = match ? match.id : undefined;
+          if (!match) {
+            messages.push(`แถวที่ ${rowIndex + 2}: ไม่พบห้อง '${roomQuery}' ในระบบ (ไม่ได้ตั้งค่าห้องโฮมรูม — คงค่าเดิมไว้)`);
+          }
         }
       }
 
@@ -601,16 +604,24 @@ export const ImportDataModal: React.FC<ImportDataModalProps> = ({
         // No match → falls through and is added as a new teacher
       }
 
-      // Subjects (key: subjectCode) and Physical Rooms (key: Room Code): upsert on re-import.
+      // Subjects (key: subjectCode), Physical Rooms (key: Room Code) and Grade Levels / Classrooms
+      // (key: Grade Level Name): upsert on re-import.
       // Fields left empty in the file keep their current value; only filled cells are updated.
-      if (selectedEntityType === 'subjects' || selectedEntityType === 'physicalRooms') {
+      if (selectedEntityType === 'subjects' || selectedEntityType === 'physicalRooms' ||
+          selectedEntityType === 'gradeLevels' || selectedEntityType === 'classrooms') {
         const isSubject = selectedEntityType === 'subjects';
-        const keyField = isSubject ? 'subjectCode' : 'code';
-        const keyNorm = normKey(finalNewItem[keyField]);
+        const isGrade = selectedEntityType === 'gradeLevels' || selectedEntityType === 'classrooms';
+        const keyField = isSubject ? 'subjectCode' : isGrade ? 'name' : 'code';
+        const keyNorm = isGrade ? normGradeName(finalNewItem.name) : normKey(finalNewItem[keyField]);
         const nameNorm = normKey(finalNewItem.name);
-        const existingList: any[] = isSubject ? (appData.subjects || []) : (appData.physicalRooms || []);
-        // Primary key is the code; rows without a code fall back to an exact name match
-        const isMatch = (x: any) => keyNorm ? normKey(x[keyField]) === keyNorm : normKey(x.name) === nameNorm;
+        const existingList: any[] = isSubject
+          ? (appData.subjects || [])
+          : isGrade ? (appData.gradeLevels || []) : (appData.physicalRooms || []);
+        // Primary key is the code (grade levels: the name, matched so ม.1/1 == M.1/1);
+        // rows without a code fall back to an exact name match
+        const isMatch = (x: any) => isGrade
+          ? normGradeName(x.name) === keyNorm
+          : keyNorm ? normKey(x[keyField]) === keyNorm : normKey(x.name) === nameNorm;
 
         const patch: Record<string, any> = {};
         providedFields.forEach(k => {
@@ -670,16 +681,10 @@ export const ImportDataModal: React.FC<ImportDataModalProps> = ({
         }
         case 'subjects':
         case 'physicalRooms':
-          // Handled above by the code-keyed upsert (existing records are updated, not skipped)
-          break;
         case 'gradeLevels':
-        case 'classrooms': {
-          const glItem = finalNewItem as GradeLevel;
-          if (appData.gradeLevels.some(gl => normGradeName(gl.name) === normGradeName(glItem.name))) {
-            isDuplicate = true;
-          }
+        case 'classrooms':
+          // Handled above by the keyed upsert (existing records are updated, not skipped)
           break;
-        }
         case 'teacherSubjectAssignments': {
           const tsaItem = finalNewItem as TeacherSubjectAssignment;
           if (appData.teacherSubjectAssignments.some(tsa => 
@@ -771,7 +776,12 @@ export const ImportDataModal: React.FC<ImportDataModalProps> = ({
         });
 
         if (selectedEntityType === 'classrooms') {
-          const currentGradeLevels = prevAppData.gradeLevels || [];
+          let currentGradeLevels = prevAppData.gradeLevels || [];
+          if (entityUpdates.size > 0) {
+            currentGradeLevels = currentGradeLevels.map((g: any) =>
+              entityUpdates.has(g.id) ? { ...g, ...entityUpdates.get(g.id) } : g
+            );
+          }
           return {
             ...prevAppData,
             gradeLevels: [...currentGradeLevels, ...newItemsToPush],
@@ -801,7 +811,8 @@ export const ImportDataModal: React.FC<ImportDataModalProps> = ({
       });
     }
 
-    const extra = (selectedEntityType === 'teachers' || selectedEntityType === 'subjects' || selectedEntityType === 'physicalRooms')
+    const extra = (selectedEntityType === 'teachers' || selectedEntityType === 'subjects' || selectedEntityType === 'physicalRooms' ||
+                   selectedEntityType === 'gradeLevels' || selectedEntityType === 'classrooms')
       ? `, อัปเดต ${updatedCount} รายการ, ไม่เปลี่ยนแปลง ${unchangedCount} รายการ`
       : '';
     messages.unshift(`นำเข้าข้อมูลจาก Excel เสร็จสิ้น: นำเข้าสำเร็จ ${importedCount} รายการ${extra}, ข้าม ${skippedCount} รายการ`);
