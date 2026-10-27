@@ -608,8 +608,8 @@ const App: React.FC = () => {
 
     if (currentView === 'manageData') {
       const screenAccessProps: ScreenAccessProps = { permissions };
-      const allowedAssistantSubViews: ManageDataSubView[] = ['teachers', 'subjects', 'teacherSubjectAssignments', 'walkingCheck'];
-      const allowedManagerSubViews: ManageDataSubView[] = ['teachers', 'subjects', 'teacherSubjectAssignments', 'walkingCheck'];
+      const allowedAssistantSubViews: ManageDataSubView[] = ['teachers', 'subjects', 'teacherSubjectAssignments', 'informationReports', 'walkingCheck'];
+      const allowedManagerSubViews: ManageDataSubView[] = ['teachers', 'subjects', 'teacherSubjectAssignments', 'informationReports', 'walkingCheck'];
 
       if (appData.currentUser.role === 'assistant' && !allowedAssistantSubViews.includes(currentManageDataSubView)) {
         setCurrentManageDataSubView('subjects'); 
@@ -1066,8 +1066,8 @@ const App: React.FC = () => {
                   isActive={currentView === 'manageData'}
                   onClick={() => {
                     setCurrentView('manageData');
-                    const allowedAssistantViews: ManageDataSubView[] = ['teachers', 'subjects', 'teacherSubjectAssignments', 'walkingCheck'];
-                    const allowedManagerViews: ManageDataSubView[] = ['teachers', 'subjects', 'teacherSubjectAssignments', 'walkingCheck'];
+                    const allowedAssistantViews: ManageDataSubView[] = ['teachers', 'subjects', 'teacherSubjectAssignments', 'informationReports', 'walkingCheck'];
+                    const allowedManagerViews: ManageDataSubView[] = ['teachers', 'subjects', 'teacherSubjectAssignments', 'informationReports', 'walkingCheck'];
                     let defaultSubView: ManageDataSubView = 'organizationSettings'; 
                     if (appData.currentUser?.role === 'assistant') {
                         defaultSubView = allowedAssistantViews.includes(currentManageDataSubView as ManageDataSubView) ? currentManageDataSubView : 'subjects';
@@ -1087,12 +1087,12 @@ const App: React.FC = () => {
                     if (!config) return null; 
 
                     if (appData.currentUser?.role === 'assistant') {
-                        const allowedAssistantSidebarViews: ManageDataSubView[] = ['teachers', 'subjects', 'teacherSubjectAssignments', 'walkingCheck'];
+                        const allowedAssistantSidebarViews: ManageDataSubView[] = ['teachers', 'subjects', 'teacherSubjectAssignments', 'informationReports', 'walkingCheck'];
                         if (!allowedAssistantSidebarViews.includes(entityKey)) {
                             return null; 
                         }
                     } else if (appData.currentUser?.role === 'manager') {
-                        const allowedManagerSidebarViews: ManageDataSubView[] = ['teachers', 'subjects', 'teacherSubjectAssignments', 'walkingCheck'];
+                        const allowedManagerSidebarViews: ManageDataSubView[] = ['teachers', 'subjects', 'teacherSubjectAssignments', 'informationReports', 'walkingCheck'];
                         if (!allowedManagerSidebarViews.includes(entityKey)) {
                             return null; 
                         }
