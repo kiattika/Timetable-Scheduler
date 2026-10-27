@@ -17,7 +17,40 @@ const fmt = (n: number) => (n === 0 ? '–' : Number.isInteger(n) ? String(n) : 
 const avg = (sum: number, count: number) => (count > 0 ? sum / count : 0);
 
 const InformationScreen: React.FC<InformationScreenProps> = ({ appData }) => {
-  const { teachers, subjects, gradeLevels, physicalRooms, scheduleEntries, teacherSubjectAssignments } = appData;
+  const { subjects, gradeLevels, physicalRooms } = appData;
+
+  // Assistants only see information for their own departments (กลุ่มสาระการเรียนรู้);
+  // admin / manager see the whole school. Everything below is computed from the scoped data
+  // so tables, totals and the Excel export never include other departments.
+  const isAssistant = appData.currentUser?.role === 'assistant';
+  const assistantDepts = useMemo(
+    () => (isAssistant ? (appData.currentUser?.assignedDepartments || []) : []),
+    [isAssistant, appData.currentUser?.assignedDepartments]
+  );
+
+  const teachers = useMemo(
+    () => isAssistant
+      ? (appData.teachers || []).filter(t => !!t.department && assistantDepts.includes(t.department))
+      : (appData.teachers || []),
+    [isAssistant, assistantDepts, appData.teachers]
+  );
+  const scopedTeacherIds = useMemo(() => new Set(teachers.map(t => t.id)), [teachers]);
+
+  const scheduleEntries = useMemo(
+    () => isAssistant
+      ? (appData.scheduleEntries || [])
+          .map(e => ({ ...e, teacherIds: (e.teacherIds || []).filter(id => scopedTeacherIds.has(id)) }))
+          .filter(e => e.teacherIds.length > 0)
+      : (appData.scheduleEntries || []),
+    [isAssistant, scopedTeacherIds, appData.scheduleEntries]
+  );
+  const teacherSubjectAssignments = useMemo(
+    () => isAssistant
+      ? (appData.teacherSubjectAssignments || []).filter(a => scopedTeacherIds.has(a.teacherId))
+      : (appData.teacherSubjectAssignments || []),
+    [isAssistant, scopedTeacherIds, appData.teacherSubjectAssignments]
+  );
+
   const [tab, setTab] = useState<Tab>('homeroom');
   const hasEntries = (scheduleEntries || []).length > 0;
   const [source, setSource] = useState<LoadSource>(hasEntries ? 'schedule' : 'links');
@@ -37,6 +70,9 @@ const InformationScreen: React.FC<InformationScreenProps> = ({ appData }) => {
         .map(t => ({ name: t.name, code: t.teacherCode, dept: t.department }));
       const room = g.homeroomPhysicalRoomId ? roomById.get(g.homeroomPhysicalRoomId) : undefined;
       if (!byLevel.has(parent)) byLevel.set(parent, []);
+      // Assistants: skip rooms with no advisor from their own departments (other departments' advisors are hidden,
+      // so "no advisor" would be misleading)
+      if (isAssistant && advisors.length === 0) return;
       byLevel.get(parent)!.push({ id: g.id, name: g.name, room: room ? formatRoomDisplay(room as any) : '', advisors });
     });
     const levels = [...byLevel.entries()]
@@ -49,7 +85,7 @@ const InformationScreen: React.FC<InformationScreenProps> = ({ appData }) => {
     const advisorIdsInRooms = new Set<string>();
     (teachers || []).forEach(t => { if ((t.homeroomGradeLevelIds || []).length) advisorIdsInRooms.add(t.id); });
     return { levels, withoutAdvisor, advisorCount: advisorIdsInRooms.size };
-  }, [teachers, gradeLevels, physicalRooms]);
+  }, [teachers, gradeLevels, physicalRooms, isAssistant]);
 
   /* ---------- Workload ---------- */
   const workload = useMemo(() => computeWorkload({
@@ -116,7 +152,14 @@ const InformationScreen: React.FC<InformationScreenProps> = ({ appData }) => {
   return (
     <div className="p-4 md:p-6 bg-white shadow-lg rounded-lg w-full">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-4">
-        <h2 className="text-2xl font-semibold text-slate-800">สารสนเทศ</h2>
+        <div>
+          <h2 className="text-2xl font-semibold text-slate-800">สารสนเทศ</h2>
+          {isAssistant && (
+            <p className="text-xs text-slate-500 mt-0.5">
+              แสดงเฉพาะกลุ่มสาระฯ ที่ได้รับมอบหมาย: {assistantDepts.length > 0 ? assistantDepts.join(', ') : 'ยังไม่ได้รับมอบหมายกลุ่มสาระฯ'}
+            </p>
+          )}
+        </div>
         <div className="flex items-center gap-2">
           <div className="inline-flex rounded-md border border-slate-300 overflow-hidden text-sm">
             <button type="button" onClick={() => setTab('homeroom')}
