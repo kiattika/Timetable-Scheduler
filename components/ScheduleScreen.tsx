@@ -18,6 +18,7 @@ import { WalkingCheckScreen, computeWalkReport, countWalkingRisks, makeWalkMarkG
 import { usePersistedState } from '../utils/usePersistedState';
 import { getParentGradeLevelId, getChildGradeLevelIds, isParentGrade, isChildOf, isSharable, getAvailablePhysicalRooms, isLunchPeriodForGrade, entryCoversHomeroom } from './scheduleUtils';
 import { useTouchDrag } from '../hooks/useTouchDrag';
+import { assistantMayArrange, ASSISTANT_CROSS_DEPT_MESSAGE } from '../lib/assistantScope';
 import { ReviewWizardModal, Discrepancy, DetailRow } from './ReviewWizardModal';
 
 interface ScheduleScreenProps extends ScreenAccessProps {
@@ -805,6 +806,13 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
     }
 
 
+    // The pasted teachers may have been re-derived above (homeroom teachers of the target grade): re-check scope.
+    if (appData.currentUser?.role === 'assistant' &&
+        !assistantMayArrange({ subjectId, teacherIds }, teachers, subjects, appData.currentUser?.assignedDepartments || [])) {
+      alert(ASSISTANT_CROSS_DEPT_MESSAGE);
+      return;
+    }
+
     const conflict = checkConflicts(targetDay, targetPeriod, teacherIds || [], physicalRoomId, gradeLevelId, subjectId, null, 1, copiedScheduleEntryData.cohort);
     if (conflict) {
       alert(`Cannot Paste: ${conflict}`);
@@ -1266,6 +1274,15 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
         return;
     }
 
+    // Same rule the server enforces: an assistant may only arrange a slot whose teachers are all in their own
+    // departments. Homeroom/advisory slots auto-fill EVERY homeroom teacher of the grade (the Teacher(s) list only
+    // shows the assistant's own), so check the ids that will really be saved, not what the list displays.
+    if (appData.currentUser?.role === 'assistant' &&
+        !assistantMayArrange({ subjectId, teacherIds }, teachers, subjects, appData.currentUser?.assignedDepartments || [])) {
+        setConflictError(ASSISTANT_CROSS_DEPT_MESSAGE);
+        return;
+    }
+
 
     if (currentSubjectDetails && currentSubjectDetails.periodsPerWeek !== undefined && gradeLevelId) {
         let scheduledPeriodsForSubject = 0;
@@ -1595,6 +1612,13 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
             finalPhysicalRoomId = targetContext.physicalRoomId;
         }
         
+        // Moving into another grade re-derives the teachers (homeroom/broad subjects): re-check assistant scope.
+        if (appData.currentUser?.role === 'assistant' &&
+            !assistantMayArrange({ subjectId: currentEntryInBlock.subjectId, teacherIds: finalTeacherIds }, teachers, subjects, appData.currentUser?.assignedDepartments || [])) {
+            blockConflict = ASSISTANT_CROSS_DEPT_MESSAGE;
+            break;
+        }
+
         const conflictCheckBaseGrade = subjectDetails?.isBroadAssignment && isParentGrade(finalGradeLevelId, gradeLevels)
                                     ? finalGradeLevelId 
                                     : finalGradeLevelId;
