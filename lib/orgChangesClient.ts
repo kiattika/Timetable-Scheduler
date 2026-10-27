@@ -224,7 +224,7 @@ export const classifySaveError = (err: any): SaveErrorClass => {
     'functions/not-found', 'not-found',
   ];
   if (PERMANENT.includes(code)) return 'permanent';
-  if (/409_CONFLICT_ASSIGNMENT_IN_USE|subjectCode|รหัสวิชา|department outside your assignment|No departments assigned|Organization mismatch|Requires (manager|assistant)/i.test(msg)) {
+  if (/409_CONFLICT_ASSIGNMENT_IN_USE|subjectCode|รหัสวิชา|outside your assignment|No departments assigned|Organization mismatch|Requires (manager|assistant)/i.test(msg)) {
     return 'permanent';
   }
   // aborted (too many concurrent edits), resource-exhausted, deadline-exceeded,
@@ -232,13 +232,30 @@ export const classifySaveError = (err: any): SaveErrorClass => {
   return 'retryable';
 };
 
+/**
+ * True when the server rejected a write because the entity (or its target) is
+ * outside the assistant's assigned departments. Covers both server messages:
+ * "Entity belongs to a department outside your assignment" and
+ * "Target department is outside your assignment".
+ */
+const isOutsideDepartmentError = (err: any): boolean => {
+  const msg = String(err?.message || err || '');
+  return /outside your assignment|No departments assigned/i.test(msg);
+};
+
 /** Short human-readable reason for a save failure (for a toast). */
-export const describeSaveError = (label: string, err: any): string => {
+export const describeSaveError = (label: string, err: any, entityType?: string): string => {
   const msg = String(err?.message || err || '');
   const code = String(err?.code || '');
   if (/subjectCode|รหัสวิชา/i.test(msg)) return `บันทึก "${label}" ไม่ได้: รหัสวิชาซ้ำกับที่มีอยู่แล้ว`;
   if (/409_CONFLICT_ASSIGNMENT_IN_USE/i.test(msg)) return `ลบ "${label}" ไม่ได้: รายการนี้ถูกใช้อยู่ในตารางสอนแล้ว`;
-  if (/department outside your assignment|No departments assigned/i.test(msg)) return `บันทึก "${label}" ไม่ได้: อยู่นอกกลุ่มสาระฯ ที่คุณรับผิดชอบ`;
+  // Timetable slots whose subject/teachers sit outside the assistant's departments
+  // (e.g. HR or co-taught subjects across departments) must be arranged by a
+  // manager or admin, who can see every department.
+  if (entityType === 'scheduleEntries' && (isOutsideDepartmentError(err) || code.includes('permission-denied'))) {
+    return `จัดตาราง "${label}" ไม่ได้: วิชานี้มีครูผู้สอนอยู่นอกกลุ่มสาระฯ ของคุณ กรุณาแจ้งผู้จัดการหรือผู้ดูแลระบบให้เป็นผู้จัดให้`;
+  }
+  if (isOutsideDepartmentError(err)) return `บันทึก "${label}" ไม่ได้: อยู่นอกกลุ่มสาระฯ ที่คุณรับผิดชอบ`;
   if (code.includes('permission-denied') || /permission/i.test(msg)) return `บันทึก "${label}" ไม่ได้: คุณไม่มีสิทธิ์แก้ไขส่วนนี้`;
   if (/lock or unlock|ล็อก\/ปลดล็อก/i.test(msg)) return `เฉพาะแอดมินเท่านั้นที่ล็อก/ปลดล็อกตารางเรียนได้`;
   return `บันทึก "${label}" ไม่สำเร็จ: ${msg.slice(0, 120)}`;

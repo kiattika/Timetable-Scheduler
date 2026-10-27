@@ -4,7 +4,7 @@
  * locally. reconcileServerWithLocal preserves this client's not-yet-persisted work.
  */
 import { describe, it, expect } from 'vitest';
-import { reconcileServerWithLocal, diffAssistantEntities, failureKey, classifySaveError } from '../../lib/orgChangesClient';
+import { reconcileServerWithLocal, diffAssistantEntities, failureKey, classifySaveError, describeSaveError } from '../../lib/orgChangesClient';
 
 const doc = (over: Record<string, any> = {}) => ({
   teachers: [], subjects: [], gradeLevels: [], physicalRooms: [], departments: [],
@@ -113,5 +113,24 @@ describe('classifySaveError — Issue B', () => {
     expect(classifySaveError({ code: 'functions/resource-exhausted' })).toBe('retryable');
     expect(classifySaveError({ code: 'functions/deadline-exceeded' })).toBe('retryable');
     expect(classifySaveError({ message: 'network request failed' })).toBe('retryable');
+  });
+});
+
+describe('describeSaveError — assistant cannot arrange cross-department slots', () => {
+  const label = 'HR ศุกร์ คาบ 0';
+  it('scheduleEntries outside department -> ask manager/admin to arrange', () => {
+    const entityMsg = describeSaveError(label, { code: 'functions/permission-denied', message: 'Entity belongs to a department outside your assignment (X)' }, 'scheduleEntries');
+    const targetMsg = describeSaveError(label, { code: 'functions/permission-denied', message: 'Target department is outside your assignment (X, Y)' }, 'scheduleEntries');
+    for (const m of [entityMsg, targetMsg]) {
+      expect(m).toContain('ผู้จัดการหรือผู้ดูแลระบบ');
+      expect(m).toContain(label);
+    }
+  });
+  it('plain permission-denied on a scheduleEntry also routes to manager/admin', () => {
+    expect(describeSaveError(label, { code: 'functions/permission-denied', message: 'denied' }, 'scheduleEntries')).toContain('ผู้จัดการหรือผู้ดูแลระบบ');
+  });
+  it('other entity types keep their existing messages', () => {
+    expect(describeSaveError('ครู ก', { message: 'Entity belongs to a department outside your assignment (X)' }, 'teachers')).toContain('อยู่นอกกลุ่มสาระฯ');
+    expect(describeSaveError('ครู ก', { code: 'functions/permission-denied', message: 'denied' })).toContain('ไม่มีสิทธิ์แก้ไขส่วนนี้');
   });
 });
