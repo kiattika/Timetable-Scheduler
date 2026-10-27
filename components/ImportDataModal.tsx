@@ -19,6 +19,7 @@ import { getSampleAppData } from '../api';
 import { getChildGradeLevelIds } from './scheduleUtils';
 import { normalizeSubjectFlags, parseSubjectType } from '../utils/subjectFlags';
 import { normalizeBuildingId } from '../utils/buildings';
+import { findRoomForImport } from '../utils/roomLookup';
 
 interface ImportDataModalProps {
   isOpen: boolean;
@@ -183,7 +184,7 @@ export const ImportDataModal: React.FC<ImportDataModalProps> = ({
       else if (field.name === 'homeroomGradeLevelIds') note = 'ชื่อห้องเรียนคั่นด้วยจุลภาค (เช่น ม.1/1, ม.1/2)';
       else if (field.name === 'applicableSemesters') note = 'ภาคเรียนที่เปิดสอน คั่นด้วยจุลภาค (เช่น 1 หรือ 2 หรือ 1, 2) เว้นว่าง = ทุกภาคเรียน';
       else if (field.name === 'applicableParentGradeLevelIds') note = 'ชื่อระดับชั้นหลักคั่นด้วยจุลภาค (เช่น ม.1, ม.2, ม.3)';
-      else if (field.name === 'homeroomPhysicalRoomId') note = 'ชื่อหรือรหัสห้องประจำ (เช่น ห้อง 931 หรือ 931)';
+      else if (field.name === 'homeroomPhysicalRoomId') note = 'ชื่อหรือรหัสห้องประจำ (เช่น ห้อง 931, 931 หรือ [931] ชื่อห้อง ตามที่ส่งออก)';
       else if (field.name === 'type' && selectedEntityType === 'physicalRooms') note = 'ประเภทห้อง (เช่น ห้องเรียนทั่วไป, ห้องปฏิบัติการ, สนาม/ลานกิจกรรม)';
       else if (field.name === 'type' && selectedEntityType === 'subjects') note = "ประเภทวิชา: ปกติ / เฉพาะครู / เฉพาะนักเรียน (หรือ STANDARD / TEACHER_ONLY / STUDENT_ONLY) เว้นว่าง = ปกติ";
       else if (field.name === 'building') note = 'อาคาร (เช่น 9 หรือ อาคาร 9) เว้นว่าง = เดาจากรหัสห้อง 3 หลัก';
@@ -471,15 +472,12 @@ export const ImportDataModal: React.FC<ImportDataModalProps> = ({
 
       if (selectedEntityType === 'gradeLevels' || selectedEntityType === 'classrooms') {
         if (newItemData.homeroomPhysicalRoomId) {
-          const roomQuery = String(newItemData.homeroomPhysicalRoomId).toLowerCase().trim();
-          const match = appData.physicalRooms.find(r => 
-            r.name.toLowerCase() === roomQuery || 
-            r.code.toLowerCase() === roomQuery || 
-            `ห้อง ${r.code}`.toLowerCase() === roomQuery
-          );
+          const rawRoom = String(newItemData.homeroomPhysicalRoomId).trim();
+          // Also accepts the "[code] name" format the Export writes, so an exported file can be edited and re-imported
+          const match = findRoomForImport(appData.physicalRooms, rawRoom);
           newItemData.homeroomPhysicalRoomId = match ? match.id : undefined;
           if (!match) {
-            messages.push(`แถวที่ ${rowIndex + 2}: ไม่พบห้อง '${roomQuery}' ในระบบ (ไม่ได้ตั้งค่าห้องโฮมรูม — คงค่าเดิมไว้)`);
+            messages.push(`แถวที่ ${rowIndex + 2}: ไม่พบห้อง '${rawRoom}' ในระบบ (ไม่ได้ตั้งค่าห้องโฮมรูม — คงค่าเดิมไว้)`);
           }
         }
       }
