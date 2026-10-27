@@ -5,6 +5,7 @@ import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import { MetricServiceClient } from '@google-cloud/monitoring';
 import { bangkokDateKey, bangkokMidnightMs, makeDailyBuckets, dateKeyForPoint, classifySeriesDatabase } from './usageBuckets';
 import { randomUUID } from 'crypto';
+import { resolveEntityDepartments } from './departmentAuth';
 import {
   applyOrgChanges,
   applyOrgReplace,
@@ -610,46 +611,8 @@ export const getFirestoreUsageStats = functions.https.onCall(async (data: { days
 const isElevatedRole = (role?: unknown): boolean =>
   typeof role === 'string' && ELEVATED_ROLES.includes(role);
 
-/**
- * Resolve the department name(s) an entity belongs to, from the current app doc.
- * Returns [] when the department cannot be determined (caller must treat that as
- * "deny" for assistant-scoped writes).
- */
-function resolveEntityDepartments(type: AssistantEntityType, entity: any, appDoc: Record<string, any>): string[] {
-  const teachers: any[] = Array.isArray(appDoc.teachers) ? appDoc.teachers : [];
-  const subjects: any[] = Array.isArray(appDoc.subjects) ? appDoc.subjects : [];
-  const assignments: any[] = Array.isArray(appDoc.teacherSubjectAssignments) ? appDoc.teacherSubjectAssignments : [];
-  const deptOfTeacher = (teacherId: string): string[] => {
-    const t = teachers.find((x) => x.id === teacherId);
-    return t?.department ? [String(t.department)] : [];
-  };
-
-  switch (type) {
-    case 'teachers':
-      return entity?.department ? [String(entity.department)] : [];
-    case 'subjects': {
-      if (entity?.department) return [String(entity.department)];
-      const depts = new Set<string>();
-      for (const a of assignments.filter((a) => a.subjectId === entity?.id)) {
-        deptOfTeacher(a.teacherId).forEach((d) => depts.add(d));
-      }
-      return [...depts];
-    }
-    case 'teacherSubjectAssignments':
-      return entity?.teacherId ? deptOfTeacher(entity.teacherId) : [];
-    case 'scheduleEntries': {
-      const depts = new Set<string>();
-      const subj = subjects.find((s) => s.id === entity?.subjectId);
-      if (subj?.department) depts.add(String(subj.department));
-      for (const tid of Array.isArray(entity?.teacherIds) ? entity.teacherIds : []) {
-        deptOfTeacher(tid).forEach((d) => depts.add(d));
-      }
-      return [...depts];
-    }
-    default:
-      return [];
-  }
-}
+// resolveEntityDepartments (department of an entity, used by assistant authorization)
+// lives in ./departmentAuth so it can be unit-tested.
 
 /**
  * Callable Function: backfillUserClaims
