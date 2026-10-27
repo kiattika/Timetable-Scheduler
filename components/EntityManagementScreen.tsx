@@ -45,7 +45,11 @@ const EntityManagementScreen = <T extends Identifiable,>({
   // Subjects page: department filter + bulk colour tool
   const [selectedDepartmentFilter, setSelectedDepartmentFilter] = useState('');
   // '' = all, '1' / '2' = offered in that semester (incl. subjects open every semester), '__every__' = only those open every semester
-  const [selectedSemesterFilter, setSelectedSemesterFilter] = useState('');
+  // Defaults to the current semester (Organization Settings); pick "ทุกภาคเรียน" to see everything.
+  const [selectedSemesterFilter, setSelectedSemesterFilter] = useState(() => {
+    const sem = String(appData.organizationSettings?.semester || '').trim();
+    return sem === '1' || sem === '2' ? sem : '';
+  });
   const [isColorToolOpen, setIsColorToolOpen] = useState(false);
   const [colorMode, setColorMode] = useState<SubjectColorMode>('gradient');
   const [colorBase, setColorBase] = useState('#3B82F6');
