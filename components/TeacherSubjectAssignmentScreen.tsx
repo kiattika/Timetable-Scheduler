@@ -5,7 +5,7 @@ import Modal from './Modal';
 import ConfirmationModal from './ConfirmationModal'; // Import ConfirmationModal
 import { Icons } from '../constants';
 import { ArrowUp, ArrowDown, Search, X } from 'lucide-react';
-import { getChildGradeLevelIds, getParentGradeLevelId } from './scheduleUtils';
+import { getChildGradeLevelIds, getParentGradeLevelId, subjectOfferedInSemester } from './scheduleUtils';
 import SearchableSelect from './SearchableSelect';
 import { thaiGradeName } from '../utils/subjectCode';
 import { computeHomeroomLinkDrift, applyHomeroomLinkDrift } from '../utils/homeroomLinks';
@@ -42,6 +42,9 @@ const TeacherSubjectAssignmentScreen: React.FC<TeacherSubjectAssignmentScreenPro
   const [selectedGradeLevelId, setSelectedGradeLevelId] = useState('');
   const [selectedDepartment, setSelectedDepartment] = useState('');
   const [selectedSubjectId, setSelectedSubjectId] = useState('');
+  // Subjects with a semester set are shown only in that semester (Organization Settings) unless this is ticked.
+  const currentSemester = (appData.organizationSettings?.semester || '').trim();
+  const [showOtherSemesters, setShowOtherSemesters] = useState(false);
 
   // Links of auto-link (homeroom) subjects that no longer match the homeroom advisors.
   // Assistants only see / fix teachers in their own departments.
@@ -353,15 +356,16 @@ const TeacherSubjectAssignmentScreen: React.FC<TeacherSubjectAssignmentScreenPro
         
       const matchGrade = selectedGradeLevelId === '' || asm.gradeLevelId === selectedGradeLevelId;
       const matchSubject = selectedSubjectId === '' || asm.subjectId === selectedSubjectId;
+      const matchSemester = showOtherSemesters || !subject || subjectOfferedInSemester(subject, currentSemester);
       
       const matchDept = selectedDepartment === '' || 
         asm.department === selectedDepartment || 
         teacher?.department === selectedDepartment || 
         subject?.department === selectedDepartment;
         
-      return matchSearch && matchGrade && matchSubject && matchDept;
+      return matchSearch && matchGrade && matchSubject && matchDept && matchSemester;
     });
-  }, [assignments, appData.teachers, appData.subjects, searchQuery, selectedGradeLevelId, selectedSubjectId, selectedDepartment]);
+  }, [assignments, appData.teachers, appData.subjects, searchQuery, selectedGradeLevelId, selectedSubjectId, selectedDepartment, showOtherSemesters, currentSemester]);
 
   // Info card for the subject picked in the filter: which classes it is assigned to and how much is already timetabled.
   const subjectInfo = useMemo(() => {
@@ -436,6 +440,7 @@ const TeacherSubjectAssignmentScreen: React.FC<TeacherSubjectAssignmentScreenPro
     setSelectedGradeLevelId('');
     setSelectedDepartment('');
     setSelectedSubjectId('');
+    setShowOtherSemesters(false);
     setSortField('teacher');
     setSortDirection('asc');
   };
@@ -757,6 +762,7 @@ const TeacherSubjectAssignmentScreen: React.FC<TeacherSubjectAssignmentScreenPro
               options={[
                 { value: '', label: 'ทั้งหมด (Show All)' },
                 ...appData.subjects
+                  .filter(s => showOtherSemesters || s.id === selectedSubjectId || subjectOfferedInSemester(s, currentSemester))
                   .filter(s => !selectedDepartment || s.department === selectedDepartment)
                   .map(sub => ({
                     value: sub.id,
@@ -792,6 +798,12 @@ const TeacherSubjectAssignmentScreen: React.FC<TeacherSubjectAssignmentScreenPro
           </div>
 
           <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
+            {currentSemester && (
+              <label className="flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer select-none" title={`ปกติแสดงเฉพาะวิชาที่เปิดสอนในภาคเรียนที่ ${currentSemester} และวิชาที่เปิดทุกภาคเรียน`}>
+                <input type="checkbox" className="h-3.5 w-3.5" checked={showOtherSemesters} onChange={e => setShowOtherSemesters(e.target.checked)} />
+                แสดงวิชาของภาคเรียนอื่นด้วย
+              </label>
+            )}
             <span className="text-xs text-slate-500">
               พบ {sortedAssignments.length} รายการ จากทั้งหมด {assignments.length} รายการ
             </span>
