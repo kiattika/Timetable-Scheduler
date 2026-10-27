@@ -8,6 +8,7 @@ import { ArrowUp, ArrowDown, Search, X } from 'lucide-react';
 import { getChildGradeLevelIds, getParentGradeLevelId } from './scheduleUtils';
 import SearchableSelect from './SearchableSelect';
 import { thaiGradeName } from '../utils/subjectCode';
+import { planBulkDelete } from '../utils/bulkDeleteLinks';
 import { computeHomeroomLinkDrift, applyHomeroomLinkDrift } from '../utils/homeroomLinks';
 
 interface TeacherSubjectAssignmentScreenProps extends ScreenAccessProps {
@@ -305,6 +306,43 @@ const TeacherSubjectAssignmentScreen: React.FC<TeacherSubjectAssignmentScreenPro
     setIsConfirmDeleteModalOpen(true);
   };
 
+  // ---- Bulk selection (applies to the rows currently shown after filters) ----
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [isBulkConfirmOpen, setIsBulkConfirmOpen] = useState(false);
+  const [bulkNotice, setBulkNotice] = useState<string | null>(null);
+
+  const toggleSelected = (id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const requestBulkDelete = () => {
+    if (!permissions.canModifyTeacherSubjectLinks) {
+      alert('คุณไม่มีสิทธิ์ในการลบการเชื่อมโยงครู-วิชา');
+      return;
+    }
+    setIsBulkConfirmOpen(true);
+  };
+
+  const confirmBulkDelete = () => {
+    const visibleSelected = sortedAssignments.filter(a => selectedIds.has(a.id)).map(a => a.id);
+    const plan = planBulkDelete(visibleSelected, assignments, appData.scheduleEntries as any);
+    if (plan.deletableIds.length > 0) {
+      const del = new Set(plan.deletableIds);
+      setAssignments(prev => prev.filter(asm => !del.has(asm.id)));
+    }
+    setSelectedIds(new Set());
+    setIsBulkConfirmOpen(false);
+    setBulkNotice(
+      plan.blocked.length === 0
+        ? `ลบแล้ว ${plan.deletableIds.length} รายการ`
+        : `ลบแล้ว ${plan.deletableIds.length} รายการ · ข้าม ${plan.blocked.length} รายการ เพราะวิชานี้ถูกจัดลงตารางเรียนแล้ว (ต้องลบคาบเรียนออกก่อน)`
+    );
+  };
+
   const confirmDelete = () => {
     if (assignmentToDeleteId) {
       setAssignments(prev => prev.filter(asm => asm.id !== assignmentToDeleteId));
@@ -430,6 +468,21 @@ const TeacherSubjectAssignmentScreen: React.FC<TeacherSubjectAssignmentScreenPro
   }, [filteredAssignments, sortField, sortDirection, appData.teachers, appData.subjects, appData.gradeLevels]);
 
   const hasActiveFilters = searchQuery !== '' || selectedGradeLevelId !== '' || selectedDepartment !== '' || selectedSubjectId !== '' || sortField !== 'teacher' || sortDirection !== 'asc';
+
+  const visibleSelectedCount = useMemo(
+    () => sortedAssignments.reduce((n, a) => n + (selectedIds.has(a.id) ? 1 : 0), 0),
+    [sortedAssignments, selectedIds]
+  );
+  const allVisibleSelected = sortedAssignments.length > 0 && visibleSelectedCount === sortedAssignments.length;
+  const someVisibleSelected = visibleSelectedCount > 0;
+  const toggleSelectAllVisible = () => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (allVisibleSelected) sortedAssignments.forEach(a => next.delete(a.id));
+      else sortedAssignments.forEach(a => next.add(a.id));
+      return next;
+    });
+  };
 
   const handleClearFilters = () => {
     setSearchQuery('');
@@ -810,6 +863,27 @@ const TeacherSubjectAssignmentScreen: React.FC<TeacherSubjectAssignmentScreenPro
         </div>
       </div>
 
+      {bulkNotice && (
+        <div className="mb-4 flex items-start justify-between gap-3 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+          <span>✓ {bulkNotice}</span>
+          <button type="button" onClick={() => setBulkNotice(null)} className="text-emerald-700 hover:text-emerald-900" aria-label="ปิดข้อความ"><X size={14} /></button>
+        </div>
+      )}
+
+      {permissions.canModifyTeacherSubjectLinks && visibleSelectedCount > 0 && (
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-sm">
+          <span className="font-medium text-blue-900">เลือกแล้ว {visibleSelectedCount} รายการ</span>
+          <div className="flex items-center gap-2">
+            <button type="button" onClick={() => setSelectedIds(new Set())} className="px-3 py-1.5 text-xs font-medium text-slate-700 bg-white hover:bg-slate-100 rounded-md border border-slate-300">
+              ยกเลิกการเลือก
+            </button>
+            <button type="button" onClick={requestBulkDelete} className="flex items-center px-3 py-1.5 text-xs font-semibold text-white bg-red-600 hover:bg-red-700 rounded-md shadow-sm">
+              <Icons.Delete size={14} className="mr-1" /> ลบที่เลือก ({visibleSelectedCount})
+            </button>
+          </div>
+        </div>
+      )}
+
       {subjectInfo && (
         <div className="mb-6 rounded-xl border border-indigo-200 bg-indigo-50/60 p-4 text-sm text-slate-700">
           <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
@@ -867,6 +941,19 @@ const TeacherSubjectAssignmentScreen: React.FC<TeacherSubjectAssignmentScreenPro
           <table className="min-w-full divide-y divide-slate-200">
             <thead className="bg-slate-50 sticky top-0 z-10">
               <tr>
+                {permissions.canModifyTeacherSubjectLinks && (
+                  <th scope="col" className="px-4 py-3 w-10">
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 cursor-pointer"
+                      aria-label="เลือกทั้งหมดที่แสดงอยู่"
+                      title="เลือก/ยกเลิกทั้งหมดที่แสดงอยู่ (ตามตัวกรองปัจจุบัน)"
+                      checked={allVisibleSelected}
+                      ref={el => { if (el) el.indeterminate = someVisibleSelected && !allVisibleSelected; }}
+                      onChange={toggleSelectAllVisible}
+                    />
+                  </th>
+                )}
                 {fields.map((field, index) => {
                   let fieldSortKey: 'teacher' | 'subject' | 'gradeLevel' | null = null;
                   if (index === 0) fieldSortKey = 'teacher';
@@ -913,7 +1000,18 @@ const TeacherSubjectAssignmentScreen: React.FC<TeacherSubjectAssignmentScreenPro
             </thead>
             <tbody className="bg-white divide-y divide-slate-200">
               {sortedAssignments.map(asm => (
-                <tr key={asm.id} className="hover:bg-slate-50/70 transition-colors">
+                <tr key={asm.id} className={`transition-colors ${selectedIds.has(asm.id) ? 'bg-blue-50/70' : 'hover:bg-slate-50/70'}`}>
+                  {permissions.canModifyTeacherSubjectLinks && (
+                    <td className="px-4 py-3 w-10">
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 cursor-pointer"
+                        aria-label="เลือกรายการนี้"
+                        checked={selectedIds.has(asm.id)}
+                        onChange={() => toggleSelected(asm.id)}
+                      />
+                    </td>
+                  )}
                   <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-700">
                     {getTeacherName(asm.teacherId)}
                   </td>
@@ -1001,6 +1099,16 @@ const TeacherSubjectAssignmentScreen: React.FC<TeacherSubjectAssignmentScreenPro
         title="Confirm Delete Link"
         message="คุณแน่ใจหรือไม่ที่จะลบลิงค์นี้?"
         confirmButtonText="Delete Link"
+        icon={Icons.Warning}
+      />
+
+      <ConfirmationModal
+        isOpen={isBulkConfirmOpen}
+        onClose={() => setIsBulkConfirmOpen(false)}
+        onConfirm={confirmBulkDelete}
+        title="Confirm Bulk Delete"
+        message={`คุณแน่ใจหรือไม่ที่จะลบลิงค์ที่เลือก ${visibleSelectedCount} รายการ? (รายการที่วิชาถูกจัดลงตารางแล้วจะถูกข้าม)`}
+        confirmButtonText={`ลบ ${visibleSelectedCount} รายการ`}
         icon={Icons.Warning}
       />
 
