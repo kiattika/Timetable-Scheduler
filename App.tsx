@@ -32,6 +32,7 @@ import { isParentGrade as checkIsParentGradeUtil, getParentGradeLevelId, getChil
 import { useAppAuth } from './hooks/useAppAuth';
 import { useBackupRestore } from './hooks/useBackupRestore';
 import { db } from './lib/firebase';
+import { revertFailedOps } from './lib/revertFailedOps';
 import { isSubjectFlagLocked, normalizeSubjectFlags } from './utils/subjectFlags';
 import { gridFromStored, gridToStored, normalizeBuildingId } from './utils/buildings';
 import { doc, getDoc, getDocFromServer } from 'firebase/firestore';
@@ -187,6 +188,16 @@ const App: React.FC = () => {
           if (result.permanentFailures.length > 0) {
             const extra = result.permanentFailures.length - 1;
             setSaveErrorToast(result.permanentFailures[0] + (extra > 0 ? ` (และอีก ${extra} รายการ)` : ''));
+          }
+
+          // Timetable slots the server permanently rejected: take them back off the grid now instead of leaving
+          // a card the server never stored until the next refresh. Only those entries are touched, so any edit
+          // made while the save was in flight survives. (Other entity types keep their existing behaviour.)
+          const rejectedSlots = (result.failedOps || []).filter((f) => f.key === 'scheduleEntries');
+          if (rejectedSlots.length > 0) {
+            setAppData(prev => prev
+              ? { ...prev, scheduleEntries: revertFailedOps(prev.scheduleEntries, rejectedSlots, 'scheduleEntries') }
+              : prev);
           }
 
           if (result.retryableFailures > 0) {

@@ -5,6 +5,7 @@ import { doc, getDoc, setDoc, deleteDoc, collection, getDocs, writeBatch, query,
 import { httpsCallable } from 'firebase/functions';
 import { computeOrgChanges, nextCommitTarget, MAX_OPS_PER_COMMIT, diffById, diffAssistantEntities, canonicalKey, failureKey, classifySaveError, describeSaveError, reconcileServerWithLocal, ORG_ARRAY_FIELDS, cleanUndefined as cleanUndefinedShared } from './lib/orgChangesClient';
 import { normalizeLoadedSubject, normalizeLoadedSubjects, normalizeLoadedOrganizationSettings, CURRENT_ORG_SCHEMA_VERSION } from './lib/normalizeAppData';
+import type { FailedAssistantOp } from './lib/revertFailedOps';
 
 export { computeOrgChanges, diffById, diffAssistantEntities, canonicalKey, failureKey, classifySaveError, describeSaveError, reconcileServerWithLocal, ORG_ARRAY_FIELDS, normalizeLoadedSubject, normalizeLoadedSubjects, normalizeLoadedOrganizationSettings, CURRENT_ORG_SCHEMA_VERSION };
 
@@ -235,6 +236,7 @@ export type PersistResult = {
   retryableFailures: number;
   persistedBaseline: AppData;  // the state now known to be persisted
   progressed: boolean;         // a write actually landed
+  failedOps?: FailedAssistantOp[]; // assistant writes the server permanently rejected (so the UI can undo them)
 };
 
 const surfaceSaveError = (error: any) => {
@@ -447,7 +449,7 @@ export const persistAssistantChanges = async (
 ): Promise<PersistResult> => {
   // Start from the last-known-persisted state (never assume `next` is persisted).
   const persistedBaseline: AppData = prev ? JSON.parse(JSON.stringify(prev)) : ({} as AppData);
-  const result: PersistResult = { permanentFailures: [], retryableFailures: 0, persistedBaseline, progressed: false };
+  const result: PersistResult = { permanentFailures: [], retryableFailures: 0, persistedBaseline, progressed: false, failedOps: [] };
   if (!next) return result;
 
   for (const key of ASSISTANT_SYNC_KEYS) {
@@ -476,6 +478,7 @@ export const persistAssistantChanges = async (
         if (classifySaveError(err) === 'permanent') {
           if (knownFailed) knownFailed.set(fk, failureKey(op, entity));
           result.permanentFailures.push(describeSaveError(labelOf(key, entity), err, key));
+          result.failedOps!.push({ key, op, id, prior: before.find((e) => e && e.id === id) });
         } else {
           result.retryableFailures++;
         }
