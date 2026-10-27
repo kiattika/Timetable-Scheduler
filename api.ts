@@ -399,8 +399,22 @@ const callAssistantUpdate = async (
   await fn({ type, op, id: entity?.id, payload: entity, orgId });
 };
 
-const labelOf = (key: string, entity: any): string =>
-  entity?.name || entity?.subjectCode || entity?.teacherCode || entity?.code || `${key}/${entity?.id ?? '?'}`;
+const THAI_DAY: Record<string, string> = {
+  Monday: 'จันทร์', Tuesday: 'อังคาร', Wednesday: 'พุธ', Thursday: 'พฤหัสบดี', Friday: 'ศุกร์',
+};
+
+const labelOf = (key: string, entity: any): string => {
+  // Timetable slots have no name; show subject + day + period instead of a raw document id.
+  if (key === 'scheduleEntries') {
+    const subject = entity?.cachedSubjectCode || entity?.cachedSubjectName;
+    if (subject) {
+      const day = THAI_DAY[entity?.day] || entity?.day || '';
+      const period = Number.isFinite(entity?.period) ? `คาบ ${entity.period}` : '';
+      return [subject, day, period].filter(Boolean).join(' ');
+    }
+  }
+  return entity?.name || entity?.subjectCode || entity?.teacherCode || entity?.code || `${key}/${entity?.id ?? '?'}`;
+};
 
 const applyOpToBaseline = (baseline: AppData, key: string, op: 'create' | 'update' | 'delete', entity: any): void => {
   const arr: any[] = Array.isArray((baseline as any)[key]) ? [...(baseline as any)[key]] : [];
@@ -461,7 +475,7 @@ export const persistAssistantChanges = async (
       } catch (err: any) {
         if (classifySaveError(err) === 'permanent') {
           if (knownFailed) knownFailed.set(fk, failureKey(op, entity));
-          result.permanentFailures.push(describeSaveError(labelOf(key, entity), err));
+          result.permanentFailures.push(describeSaveError(labelOf(key, entity), err, key));
         } else {
           result.retryableFailures++;
         }
