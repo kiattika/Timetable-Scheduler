@@ -29,6 +29,11 @@ describe('planFixedActivityEntries', () => {
     expect(r.entries).toHaveLength(1);
     expect(r.entries[0]).toMatchObject({ gradeLevelId: 'Non-Student', teacherIds: ['a', 'c'] });
   });
+  it('teacher-only subject also uses older per-classroom links of the ticked levels', () => {
+    const r = run([{ id: 'club', type: 'TEACHER_ONLY' }], [{ id: 'f', subjectId: 'club', gradeLevelIds: ['m1'], days: ['Thursday'] }],
+      [link('a', 'club', 'm1-1'), link('b', 'club', 'm1-2'), link('c', 'club', 'm9-1')]);
+    expect(r.entries[0].teacherIds).toEqual(['a', 'b']);
+  });
   it('skips slots already taken and busy teachers, reporting why', () => {
     const existing = [{ id: 'x', gradeLevelId: 'm1-1', day: 'Monday', period: 1, subjectId: 'math', teacherIds: ['z'] },
                       { id: 'y', gradeLevelId: 'm1-2', day: 'Monday', period: 1, subjectId: 'math', teacherIds: ['b'] }];
