@@ -25,6 +25,7 @@ import { saveAs } from 'file-saver';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { SARABUN_REGULAR_BASE64, SARABUN_BOLD_BASE64 } from '../utils/sarabunFont';
+import { enableThaiMarkFix } from '../utils/thaiMarks';
 
 function getImageTypeAndData(base64Str?: string): { data: Uint8Array; type: 'png' | 'jpg' } | null {
   if (!base64Str || typeof base64Str !== 'string' || !base64Str.startsWith('data:image')) return null;
@@ -610,6 +611,7 @@ export const TeacherLoadReportScreen: React.FC<TeacherLoadReportScreenProps> = (
       doc.addFileToVFS('Sarabun-Bold.ttf', SARABUN_BOLD_BASE64);
       doc.addFont('Sarabun-Regular.ttf', 'Sarabun', 'normal');
       doc.addFont('Sarabun-Bold.ttf', 'Sarabun', 'bold');
+      enableThaiMarkFix(doc);
 
       const pageWidth = doc.internal.pageSize.getWidth(); // 297mm
       const pageHeight = doc.internal.pageSize.getHeight(); // 210mm

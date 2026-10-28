@@ -2,6 +2,7 @@ import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { AppData, Identifiable, PrintOptions, Teacher, GradeLevel, PhysicalRoom, ScheduleEntry, DayOfWeek } from '../types';
 import { SARABUN_REGULAR_BASE64, SARABUN_BOLD_BASE64 } from './sarabunFont';
+import { enableThaiMarkFix } from './thaiMarks';
 import { formatRoomDisplay, formatRoomShort } from './stringUtils';
 import { isParentGrade as checkIsParentGradeUtil, levelActivityLabel, isLunchPeriodForGrade } from '../components/scheduleUtils';
 import { reservedActivityLabelsForCell } from '../lib/fixedActivities';
@@ -58,6 +59,7 @@ export async function exportScheduleGridPdf(
   doc.addFileToVFS('Sarabun-Bold.ttf', SARABUN_BOLD_BASE64);
   doc.addFont('Sarabun-Regular.ttf', 'Sarabun', 'normal');
   doc.addFont('Sarabun-Bold.ttf', 'Sarabun', 'bold');
+  enableThaiMarkFix(doc);
 
   const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();

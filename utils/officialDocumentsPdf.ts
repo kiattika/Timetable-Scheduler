@@ -1,6 +1,7 @@
 import { jsPDF } from 'jspdf';
 import { OrganizationSettings } from '../types';
 import { SARABUN_REGULAR_BASE64, SARABUN_BOLD_BASE64 } from './sarabunFont';
+import { enableThaiMarkFix } from './thaiMarks';
 
 /**
  * Formats ISO date string to Thai official date components.
@@ -51,6 +52,7 @@ function createPdfDocument(orientation: 'portrait' | 'landscape' = 'portrait'): 
   doc.addFileToVFS('Sarabun-Bold.ttf', SARABUN_BOLD_BASE64);
   doc.addFont('Sarabun-Regular.ttf', 'Sarabun', 'normal');
   doc.addFont('Sarabun-Bold.ttf', 'Sarabun', 'bold');
+  enableThaiMarkFix(doc);
 
   return doc;
 }
