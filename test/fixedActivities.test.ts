@@ -23,11 +23,18 @@ describe('planFixedActivityEntries', () => {
     const r = run([{ id: 'cz', isHomeroomAdvisorySubject: true }], [{ id: 'f', subjectId: 'cz', gradeLevelIds: ['m1'], days: ['Monday'] }], []);
     expect(r.entries.map(e => [e.gradeLevelId, e.teacherIds, e.physicalRoomId])).toEqual([['m1-1', ['a'], 'r11'], ['m1-2', ['b'], '']]);
   });
-  it('teacher-only subject only reserves: no entries are created, even with links', () => {
+  it('teacher-only subject -> ONE Non-Student entry per day with every linked teacher (old per-class links of the levels too)', () => {
+    const r = run([{ id: 'club', type: 'TEACHER_ONLY' }], [{ id: 'f', subjectId: 'club', gradeLevelIds: ['m1', 'm1'], days: ['Thursday'] }],
+      [link('a', 'club', 'Non-Student'), link('b', 'club', 'm1-2'), link('c', 'club', 'm9-1')]);
+    expect(r.entries).toHaveLength(1);
+    expect(r.entries[0]).toMatchObject({ gradeLevelId: 'Non-Student', day: 'Thursday', period: 1, teacherIds: ['a', 'b'], physicalRoomId: '' });
+  });
+  it('teacher-only: busy teachers are left out and reported', () => {
+    const existing = [{ id: 'x', gradeLevelId: 'm1-1', day: 'Thursday', period: 1, subjectId: 'math', teacherIds: ['a'] }];
     const r = run([{ id: 'club', type: 'TEACHER_ONLY' }], [{ id: 'f', subjectId: 'club', gradeLevelIds: ['m1'], days: ['Thursday'] }],
-      [link('a', 'club', 'Non-Student'), link('b', 'club', 'm1-2')]);
-    expect(r.entries).toHaveLength(0);
-    expect(r.skipped).toHaveLength(0);
+      [link('a', 'club', 'Non-Student'), link('b', 'club', 'Non-Student')], existing);
+    expect(r.entries[0].teacherIds).toEqual(['b']);
+    expect(r.skipped[0].reason).toBe('teachers_busy');
   });
   it('reservedActivityLabelsForCell shows teacher-only reservations on covered classes and days', () => {
     const period: any = { fixedActivities: [{ id: 'f', subjectId: 'club', gradeLevelIds: ['m1'], days: ['Thursday'] }] };
