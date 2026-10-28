@@ -449,7 +449,7 @@ const PeriodSettingsManagementScreen: React.FC<PeriodSettingsManagementScreenPro
           </fieldset>
           <fieldset className="border border-indigo-200 bg-indigo-50/50 p-3 rounded-md min-w-0 w-full">
             <legend className="text-sm font-medium text-indigo-800 px-1">📌 วิชาที่กำหนดไว้ในคาบนี้</legend>
-            <p className="text-xs text-slate-500 mb-2">จองคาบนี้ให้วิชา เช่น กิจกรรมชุมนุม ลูกเสือ-เนตรนารี Cleaning Zone แล้วกดปุ่ม "ลงตารางตามวิชาที่กำหนด" ในหน้านี้เพื่อสร้างรายการในตารางให้อัตโนมัติ (ใช้ครูที่เชื่อมโยงกับวิชาในหน้า Teacher-Subject Links) · วิชาเฉพาะครู (TEACHER-ONLY) จะจองคาบและแสดงในตารางชั้นเรียนเท่านั้น ไม่จัดลงตารางครู</p>
+            <p className="text-xs text-slate-500 mb-2">จองคาบนี้ให้วิชา เช่น กิจกรรมชุมนุม ลูกเสือ-เนตรนารี Cleaning Zone แล้วกดปุ่ม "ลงตารางตามวิชาที่กำหนด" ในหน้านี้เพื่อสร้างรายการในตารางให้อัตโนมัติ (ใช้ครูที่เชื่อมโยงกับวิชาในหน้า Teacher-Subject Links) · วิชาเฉพาะครู (TEACHER-ONLY) จะลงในตารางครูแต่ละคนตามลิงค์ และแสดงในตารางชั้นเรียนเป็นช่องจอง (สถานที่ "ตามที่กำหนด" / ครู "ตามครู")</p>
             <div className="space-y-3">
               {activities.map(a => (
                 <div key={a.id} className="rounded-md border border-indigo-200 bg-white p-2 space-y-2">

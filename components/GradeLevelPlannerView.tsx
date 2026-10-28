@@ -136,7 +136,9 @@ export const GradeLevelScheduleTable: React.FC<SingleScheduleTableProps & {
                   aria-label={`จองคาบไว้ ${reserved.join(', ')} ${day} ${periodLabel}`}
                   role="gridcell"
                 >
-                  <span className="text-xs font-semibold text-indigo-700">📌 {reserved.join(', ')}</span>
+                  <div className="text-xs font-semibold text-indigo-700">📌 {reserved.join(', ')}</div>
+                  <div className="text-[10px] text-slate-500 mt-0.5">สถานที่: ตามที่กำหนด</div>
+                  <div className="text-[10px] text-slate-500">ครู: ตามครู</div>
                 </td>
             );
         }
