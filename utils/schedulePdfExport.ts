@@ -3,7 +3,8 @@ import autoTable from 'jspdf-autotable';
 import { AppData, Identifiable, PrintOptions, Teacher, GradeLevel, PhysicalRoom, ScheduleEntry, DayOfWeek } from '../types';
 import { SARABUN_REGULAR_BASE64, SARABUN_BOLD_BASE64 } from './sarabunFont';
 import { formatRoomDisplay, formatRoomShort } from './stringUtils';
-import { isParentGrade as checkIsParentGradeUtil, levelActivityLabel } from '../components/scheduleUtils';
+import { isParentGrade as checkIsParentGradeUtil, levelActivityLabel, isLunchPeriodForGrade } from '../components/scheduleUtils';
+import { reservedActivityLabelsForCell } from '../lib/fixedActivities';
 
 export const THAI_DAYS: Record<string, string> = {
   'Monday': 'จันทร์',
@@ -136,7 +137,15 @@ export async function exportScheduleGridPdf(
         }
 
         if (entries.length === 0) {
-          rowCells.push('');
+          // Class timetable: lunch break and period reservations (teacher-only activities, shown read-only)
+          let text = '';
+          if (itemType === 'gradeLevel') {
+            const period = periodSettings[periodIndex];
+            const reserved = reservedActivityLabelsForCell(period, day, item.id, appData.gradeLevels, appData.subjects);
+            if (reserved.length > 0) text = `${reserved.join(', ')}\nสถานที่: ตามที่กำหนด\nครู: ตามครู`;
+            else if (isLunchPeriodForGrade(period, item.id, appData.gradeLevels)) text = 'พักกลางวัน';
+          }
+          rowCells.push(text);
         } else {
           // Format exactly 4 lines per block
           const blockTexts = entries.map(entry => {
@@ -231,6 +240,12 @@ export async function exportScheduleGridPdf(
         valign: 'middle'
       },
       columnStyles,
+      didParseCell: (data: any) => {
+        if (data.section !== 'body' || data.column.index === 0) return;
+        const txt = Array.isArray(data.cell.text) ? data.cell.text.join('\n') : String(data.cell.text || '');
+        if (txt.includes('สถานที่: ตามที่กำหนด')) data.cell.styles.fillColor = [238, 242, 255];
+        else if (txt.trim() === 'พักกลางวัน') data.cell.styles.fillColor = [255, 247, 224];
+      },
       margin: { top: 24, bottom: 28, left: 14, right: 14 }
     });
 
