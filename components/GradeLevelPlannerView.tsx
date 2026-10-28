@@ -8,6 +8,7 @@ import { AppData, DayOfWeek, PeriodSetting, ScheduleEntry, Subject, Teacher, Phy
 import { WalkDot } from './WalkDot';
 import { DAYS_OF_WEEK_ORDERED, Icons } from '../constants';
 import { isParentGrade as checkIsParentGradeUtil, getParentGradeLevelId as getParentIdUtil, isLunchPeriodForGrade, teachersCellLabel, levelActivityLabel } from './scheduleUtils';
+import { reservedActivityLabelsForCell } from '../lib/fixedActivities';
 import Modal from './Modal';
 
 export const THAI_DAYS: Record<string, string> = {
@@ -119,6 +120,26 @@ export const GradeLevelScheduleTable: React.FC<SingleScheduleTableProps & {
               <span className="text-xs font-semibold text-amber-700">🍽️ พักกลางวัน</span>
             </td>
         );
+    }
+
+    if (cellEntries.length === 0) {
+        const reserved = reservedActivityLabelsForCell(periodInfo, day, selectedGradeLevelId, gradeLevels, appData.subjects);
+        if (reserved.length > 0) {
+            return (
+                <td
+                  key={`${day}-${periodIndex}`}
+                  data-day={day}
+                  data-period={periodIndex}
+                  className={`p-1 border border-slate-300 align-middle text-center bg-indigo-50 ${tableView === 'daysAsCols' ? 'min-h-[80px] h-auto' : 'h-28 min-h-[7rem]'}`}
+                  style={{ userSelect: 'none' }}
+                  title={`จองคาบไว้: ${reserved.join(', ')} (${periodTimeTooltip})`}
+                  aria-label={`จองคาบไว้ ${reserved.join(', ')} ${day} ${periodLabel}`}
+                  role="gridcell"
+                >
+                  <span className="text-xs font-semibold text-indigo-700">📌 {reserved.join(', ')}</span>
+                </td>
+            );
+        }
     }
 
     const isLocked = !!appData.organizationSettings?.isLocked;
