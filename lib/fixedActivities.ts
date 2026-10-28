@@ -4,7 +4,7 @@
  *
  * Mirrors how the schedule modal places each kind of subject:
  *  - level-wide (isBroadAssignment): ONE entry on the parent grade, teachers = linked teachers, no room
- *  - teacher-only: ONE 'Non-Student' entry, teachers = linked teachers, no room
+ *  - teacher-only: no entries (the period is only reserved and shown on the class timetable)
  *  - everything else: one entry per class room, teachers = that class's linked teachers
  *    (homeroom/advisory subjects: the class's homeroom teachers), room = the class's homeroom room if any
  */
@@ -79,21 +79,9 @@ export const planFixedActivityEntries = (args: {
             physicalRoomId: room, fixedActivityId: act.id,
           });
 
-          if (subject.type === 'TEACHER_ONLY') {
-            // New links use 'Non-Student'; older ones were made per classroom, so accept those of the ticked levels too.
-            const t = linkedTeachers(['Non-Student', ...act.gradeLevelIds.flatMap(g => [g, ...getChildGradeLevelIds(g, gradeLevels)])]);
-            const ok = usable(t);
-            if (t.length === 0) { skip('no_teacher', 'Non-Student'); }
-            else if (ok.length === 0) { skip('teachers_busy', 'Non-Student'); }
-            else {
-              if (ok.length < t.length) skip('teachers_busy', 'Non-Student', `${t.length - ok.length}`);
-              // one entry per activity/day is enough no matter how many grades were ticked
-              if (!entries.some(e => e.fixedActivityId === act.id && e.day === day && e.gradeLevelId === 'Non-Student')) {
-                entries.push(mk('Non-Student', ok, ''));
-              }
-            }
-            continue;
-          }
+          // Teacher-only subjects (clubs…) only RESERVE the period: nothing is placed in teachers' timetables.
+          // The reservation is shown on the class timetable instead (see reservedActivityLabelsForCell).
+          if (subject.type === 'TEACHER_ONLY') continue;
 
           const children = getChildGradeLevelIds(parentId, gradeLevels);
           if (subject.isBroadAssignment) {
@@ -124,4 +112,26 @@ export const planFixedActivityEntries = (args: {
   });
 
   return { entries, skipped, replacedIds };
+};
+
+/**
+ * Fixed activities that reserve a period for a class on a day WITHOUT creating entries (teacher-only subjects).
+ * Returns their display names so the class timetable can show a "reserved" cell.
+ */
+export const reservedActivityLabelsForCell = (
+  period: PeriodSetting | undefined | null,
+  day: DayOfWeek,
+  gradeLevelId: string,
+  gradeLevels: GradeLevel[],
+  subjects: Subject[],
+): string[] => {
+  const out: string[] = [];
+  for (const a of period?.fixedActivities || []) {
+    if (!a.days.includes(day)) continue;
+    const subject = subjects.find(s => s.id === a.subjectId);
+    if (!subject || subject.type !== 'TEACHER_ONLY') continue;
+    const covered = a.gradeLevelIds.some(pid => pid === gradeLevelId || getChildGradeLevelIds(pid, gradeLevels).includes(gradeLevelId));
+    if (covered) out.push(subject.name);
+  }
+  return out;
 };

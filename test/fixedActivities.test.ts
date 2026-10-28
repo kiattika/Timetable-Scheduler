@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { planFixedActivityEntries } from '../lib/fixedActivities';
+import { planFixedActivityEntries, reservedActivityLabelsForCell } from '../lib/fixedActivities';
 
 const grades: any[] = [
   { id: 'm1', name: 'M.1' }, { id: 'm1-1', name: 'M.1/1', parentId: 'm1', homeroomPhysicalRoomId: 'r11' },
@@ -23,16 +23,20 @@ describe('planFixedActivityEntries', () => {
     const r = run([{ id: 'cz', isHomeroomAdvisorySubject: true }], [{ id: 'f', subjectId: 'cz', gradeLevelIds: ['m1'], days: ['Monday'] }], []);
     expect(r.entries.map(e => [e.gradeLevelId, e.teacherIds, e.physicalRoomId])).toEqual([['m1-1', ['a'], 'r11'], ['m1-2', ['b'], '']]);
   });
-  it('teacher-only subject -> a single Non-Student entry with all linked teachers', () => {
-    const r = run([{ id: 'club', type: 'TEACHER_ONLY' }], [{ id: 'f', subjectId: 'club', gradeLevelIds: ['m1', 'm1'], days: ['Thursday'] }],
-      [link('a', 'club', 'Non-Student'), link('c', 'club', 'Non-Student')]);
-    expect(r.entries).toHaveLength(1);
-    expect(r.entries[0]).toMatchObject({ gradeLevelId: 'Non-Student', teacherIds: ['a', 'c'] });
-  });
-  it('teacher-only subject also uses older per-classroom links of the ticked levels', () => {
+  it('teacher-only subject only reserves: no entries are created, even with links', () => {
     const r = run([{ id: 'club', type: 'TEACHER_ONLY' }], [{ id: 'f', subjectId: 'club', gradeLevelIds: ['m1'], days: ['Thursday'] }],
-      [link('a', 'club', 'm1-1'), link('b', 'club', 'm1-2'), link('c', 'club', 'm9-1')]);
-    expect(r.entries[0].teacherIds).toEqual(['a', 'b']);
+      [link('a', 'club', 'Non-Student'), link('b', 'club', 'm1-2')]);
+    expect(r.entries).toHaveLength(0);
+    expect(r.skipped).toHaveLength(0);
+  });
+  it('reservedActivityLabelsForCell shows teacher-only reservations on covered classes and days', () => {
+    const period: any = { fixedActivities: [{ id: 'f', subjectId: 'club', gradeLevelIds: ['m1'], days: ['Thursday'] }] };
+    const subs: any[] = [{ id: 'club', name: 'ชุมนุม', type: 'TEACHER_ONLY' }, { id: 'x', name: 'X' }];
+    expect(reservedActivityLabelsForCell(period, 'Thursday' as any, 'm1-2', grades, subs)).toEqual(['ชุมนุม']);
+    expect(reservedActivityLabelsForCell(period, 'Monday' as any, 'm1-2', grades, subs)).toEqual([]);
+    expect(reservedActivityLabelsForCell(period, 'Thursday' as any, 'm2-1', grades, subs)).toEqual([]);
+    period.fixedActivities[0].subjectId = 'x';
+    expect(reservedActivityLabelsForCell(period, 'Thursday' as any, 'm1-2', grades, subs)).toEqual([]);
   });
   it('skips slots already taken and busy teachers, reporting why', () => {
     const existing = [{ id: 'x', gradeLevelId: 'm1-1', day: 'Monday', period: 1, subjectId: 'math', teacherIds: ['z'] },

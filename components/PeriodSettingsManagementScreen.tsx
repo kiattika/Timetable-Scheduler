@@ -5,6 +5,7 @@ import { planFixedActivityEntries, FixedActivityPlan } from '../lib/fixedActivit
 import { subjectOfferedInSemester } from './scheduleUtils';
 import { thaiGradeName } from '../utils/subjectCode';
 import Modal from './Modal';
+import SearchableSelect from './SearchableSelect';
 import ConfirmationModal from './ConfirmationModal';
 import { Icons } from '../constants';
 
@@ -448,20 +449,23 @@ const PeriodSettingsManagementScreen: React.FC<PeriodSettingsManagementScreenPro
           </fieldset>
           <fieldset className="border border-indigo-200 bg-indigo-50/50 p-3 rounded-md min-w-0 w-full">
             <legend className="text-sm font-medium text-indigo-800 px-1">📌 วิชาที่กำหนดไว้ในคาบนี้</legend>
-            <p className="text-xs text-slate-500 mb-2">จองคาบนี้ให้วิชา เช่น กิจกรรมชุมนุม ลูกเสือ-เนตรนารี Cleaning Zone แล้วกดปุ่ม "ลงตารางตามวิชาที่กำหนด" ในหน้านี้เพื่อสร้างรายการในตารางให้อัตโนมัติ (ใช้ครูที่เชื่อมโยงกับวิชาในหน้า Teacher-Subject Links)</p>
+            <p className="text-xs text-slate-500 mb-2">จองคาบนี้ให้วิชา เช่น กิจกรรมชุมนุม ลูกเสือ-เนตรนารี Cleaning Zone แล้วกดปุ่ม "ลงตารางตามวิชาที่กำหนด" ในหน้านี้เพื่อสร้างรายการในตารางให้อัตโนมัติ (ใช้ครูที่เชื่อมโยงกับวิชาในหน้า Teacher-Subject Links) · วิชาเฉพาะครู (TEACHER-ONLY) จะจองคาบและแสดงในตารางชั้นเรียนเท่านั้น ไม่จัดลงตารางครู</p>
             <div className="space-y-3">
               {activities.map(a => (
                 <div key={a.id} className="rounded-md border border-indigo-200 bg-white p-2 space-y-2">
                   <div className="flex items-center gap-2">
-                    <select
+                    <SearchableSelect
+                      className="flex-1 min-w-0"
                       value={a.subjectId}
-                      onChange={e => patchActivity(a.id, { subjectId: e.target.value })}
-                      className="flex-1 min-w-0 p-1.5 text-sm border border-slate-300 rounded-md bg-white"
-                      aria-label="วิชา"
-                    >
-                      <option value="">— เลือกวิชา —</option>
-                      {subjectOptions.map(sb => <option key={sb.id} value={sb.id}>{sb.subjectCode ? `[${sb.subjectCode}] ` : ''}{sb.name}</option>)}
-                    </select>
+                      onChange={v => patchActivity(a.id, { subjectId: v })}
+                      placeholder="พิมพ์ชื่อวิชา หรือรหัสวิชา เพื่อค้นหา..."
+                      options={subjectOptions.map(sb => ({
+                        value: sb.id,
+                        label: `${sb.subjectCode ? `[${sb.subjectCode}] ` : ''}${sb.name}`,
+                        searchText: `${sb.subjectCode || ''} ${sb.name}`,
+                        group: sb.department || undefined,
+                      }))}
+                    />
                     <button type="button" onClick={() => setActivities(activities.filter(x => x.id !== a.id))} className="text-red-600 hover:text-red-800 p-1" title="ลบรายการนี้" aria-label="ลบรายการ">
                       <Icons.Delete size={16} />
                     </button>
