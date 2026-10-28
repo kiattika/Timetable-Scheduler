@@ -8,6 +8,7 @@ import { ArrowUp, ArrowDown, Search, X } from 'lucide-react';
 import { getChildGradeLevelIds, getParentGradeLevelId, subjectOfferedInSemester } from './scheduleUtils';
 import SearchableSelect from './SearchableSelect';
 import { thaiGradeName } from '../utils/subjectCode';
+import { rankTeachersForSubject } from '../utils/linkTeacherCandidates';
 import { planBulkDelete } from '../utils/bulkDeleteLinks';
 import { computeHomeroomLinkDrift, applyHomeroomLinkDrift } from '../utils/homeroomLinks';
 
@@ -137,7 +138,15 @@ const TeacherSubjectAssignmentScreen: React.FC<TeacherSubjectAssignmentScreenPro
   const [addedThisSession, setAddedThisSession] = useState<string[]>([]);
   const [modalNotice, setModalNotice] = useState<string | null>(null);
 
+  // Teacher-only subjects: tick many teachers at once (advisors of the subject's levels are listed first)
+  const [bulkTeacherIds, setBulkTeacherIds] = useState<string[]>([]);
+  const [teacherQuery, setTeacherQuery] = useState('');
+  const [onlyAdvisors, setOnlyAdvisors] = useState(false);
+
   const openModal = () => {
+    setBulkTeacherIds([]);
+    setTeacherQuery('');
+    setOnlyAdvisors(false);
     setNewAssignment({ teacherId: '', subjectId: '', selectedGradeLevelIds: [] }); 
     setError(null);
     setAddedThisSession([]);
@@ -180,6 +189,7 @@ const TeacherSubjectAssignmentScreen: React.FC<TeacherSubjectAssignmentScreenPro
           selectedGradeLevelIds = [];
         }
       }
+      setBulkTeacherIds([]);
       setNewAssignment(prev => ({
         ...prev,
         subjectId: value,
@@ -198,16 +208,19 @@ const TeacherSubjectAssignmentScreen: React.FC<TeacherSubjectAssignmentScreenPro
     const isTeacherOnly = targetSubject?.type === 'TEACHER_ONLY';
     const isStudentOnly = targetSubject?.type === 'STUDENT_ONLY';
 
-    const teacherIdVal = isStudentOnly ? 'No Teacher Assigned' : newAssignment.teacherId;
+    const teacherIdsVal: string[] = isStudentOnly
+      ? ['No Teacher Assigned']
+      : (isTeacherOnly && bulkTeacherIds.length > 0 ? bulkTeacherIds : (newAssignment.teacherId ? [newAssignment.teacherId] : []));
+    const teacherIdVal = teacherIdsVal[0];
     const selectedGradeLevelIdsVal = isTeacherOnly ? ['Non-Student'] : newAssignment.selectedGradeLevelIds;
 
-    if (!teacherIdVal || !newAssignment.subjectId || !selectedGradeLevelIdsVal || selectedGradeLevelIdsVal.length === 0) { 
+    if (teacherIdsVal.length === 0 || !newAssignment.subjectId || !selectedGradeLevelIdsVal || selectedGradeLevelIdsVal.length === 0) { 
       setError('ข้อผิดพลาดการตรวจพบ: กรุณากรอกหัวข้อเลือกให้ครบถ้วน');
       return;
     }
 
     // Verify entities actually exist in appData (prevent "Unknown Grade" or orphaned data)
-    const teacherExists = teacherIdVal === 'No Teacher Assigned' || appData.teachers.some(t => t.id === teacherIdVal);
+    const teacherExists = teacherIdsVal.every(tid => tid === 'No Teacher Assigned' || appData.teachers.some(t => t.id === tid));
     if (!teacherExists) {
       setError('ข้อผิดพลาดการตรวจพบ: ไม่พบข้อมูลครูผู้สอนผู้นี้ในฐานข้อมูลของโรงเรียน');
       return;
@@ -227,36 +240,31 @@ const TeacherSubjectAssignmentScreen: React.FC<TeacherSubjectAssignmentScreenPro
 
     const periodsPerWeekToBind = targetSubject?.periodsPerWeek || 0;
     
-    const targetTeacher = appData.teachers.find(t => t.id === teacherIdVal);
-    const departmentToBind = appData.currentUser?.role === 'assistant'
-      ? (appData.currentUser?.assignedDepartments?.[0] || targetTeacher?.department || targetSubject?.department || '')
-      : (targetTeacher?.department || targetSubject?.department || '');
-
     const newEntriesToAdd: TeacherSubjectAssignment[] = [];
     const skippedMessages: string[] = [];
 
-    selectedGradeLevelIdsVal.forEach(gradeId => {
-      const existingAssignment = assignments.find(
-        asm => asm.teacherId === teacherIdVal && 
-               asm.subjectId === newAssignment.subjectId &&
-               asm.gradeLevelId === gradeId 
-      );
-
-      if (existingAssignment) {
-        const teacherName = getTeacherName(teacherIdVal);
-        const subjectName = getSubjectName(newAssignment.subjectId);
-        const gradeName = getGradeLevelName(gradeId);
-        skippedMessages.push(`ข้ามการนำเข้า ${gradeName} เนื่องจากมีการจับคู่ครู ${teacherName} สอนวิชา ${subjectName} แล้ว`);
-      } else {
-        newEntriesToAdd.push({
-          id: crypto.randomUUID(),
-          teacherId: teacherIdVal,
-          subjectId: newAssignment.subjectId,
-          gradeLevelId: gradeId,
-          periodsPerWeek: periodsPerWeekToBind,
-          department: departmentToBind,
-        });
-      }
+    teacherIdsVal.forEach(tid => {
+      const targetTeacher = appData.teachers.find(t => t.id === tid);
+      const departmentToBind = appData.currentUser?.role === 'assistant'
+        ? (appData.currentUser?.assignedDepartments?.[0] || targetTeacher?.department || targetSubject?.department || '')
+        : (targetTeacher?.department || targetSubject?.department || '');
+      selectedGradeLevelIdsVal.forEach(gradeId => {
+        const existingAssignment = assignments.find(
+          asm => asm.teacherId === tid && asm.subjectId === newAssignment.subjectId && asm.gradeLevelId === gradeId
+        );
+        if (existingAssignment) {
+          skippedMessages.push(`ข้ามการนำเข้า ${getGradeLevelName(gradeId)} เนื่องจากมีการจับคู่ครู ${getTeacherName(tid)} สอนวิชา ${getSubjectName(newAssignment.subjectId)} แล้ว`);
+        } else {
+          newEntriesToAdd.push({
+            id: crypto.randomUUID(),
+            teacherId: tid,
+            subjectId: newAssignment.subjectId,
+            gradeLevelId: gradeId,
+            periodsPerWeek: periodsPerWeekToBind,
+            department: departmentToBind,
+          });
+        }
+      });
     });
 
     if (newEntriesToAdd.length > 0) {
@@ -278,9 +286,12 @@ const TeacherSubjectAssignmentScreen: React.FC<TeacherSubjectAssignmentScreenPro
         setModalNotice(finalMessage.trim());
         const subjLabel = getSubjectName(newAssignment.subjectId);
         const gradeNames = newEntriesToAdd.map(en => getGradeLevelName(en.gradeLevelId)).join(', ');
-        setAddedThisSession(prev => [...prev, `${subjLabel} → ${gradeNames}`]);
+        setAddedThisSession(prev => [...prev, teacherIdsVal.length > 1
+          ? `${subjLabel} → ครู ${newEntriesToAdd.length} คน`
+          : `${subjLabel} → ${gradeNames}`]);
+        setBulkTeacherIds([]);
         setNewAssignment(prev => ({ ...prev, subjectId: '', selectedGradeLevelIds: [] }));
-    } else if (skippedMessages.length === selectedGradeLevelIdsVal.length && selectedGradeLevelIdsVal.length > 0) {
+    } else if (skippedMessages.length === selectedGradeLevelIdsVal.length * teacherIdsVal.length && selectedGradeLevelIdsVal.length > 0) {
         setError("ประวัติข้อมูลเชื่อมโยงนี้ได้รับจัดคู่ทั้งหมดแล้วในระบบ");
     }
   };
@@ -499,8 +510,8 @@ const TeacherSubjectAssignmentScreen: React.FC<TeacherSubjectAssignmentScreenPro
   };
 
   const modalFields: FormField[] = [
-    { name: 'teacherId', label: 'Teacher (ครูผู้สอน)', type: 'select', optionsSource: 'teachers', required: true },
     { name: 'subjectId', label: 'Subject (วิชาหลัก/วิชาเลือก)', type: 'select', optionsSource: 'subjects', required: true },
+    { name: 'teacherId', label: 'Teacher (ครูผู้สอน)', type: 'select', optionsSource: 'teachers', required: true },
     { name: 'gradeLevelId', label: 'Grade Level/Rooms (ระดับชั้น/ห้องเรียน)', type: 'select', optionsSource: 'gradeLevels', required: true }
   ];
 
@@ -519,6 +530,7 @@ const TeacherSubjectAssignmentScreen: React.FC<TeacherSubjectAssignmentScreenPro
     }
 
     let sourceData = appData[field.optionsSource] as Identifiable[];
+    const ranking = rankTeachersForSubject(appData.teachers, selectedSub, appData.gradeLevels);
 
     const isAssistant = appData.currentUser?.role === 'assistant';
     const assignedDepts = appData.currentUser?.assignedDepartments || [];
@@ -560,6 +572,9 @@ const TeacherSubjectAssignmentScreen: React.FC<TeacherSubjectAssignmentScreenPro
         sourceData = [...sourceData].sort((a, b) => ((a as any).name || '').localeCompare((b as any).name || '', undefined, { numeric: true, sensitivity: 'base' }));
     } else if (field.optionsSource === 'teachers') {
         sourceData = [...sourceData].sort((a, b) => {
+            // Subject chosen first: advisors of the levels it is open to come before everyone else
+            const advA = ranking.advisorLabels.has(a.id), advB = ranking.advisorLabels.has(b.id);
+            if (advA !== advB) return advA ? -1 : 1;
             const deptA = (a as any).department || '';
             const deptB = (b as any).department || '';
             if (!deptA !== !deptB) return deptA ? -1 : 1;
@@ -575,6 +590,10 @@ const TeacherSubjectAssignmentScreen: React.FC<TeacherSubjectAssignmentScreenPro
         sourceData = [...sourceData].sort((a, b) => ((a as any).subjectCode || '').localeCompare(((b as any).subjectCode || ''), undefined, { numeric: true, sensitivity: 'base' }));
     }
 
+    if (field.name === 'teacherId' && onlyAdvisors && ranking.advisorLabels.size > 0) {
+      sourceData = (sourceData as Teacher[]).filter(t => ranking.advisorLabels.has(t.id) || t.id === newAssignment.teacherId);
+    }
+
     const options = sourceData.map(item => {
         let label = (item as any).name || item.id;
         if (field.optionsSource === 'teachers' && (item as any).teacherCode) {
@@ -586,11 +605,69 @@ const TeacherSubjectAssignmentScreen: React.FC<TeacherSubjectAssignmentScreenPro
         return {
           value: item.id,
           label,
-          group: (item as any).department || undefined,
+          group: (field.optionsSource === 'teachers' && ranking.advisorLabels.has(item.id))
+            ? `★ ครูที่ปรึกษา ${ranking.advisorLabels.get(item.id)}`
+            : ((item as any).department || undefined),
           searchText: `${(item as any).teacherCode || ''} ${(item as any).subjectCode || ''} ${(item as any).department || ''}`,
         };
     });
     
+    if (field.name === 'teacherId' && isTeacherOnly) {
+      const q = teacherQuery.trim().toLowerCase();
+      const shown = (sourceData as Teacher[]).filter(t =>
+        !q || `${t.name} ${t.teacherCode || ''} ${t.department || ''}`.toLowerCase().includes(q));
+      const advisorsShown = shown.filter(t => ranking.advisorLabels.has(t.id)).map(t => t.id);
+      const allAdvisorsTicked = advisorsShown.length > 0 && advisorsShown.every(id => bulkTeacherIds.includes(id));
+      const toggleTeacher = (id: string) => setBulkTeacherIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+      return (
+        <div key="bulkTeachers">
+          <label className="block text-sm font-medium text-slate-700 mb-1">
+            Teachers (ครูผู้สอน — เลือกได้หลายคน) <span className="text-red-500">*</span>
+          </label>
+          {ranking.levelNames.length > 0 && (
+            <p className="text-xs text-slate-500 mb-1">ครูที่ปรึกษาของ {ranking.levelNames.join(', ')} อยู่ด้านบน (★)</p>
+          )}
+          <div className="flex flex-wrap items-center gap-2 mb-2">
+            <input
+              type="text"
+              value={teacherQuery}
+              onChange={e => setTeacherQuery(e.target.value)}
+              placeholder="ค้นหาชื่อ รหัส หรือกลุ่มสาระฯ..."
+              className="flex-1 min-w-[10rem] p-1.5 text-sm border border-slate-300 rounded-md"
+            />
+            {advisorsShown.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setBulkTeacherIds(prev => allAdvisorsTicked ? prev.filter(id => !advisorsShown.includes(id)) : Array.from(new Set([...prev, ...advisorsShown])))}
+                className="px-2 py-1 text-xs font-medium text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-md"
+              >
+                {allAdvisorsTicked ? 'ยกเลิกครูที่ปรึกษาทั้งหมด' : `เลือกครูที่ปรึกษาทั้งหมด (${advisorsShown.length})`}
+              </button>
+            )}
+            {ranking.advisorLabels.size > 0 && (
+              <label className="flex items-center gap-1 text-xs text-slate-600 cursor-pointer">
+                <input type="checkbox" checked={onlyAdvisors} onChange={e => setOnlyAdvisors(e.target.checked)} className="h-3.5 w-3.5" />
+                เฉพาะครูที่ปรึกษา
+              </label>
+            )}
+          </div>
+          <div className="max-h-56 overflow-y-auto border border-slate-300 rounded-md divide-y divide-slate-100">
+            {shown.length === 0 && <p className="p-3 text-xs text-slate-400">ไม่พบครู</p>}
+            {shown.map(t => (
+              <label key={t.id} className={`flex items-center gap-2 px-2 py-1.5 text-sm cursor-pointer hover:bg-slate-50 ${bulkTeacherIds.includes(t.id) ? 'bg-blue-50' : ''}`}>
+                <input type="checkbox" checked={bulkTeacherIds.includes(t.id)} onChange={() => toggleTeacher(t.id)} className="h-4 w-4" />
+                <span className="flex-1 min-w-0 truncate">{t.name}{t.teacherCode ? ` (${t.teacherCode})` : ''}</span>
+                <span className="text-xs text-slate-400 shrink-0">
+                  {ranking.advisorLabels.has(t.id) ? `★ ที่ปรึกษา ${ranking.advisorLabels.get(t.id)}` : (t.department || '')}
+                </span>
+              </label>
+            ))}
+          </div>
+          <p className="text-xs text-slate-500 mt-1">เลือกแล้ว {bulkTeacherIds.length} คน</p>
+        </div>
+      );
+    }
+
     const fieldName = isMultiSelect ? 'selectedGradeLevelIds' : (field.name as string);
     const fieldValue = isMultiSelect ? (newAssignment.selectedGradeLevelIds || []) : ((newAssignment as any)[fieldName] || '');
 
@@ -601,6 +678,15 @@ const TeacherSubjectAssignmentScreen: React.FC<TeacherSubjectAssignmentScreenPro
             </label>
             {field.optionsSource === 'subjects' && appData.organizationSettings?.semester && (
               <p className="text-xs text-slate-500 mb-1">แสดงเฉพาะวิชาที่เปิดสอนในภาคเรียนที่ {appData.organizationSettings.semester}</p>
+            )}
+            {field.optionsSource === 'teachers' && ranking.advisorLabels.size > 0 && (
+              <div className="flex items-center justify-between mb-1">
+                <p className="text-xs text-slate-500">ครูที่ปรึกษาของ {ranking.levelNames.join(', ')} อยู่ด้านบน (★)</p>
+                <label className="flex items-center gap-1 text-xs text-slate-600 cursor-pointer">
+                  <input type="checkbox" checked={onlyAdvisors} onChange={e => setOnlyAdvisors(e.target.checked)} className="h-3.5 w-3.5" />
+                  เฉพาะครูที่ปรึกษา
+                </label>
+              </div>
             )}
             {field.optionsSource === 'gradeLevels' && (selectedSub?.applicableParentGradeLevelIds?.length || 0) > 0 && (
               <p className="text-xs text-slate-500 mb-1">แสดงเฉพาะระดับชั้นที่วิชานี้เปิดสอน</p>

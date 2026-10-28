@@ -80,7 +80,8 @@ export const planFixedActivityEntries = (args: {
           });
 
           if (subject.type === 'TEACHER_ONLY') {
-            const t = linkedTeachers(['Non-Student']);
+            // New links use 'Non-Student'; older ones were made per classroom, so accept those of the ticked levels too.
+            const t = linkedTeachers(['Non-Student', ...act.gradeLevelIds.flatMap(g => [g, ...getChildGradeLevelIds(g, gradeLevels)])]);
             const ok = usable(t);
             if (t.length === 0) { skip('no_teacher', 'Non-Student'); }
             else if (ok.length === 0) { skip('teachers_busy', 'Non-Student'); }
