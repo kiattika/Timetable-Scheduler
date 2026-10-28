@@ -19,7 +19,12 @@ export interface FixedActivitySkip {
   day: DayOfWeek;
   period: number;
   reason: 'no_teacher' | 'slot_taken' | 'teachers_busy' | 'subject_missing';
-  detail?: string;
+  /** teachers_busy: who is busy and with which timetable entry */
+  busy?: { teacherId: string; subjectId: string; gradeLevelId: string }[];
+  /** slot_taken: the entry already in that class's slot */
+  blocker?: { subjectId: string; gradeLevelId: string };
+  /** teachers_busy: how many linked teachers were still free (0 = whole entry skipped) */
+  freeCount?: number;
 }
 
 export interface FixedActivityPlan {
@@ -57,16 +62,25 @@ export const planFixedActivityEntries = (args: {
     all().some(e => e.day === day && e.period === period && (e.teacherIds || []).includes(tid));
   const gradeTaken = (gid: string, day: DayOfWeek, period: number, withChildren: boolean) => {
     const ids = new Set([gid, ...(withChildren ? getChildGradeLevelIds(gid, gradeLevels) : [])]);
-    return all().some(e => e.day === day && e.period === period && ids.has(e.gradeLevelId));
+    return all().find(e => e.day === day && e.period === period && ids.has(e.gradeLevelId));
   };
+  const busyList = (tids: string[], day: DayOfWeek, period: number) => {
+    const out: NonNullable<FixedActivitySkip['busy']> = [];
+    for (const tid of tids) {
+      const e = all().find(x => x.day === day && x.period === period && (x.teacherIds || []).includes(tid));
+      if (e) out.push({ teacherId: tid, subjectId: e.subjectId, gradeLevelId: e.gradeLevelId });
+    }
+    return out;
+  };
+  const handledTeacherOnly = new Set<string>();
 
   periodSettings.forEach((ps, period) => {
     (ps.fixedActivities || []).forEach((act: FixedActivity) => {
       const subject = subjects.find(s => s.id === act.subjectId);
       for (const day of act.days) {
         for (const parentId of act.gradeLevelIds) {
-          const skip = (reason: FixedActivitySkip['reason'], gradeLevelId: string, detail?: string) =>
-            skipped.push({ activityId: act.id, subjectId: act.subjectId, gradeLevelId, day, period, reason, detail });
+          const skip = (reason: FixedActivitySkip['reason'], gradeLevelId: string, extra: Partial<FixedActivitySkip> = {}) =>
+            skipped.push({ activityId: act.id, subjectId: act.subjectId, gradeLevelId, day, period, reason, ...extra });
           if (!subject) { skip('subject_missing', parentId); continue; }
 
           const linkedTeachers = (gradeIds: string[]) => {
@@ -82,12 +96,17 @@ export const planFixedActivityEntries = (args: {
 
           if (subject.type === 'TEACHER_ONLY') {
             // New links use 'Non-Student'; older ones were made per classroom, so accept those of the ticked levels too.
+            // The entry is per activity/day, so it is planned (and reported) once however many levels were ticked.
+            const doneKey = `${act.id}|${day}`;
+            if (handledTeacherOnly.has(doneKey)) continue;
+            handledTeacherOnly.add(doneKey);
             const t = linkedTeachers(['Non-Student', ...act.gradeLevelIds.flatMap(g => [g, ...getChildGradeLevelIds(g, gradeLevels)])]);
             const ok = usable(t);
+            const busy = busyList(t.filter(x => !ok.includes(x)), day, period);
             if (t.length === 0) { skip('no_teacher', 'Non-Student'); }
-            else if (ok.length === 0) { skip('teachers_busy', 'Non-Student'); }
+            else if (ok.length === 0) { skip('teachers_busy', 'Non-Student', { busy, freeCount: 0 }); }
             else {
-              if (ok.length < t.length) skip('teachers_busy', 'Non-Student', `${t.length - ok.length}`);
+              if (ok.length < t.length) skip('teachers_busy', 'Non-Student', { busy, freeCount: ok.length });
               // one entry per activity/day is enough no matter how many levels were ticked; it shows in every linked teacher's timetable
               if (!entries.some(e => e.fixedActivityId === act.id && e.day === day && e.gradeLevelId === 'Non-Student')) {
                 entries.push(mk('Non-Student', ok, ''));
@@ -100,9 +119,10 @@ export const planFixedActivityEntries = (args: {
           if (subject.isBroadAssignment) {
             const t = linkedTeachers([parentId, ...children]);
             const ok = usable(t);
-            if (gradeTaken(parentId, day, period, true)) skip('slot_taken', parentId);
+            const taken = gradeTaken(parentId, day, period, true);
+            if (taken) skip('slot_taken', parentId, { blocker: { subjectId: taken.subjectId, gradeLevelId: taken.gradeLevelId } });
             else if (t.length === 0) skip('no_teacher', parentId);
-            else if (ok.length === 0) skip('teachers_busy', parentId);
+            else if (ok.length === 0) skip('teachers_busy', parentId, { busy: busyList(t, day, period), freeCount: 0 });
             else entries.push(mk(parentId, ok, ''));
             continue;
           }
@@ -113,9 +133,10 @@ export const planFixedActivityEntries = (args: {
               ? teachers.filter(x => (x.homeroomGradeLevelIds || []).includes(classId)).map(x => x.id)
               : linkedTeachers([classId]);
             const ok = usable(t);
-            if (gradeTaken(classId, day, period, false)) { skip('slot_taken', classId); continue; }
+            const taken = gradeTaken(classId, day, period, false);
+            if (taken) { skip('slot_taken', classId, { blocker: { subjectId: taken.subjectId, gradeLevelId: taken.gradeLevelId } }); continue; }
             if (t.length === 0) { skip('no_teacher', classId); continue; }
-            if (ok.length === 0) { skip('teachers_busy', classId); continue; }
+            if (ok.length === 0) { skip('teachers_busy', classId, { busy: busyList(t, day, period), freeCount: 0 }); continue; }
             const room = !isSharable(subject) && grade?.homeroomPhysicalRoomId ? grade.homeroomPhysicalRoomId : '';
             entries.push(mk(classId, ok, room));
           }

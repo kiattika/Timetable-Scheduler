@@ -517,12 +517,33 @@ const PeriodSettingsManagementScreen: React.FC<PeriodSettingsManagementScreenPro
               {plan.skipped.length > 0 ? <> · ข้าม <b>{plan.skipped.length}</b> รายการ</> : null}
             </p>
             {plan.skipped.length > 0 && (
-              <ul className="max-h-56 overflow-y-auto list-disc list-inside text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-md p-2 space-y-0.5">
-                {plan.skipped.map((k, i) => (
-                  <li key={i}>
-                    {subjectLabel(k.subjectId)} · {k.gradeLevelId === 'Non-Student' ? 'เฉพาะครู' : gradeNameById(k.gradeLevelId) || (gradeLevels.find(g => g.id === k.gradeLevelId)?.name ?? '')} · {DAY_TH[k.day] || k.day} {periodSettings[k.period]?.label} — {SKIP_TH[k.reason]}
-                  </li>
-                ))}
+              <ul className="max-h-72 overflow-y-auto text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded-md p-2 space-y-2">
+                {plan.skipped.map((k, i) => {
+                  const className = (id: string) => id === 'Non-Student' ? 'ตารางครู (เฉพาะครู)' : (gradeLevels.find(g => g.id === id)?.name ?? id);
+                  const teacherName = (id: string) => teachers.find(t => t.id === id)?.name || id;
+                  return (
+                    <li key={i} className="border-b border-amber-100 last:border-0 pb-1.5">
+                      <div className="font-semibold">
+                        {subjectLabel(k.subjectId)} · {className(k.gradeLevelId)} · {DAY_TH[k.day] || k.day} {periodSettings[k.period]?.label}
+                      </div>
+                      <div>
+                        {k.reason === 'teachers_busy' && k.freeCount !== undefined && k.freeCount > 0
+                          ? `ลงให้ครูที่ว่าง ${k.freeCount} คน · ข้ามครูที่ติดสอน ${k.busy?.length ?? 0} คน`
+                          : SKIP_TH[k.reason]}
+                      </div>
+                      {k.busy && k.busy.length > 0 && (
+                        <ul className="list-disc list-inside text-slate-700 mt-0.5">
+                          {k.busy.map(b => (
+                            <li key={b.teacherId}>{teacherName(b.teacherId)} ติด: {subjectLabel(b.subjectId)}{b.gradeLevelId === 'Non-Student' ? ' (ตารางครู)' : ` · ${className(b.gradeLevelId)}`}</li>
+                          ))}
+                        </ul>
+                      )}
+                      {k.blocker && (
+                        <div className="text-slate-700 mt-0.5">มีอยู่แล้ว: {subjectLabel(k.blocker.subjectId)} · {className(k.blocker.gradeLevelId)}</div>
+                      )}
+                    </li>
+                  );
+                })}
               </ul>
             )}
             <p className="text-xs text-slate-500">รายการที่จัดไว้เองแล้วจะไม่ถูกแก้ไข ลบรายการที่สร้างได้จากหน้าตารางตามปกติ</p>
