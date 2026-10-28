@@ -35,6 +35,20 @@ describe('planFixedActivityEntries', () => {
       [link('a', 'club', 'Non-Student'), link('b', 'club', 'Non-Student')], existing);
     expect(r.entries[0].teacherIds).toEqual(['b']);
     expect(r.skipped[0].reason).toBe('teachers_busy');
+    expect(r.skipped[0].busy).toEqual([{ teacherId: 'a', subjectId: 'math', gradeLevelId: 'm1-1' }]);
+    expect(r.skipped[0].freeCount).toBe(1);
+  });
+  it('teacher-only: reported once per activity/day even when several levels are ticked', () => {
+    const existing = [{ id: 'x', gradeLevelId: 'm1-1', day: 'Thursday', period: 1, subjectId: 'math', teacherIds: ['a'] }];
+    const r = run([{ id: 'club', type: 'TEACHER_ONLY' }], [{ id: 'f', subjectId: 'club', gradeLevelIds: ['m1', 'm1', 'm1'], days: ['Thursday'] }],
+      [link('a', 'club', 'Non-Student')], existing);
+    expect(r.skipped).toHaveLength(1);
+    expect(r.skipped[0]).toMatchObject({ reason: 'teachers_busy', freeCount: 0 });
+  });
+  it('slot_taken names the entry that blocks it', () => {
+    const existing = [{ id: 'y', gradeLevelId: 'm1-2', day: 'Monday', period: 1, subjectId: 'math', teacherIds: ['z'] }];
+    const r = run([{ id: 'cz', isHomeroomAdvisorySubject: true }], [{ id: 'f', subjectId: 'cz', gradeLevelIds: ['m1'], days: ['Monday'] }], [], existing);
+    expect(r.skipped.find(k => k.gradeLevelId === 'm1-2')?.blocker).toEqual({ subjectId: 'math', gradeLevelId: 'm1-2' });
   });
   it('reservedActivityLabelsForCell shows teacher-only reservations on covered classes and days', () => {
     const period: any = { fixedActivities: [{ id: 'f', subjectId: 'club', gradeLevelIds: ['m1'], days: ['Thursday'] }] };
