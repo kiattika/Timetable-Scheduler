@@ -1,4 +1,5 @@
 import type { Teacher, Subject, GradeLevel, ScheduleEntry, TeacherSubjectAssignment } from '../types';
+import { activityByCode } from './activitySubject';
 import { parseSubjectCode, levelFromGradeName, subGroupOf, UNKNOWN_GROUP, type SubjectLevel } from './subjectCode';
 
 export interface LoadMetrics {
@@ -25,8 +26,8 @@ export const addMetrics = (a: LoadMetrics, b: LoadMetrics): LoadMetrics => ({
 export type LoadSource = 'schedule' | 'links';
 
 const isActivitySubject = (subject: Subject): boolean =>
-  parseSubjectCode(subject.subjectCode)?.kind === 'activity' || !!subject.isHomeroomAdvisorySubject || !!subject.isBroadAssignment ||
-  subject.type === 'TEACHER_ONLY' || subject.type === 'STUDENT_ONLY';
+  activityByCode(subject) ?? (parseSubjectCode(subject.subjectCode)?.kind === 'activity' || !!subject.isHomeroomAdvisorySubject || !!subject.isBroadAssignment ||
+  subject.type === 'TEACHER_ONLY' || subject.type === 'STUDENT_ONLY');
 
 /** Classify `periods` periods of `subject` taught to `gradeName` into the right bucket. */
 const classify = (m: LoadMetrics, subject: Subject | undefined, gradeName: string | undefined, periods: number) => {
