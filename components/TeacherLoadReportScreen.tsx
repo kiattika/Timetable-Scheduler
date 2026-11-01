@@ -26,6 +26,7 @@ import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { SARABUN_REGULAR_BASE64, SARABUN_BOLD_BASE64 } from '../utils/sarabunFont';
 import { enableThaiMarkFix } from '../utils/thaiMarks';
+import { isActivitySubject } from '../utils/activitySubject';
 
 function getImageTypeAndData(base64Str?: string): { data: Uint8Array; type: 'png' | 'jpg' } | null {
   if (!base64Str || typeof base64Str !== 'string' || !base64Str.startsWith('data:image')) return null;
@@ -69,14 +70,6 @@ export const TeacherLoadReportScreen: React.FC<TeacherLoadReportScreenProps> = (
           teacherSchedules[tid].push(entry);
         });
       });
-
-      const isActivitySubject = (subject?: Subject) => {
-        if (!subject || !subject.name) return false;
-        if (subject.isHomeroomAdvisorySubject) return true;
-        const lowerName = subject.name.toLowerCase();
-        const keywords = ['กิจกรรม', 'ลูกเสือ', 'เนตรนารี', 'ยุวกาชาด', 'แนะแนว', 'ชุมนุม', 'สาธารณประโยชน์', 'บำเพ็ญประโยชน์', 'โฮมรูม', 'homeroom', 'plc', 'ป้องกันการทุจริต', 'ทุจริต', 'จริยธรรม'];
-        return keywords.some(kw => lowerName.includes(kw));
-      };
 
       const sortedTeachers = [...(teachers || [])].sort((a, b) => {
         const deptA = a.department || '';
