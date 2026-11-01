@@ -14,6 +14,11 @@ describe('isActivitySubject', () => {
     expect(isActivitySubject({ name: 'คณิตศาสตร์เพิ่มเติม', subjectCode: 'ค32202' })).toBe(false);
     expect(isActivitySubject({ name: 'ป้องกันการทุจริต', subjectCode: 'ก30224' })).toBe(true);
   });
+  it('CZ (Cleaning Zone) is an activity, by code or by name', () => {
+    expect(isActivitySubject({ name: 'Cleaning Zone', subjectCode: 'CZ' })).toBe(true);
+    expect(isActivitySubject({ name: 'พื้นที่รับผิดชอบ', subjectCode: 'cz' })).toBe(true);
+    expect(isActivitySubject({ name: 'Cleaning Zone' })).toBe(true);
+  });
   it('handles missing subject or name', () => {
     expect(isActivitySubject(undefined)).toBe(false);
     expect(isActivitySubject({ subjectCode: 'ส30224' })).toBe(false);
