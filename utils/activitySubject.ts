@@ -7,10 +7,21 @@ const ACTIVITY_KEYWORDS = ['กิจกรรม', 'ลูกเสือ', '�
 // Subject codes that are always activities (Cleaning Zone, Homeroom, PLC)
 const ACTIVITY_CODES = new Set(['CZ', 'HR', 'PLC']);
 
+/**
+ * Rules decided by the subject CODE alone, shared by the load report and the Information screen:
+ * ส… is never an activity, CZ / HR / PLC always are. undefined = decide by the other rules.
+ */
+export const activityByCode = (subject?: { subjectCode?: string } | null): boolean | undefined => {
+  const code = (subject?.subjectCode || '').trim();
+  if (code.startsWith('ส')) return false;
+  if (ACTIVITY_CODES.has(code.toUpperCase())) return true;
+  return undefined;
+};
+
 export const isActivitySubject = (subject?: { name?: string; subjectCode?: string; isHomeroomAdvisorySubject?: boolean } | null): boolean => {
   if (!subject || !subject.name) return false;
-  if ((subject.subjectCode || '').trim().startsWith('ส')) return false;
-  if (ACTIVITY_CODES.has((subject.subjectCode || '').trim().toUpperCase())) return true;
+  const byCode = activityByCode(subject);
+  if (byCode !== undefined) return byCode;
   if (subject.isHomeroomAdvisorySubject) return true;
   const lowerName = subject.name.toLowerCase();
   return ACTIVITY_KEYWORDS.some(kw => lowerName.includes(kw));

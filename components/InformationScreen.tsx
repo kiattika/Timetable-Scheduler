@@ -250,7 +250,7 @@ const InformationScreen: React.FC<InformationScreenProps> = ({ appData }) => {
                 <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-xs">
                   {Object.entries(SUBJECT_GROUP_LABELS).map(([k, v]) => <div key={k}><b>{k}</b> {v}</div>)}
                 </div>
-                <p className="mt-2 text-xs text-slate-500">"กิจกรรม" รวมวิชาโฮมรูม/ลูกเสือ/ชุมนุม/PLC · "อื่นๆ" = วิชาที่รหัสไม่เป็นไปตามโครงสร้าง หรือระดับประถม</p>
+                <p className="mt-2 text-xs text-slate-500">"กิจกรรม" รวมวิชาโฮมรูม/ลูกเสือ/ชุมนุม/PLC/Cleaning Zone (รหัส ส… นับเป็นวิชาหลักเสมอ) · "อื่นๆ" = วิชาที่รหัสไม่เป็นไปตามโครงสร้าง หรือระดับประถม</p>
               </div>
             </div>
           )}
