@@ -20,3 +20,14 @@ describe('computeWorkload activity rule', () => {
     expect(m.total).toBe(4);
   });
 });
+
+describe('computeWorkload: academic code beats the broad/teacher-only flags', () => {
+  it('counts AP subjects (ว33203, flagged Broad) as main subjects, matching the load report', () => {
+    const ap = sub('ap', 'ว33203', { name: 'ฟิสิกส์ AP', isBroadAssignment: true });
+    const apTeacherOnly = sub('ap2', 'ว33223', { name: 'เคมี AP', type: 'TEACHER_ONLY' });
+    const hr = sub('hr', 'HR', { name: 'Homeroom', isHomeroomAdvisorySubject: true });
+    const r = computeWorkload({ teachers, subjects: [ap, apTeacherOnly, hr], gradeLevels: grades, scheduleEntries: entries('ap', 'ap2', 'hr'), assignments: [], source: 'schedule' }).overall.metrics;
+    expect(r.upperExtra).toBe(2);
+    expect(r.activity).toBe(1);
+  });
+});
