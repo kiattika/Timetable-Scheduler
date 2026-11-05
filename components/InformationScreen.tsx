@@ -1,6 +1,7 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useCallback } from 'react';
 import * as XLSX from 'xlsx';
 import { AppData } from '../types';
+import { subjectOfferedInSemester } from './scheduleUtils';
 import { formatRoomDisplay } from '../utils/stringUtils';
 import { thaiGradeName, SUBJECT_GROUP_LABELS, UNKNOWN_GROUP } from '../utils/subjectCode';
 import {
@@ -44,11 +45,16 @@ const InformationScreen: React.FC<InformationScreenProps> = ({ appData }) => {
       : (appData.scheduleEntries || []),
     [isAssistant, scopedTeacherIds, appData.scheduleEntries]
   );
+  // Links of subjects set for another semester are left out (same rule as Manage Teacher-Subject Links).
+  const inSemester = useCallback(
+    (a: { subjectId: string }) => subjectOfferedInSemester((appData.subjects || []).find(s => s.id === a.subjectId), appData.organizationSettings?.semester),
+    [appData.subjects, appData.organizationSettings?.semester]
+  );
   const teacherSubjectAssignments = useMemo(
     () => isAssistant
-      ? (appData.teacherSubjectAssignments || []).filter(a => scopedTeacherIds.has(a.teacherId))
-      : (appData.teacherSubjectAssignments || []),
-    [isAssistant, scopedTeacherIds, appData.teacherSubjectAssignments]
+      ? (appData.teacherSubjectAssignments || []).filter(a => scopedTeacherIds.has(a.teacherId) && inSemester(a))
+      : (appData.teacherSubjectAssignments || []).filter(inSemester),
+    [isAssistant, scopedTeacherIds, appData.teacherSubjectAssignments, inSemester]
   );
 
   const [tab, setTab] = useState<Tab>('homeroom');

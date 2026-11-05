@@ -3,6 +3,7 @@ import { AppData, User } from '../types';
 import Modal from './Modal';
 import { Icons } from '../constants';
 import SearchableSelect from './SearchableSelect';
+import { subjectOfferedInSemester } from './scheduleUtils';
 import { thaiGradeName } from '../utils/subjectCode';
 
 interface AuditModalProps {
@@ -44,6 +45,11 @@ export const AuditModal: React.FC<AuditModalProps> = ({ isOpen, onClose, appData
            return t && t.department && assignedDepts.includes(t.department);
        });
     }
+
+    // Same rule as "Manage Teacher-Subject Links": subjects set for another semester are not audited.
+    const currentSemester = appData.organizationSettings?.semester;
+    relevantLinks = relevantLinks.filter(link =>
+      subjectOfferedInSemester(appData.subjects.find(s => s.id === link.subjectId), currentSemester));
 
     relevantLinks.forEach(link => {
        const key = `${link.teacherId}-${link.subjectId}-${link.gradeLevelId}`;
