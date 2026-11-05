@@ -1232,7 +1232,7 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
     }
     const { subjectId, teacherIds, physicalRoomId, gradeLevelId, assignmentDuration = 1, cohort } = currentAssignment;
     const subjectForCombine = subjects.find(s => s.id === subjectId);
-    const extraGradeIds: string[] = (subjectForCombine && subjectForCombine.type !== 'TEACHER_ONLY' && !subjectForCombine.isBroadAssignment && gradeLevelId)
+    const extraGradeIds: string[] = (subjectForCombine && subjectForCombine.type !== 'TEACHER_ONLY' && gradeLevelId)
         ? (currentAssignment.combinedGradeLevelIds || []).filter(id => combinableGradeIds(gradeLevelId, gradeLevels).includes(id))
         : [];
 
@@ -2371,7 +2371,7 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
     </div>
   ) : null;
 
-  const combinableIds = currentSubjectDetailsForModal && currentSubjectDetailsForModal.type !== 'TEACHER_ONLY' && !currentSubjectDetailsForModal.isBroadAssignment
+  const combinableIds = currentSubjectDetailsForModal && currentSubjectDetailsForModal.type !== 'TEACHER_ONLY'
     ? combinableGradeIds(currentAssignment.gradeLevelId, gradeLevels) : [];
   const combinedField = combinableIds.length > 0 ? (
     <div>
