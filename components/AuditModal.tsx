@@ -3,7 +3,7 @@ import { AppData, User } from '../types';
 import Modal from './Modal';
 import { Icons } from '../constants';
 import SearchableSelect from './SearchableSelect';
-import { subjectOfferedInSemester } from './scheduleUtils';
+import { subjectOfferedInSemester, getChildGradeLevelIds } from './scheduleUtils';
 import { thaiGradeName } from '../utils/subjectCode';
 
 interface AuditModalProps {
@@ -26,10 +26,15 @@ export const AuditModal: React.FC<AuditModalProps> = ({ isOpen, onClose, appData
     const scheduleEntries = Array.isArray(appData.scheduleEntries) ? appData.scheduleEntries : [];
     
     scheduleEntries.forEach(entry => {
+      // A level-wide lesson (e.g. ก32914 placed once on M.5) also counts for the teacher's link of each classroom
+      // under that level (M.5/8, ...), otherwise the link would be reported as never scheduled.
+      const gradeIds = [entry.gradeLevelId, ...getChildGradeLevelIds(entry.gradeLevelId, appData.gradeLevels || [])];
       entry.teacherIds.forEach(tId => {
-        const key = `${tId}-${entry.subjectId}-${entry.gradeLevelId}`;
-        const current = allocationCounts.get(key) || { count: 0, lastPhysicalRoomId: null };
-        allocationCounts.set(key, { count: current.count + 1, lastPhysicalRoomId: entry.physicalRoomId });
+        gradeIds.forEach(gid => {
+          const key = `${tId}-${entry.subjectId}-${gid}`;
+          const current = allocationCounts.get(key) || { count: 0, lastPhysicalRoomId: null };
+          allocationCounts.set(key, { count: current.count + 1, lastPhysicalRoomId: entry.physicalRoomId });
+        });
       });
     });
 
@@ -67,7 +72,7 @@ export const AuditModal: React.FC<AuditModalProps> = ({ isOpen, onClose, appData
            linkId: link.id,
            teacherName: teacher?.name || 'Unknown Teacher',
            teacherCode: teacher?.teacherCode || '',
-           subjectName: subject?.name || 'Unknown Subject',
+           subjectName: subject?.name || 'ไม่พบวิชา (ลิงก์ค้าง ควรลบ)',
            subjectCode: subject?.subjectCode || '',
            department: teacher?.department || subject?.department || '',
            gradeLevelName: gradeLevel?.name || '',
