@@ -1,3 +1,5 @@
+import { dedupeCombinedEntries } from '../utils/combinedClasses';
+import { isActivitySubject } from '../utils/activitySubject';
 import React, { useState, useMemo } from 'react';
 import * as XLSX from 'xlsx';
 import { 
@@ -373,14 +375,11 @@ export const ExportDataModal: React.FC<ExportDataModalProps> = ({
 
     const teachersList = getFilteredTeachers(deptFilter);
     const rows = teachersList.map((teacher, index) => {
-      const entries = (appData.scheduleEntries || []).filter(e => (e.teacherIds || []).includes(teacher.id));
+      // A combined-class lesson (one teacher, several classrooms at once) is one teaching period.
+      const entries = dedupeCombinedEntries(appData.scheduleEntries || []).filter(e => (e.teacherIds || []).includes(teacher.id));
       
-      const isActivity = (sub?: Subject) => {
-        if (!sub || !sub.name) return false;
-        if (sub.isHomeroomAdvisorySubject) return true;
-        const lower = sub.name.toLowerCase();
-        return ['กิจกรรม', 'ลูกเสือ', 'เนตรนารี', 'ยุวกาชาด', 'แนะแนว', 'ชุมนุม', 'สาธารณประโยชน์', 'โฮมรูม'].some(k => lower.includes(k));
-      };
+      // Same main-subject/activity rule as the workload report and the Information screen.
+      const isActivity = (sub?: Subject) => !!sub && isActivitySubject(sub);
 
       let mainPeriods = 0;
       let activityPeriods = 0;

@@ -1,4 +1,4 @@
-import { dedupeCombinedEntries } from '../utils/combinedClasses';
+import { dedupeCombinedEntries, combinedGradeLabel } from '../utils/combinedClasses';
 import { formatRoomDisplay } from "../utils/stringUtils";
 import React, { useMemo, useState } from 'react';
 import { AppData, Subject, GradeLevel, ScheduleEntry, PhysicalRoom, DayOfWeek } from '../types';
@@ -97,7 +97,11 @@ export const TeacherLoadReportScreen: React.FC<TeacherLoadReportScreenProps> = (
               physicalRoom: (physicalRooms || []).find(c => c.id === entry.physicalRoomId),
               gradeLevel: entry.gradeLevelId === 'Non-Student'
                 ? { id: 'Non-Student', name: 'Non-Student' } as GradeLevel
-                : (gradeLevels || []).find(g => g.id === entry.gradeLevelId),
+                : (() => {
+                    const gl = (gradeLevels || []).find(g => g.id === entry.gradeLevelId);
+                    const label = combinedGradeLabel(entry, scheduleEntries || [], gradeLevels || []);
+                    return gl && label ? { ...gl, name: label } : gl;
+                  })(),
               periods: 0,
               slots: []
             };
