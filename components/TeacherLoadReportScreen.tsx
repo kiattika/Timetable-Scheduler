@@ -90,7 +90,9 @@ export const TeacherLoadReportScreen: React.FC<TeacherLoadReportScreenProps> = (
         const loadGroups: Record<string, { subject: Subject | undefined, physicalRoom: PhysicalRoom | undefined, gradeLevel: GradeLevel | undefined, periods: number, slots: {day: DayOfWeek, period: number}[] }> = {};
         
         entries.forEach(entry => {
-          const key = `${entry.subjectId}-${entry.physicalRoomId}`;
+          // One row per subject + room + class (or combined-class set): the same subject taught in the same room to
+          // different classes must not be merged under the first class's name.
+          const key = `${entry.subjectId}-${entry.physicalRoomId}-${combinedGradeLabel(entry, scheduleEntries || [], gradeLevels || []) || entry.gradeLevelId}`;
           if (!loadGroups[key]) {
             loadGroups[key] = {
               subject: (subjects || []).find(s => s.id === entry.subjectId),
