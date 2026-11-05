@@ -618,12 +618,13 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
 
     // Lunch break: never allow teaching in a grade level's lunch period
     if (gradeLevelIdToCheck !== 'Non-Student') {
-        for (let offset = 0; offset < Math.max(1, entryTotalInBlock); offset++) {
-            const p = periodSettings[periodIndex + offset];
-            if (isLunchPeriodForGrade(p, gradeLevelIdToCheck, gradeLevels)) {
-                const g = gradeLevels.find(gl => gl.id === gradeLevelIdToCheck);
-                return `คาบ ${p?.label || periodIndex + offset} เป็นเวลาพักกลางวันของ ${g?.name || 'ระดับชั้นนี้'} ไม่สามารถจัดการเรียนการสอนได้`;
-            }
+        // Callers check every period of a block one by one, so only this period is checked here. (Looking ahead
+        // by the block length made period 2+ of a block also test periods beyond the block, e.g. a 2-period
+        // block at P3-P4 was rejected because P5 is lunch.)
+        const p = periodSettings[periodIndex];
+        if (isLunchPeriodForGrade(p, gradeLevelIdToCheck, gradeLevels)) {
+            const g = gradeLevels.find(gl => gl.id === gradeLevelIdToCheck);
+            return `คาบ ${p?.label || periodIndex} เป็นเวลาพักกลางวันของ ${g?.name || 'ระดับชั้นนี้'} ไม่สามารถจัดการเรียนการสอนได้`;
         }
     }
 
