@@ -26,8 +26,16 @@ export const addMetrics = (a: LoadMetrics, b: LoadMetrics): LoadMetrics => ({
 
 export type LoadSource = 'schedule' | 'links';
 
-const isActivitySubject = (subject: Subject): boolean =>
-  activityByCode(subject) ?? (parseSubjectCode(subject.subjectCode)?.kind === 'activity' || !!subject.isHomeroomAdvisorySubject || !!subject.isBroadAssignment ||
+const isActivitySubject = (subject: Subject): boolean => {
+  const byCode = activityByCode(subject);
+  if (byCode !== undefined) return byCode;
+  // A standard academic code (xxx1xx basic / xxx2xx extra, e.g. ว33203) is a main subject even when the subject is
+  // flagged "broad"/teacher-only/student-only (e.g. AP subjects that share a slot); only the homeroom flag overrides.
+  const kind = parseSubjectCode(subject.subjectCode)?.kind;
+  if ((kind === 'basic' || kind === 'extra') && !subject.isHomeroomAdvisorySubject) return false;
+  return isActivityByFlags(subject);
+};
+const isActivityByFlags = (subject: Subject): boolean => (parseSubjectCode(subject.subjectCode)?.kind === 'activity' || !!subject.isHomeroomAdvisorySubject || !!subject.isBroadAssignment ||
   subject.type === 'TEACHER_ONLY' || subject.type === 'STUDENT_ONLY');
 
 /** Classify `periods` periods of `subject` taught to `gradeName` into the right bucket. */
