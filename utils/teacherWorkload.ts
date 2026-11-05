@@ -1,3 +1,4 @@
+import { dedupeCombinedEntries } from './combinedClasses';
 import type { Teacher, Subject, GradeLevel, ScheduleEntry, TeacherSubjectAssignment } from '../types';
 import { activityByCode } from './activitySubject';
 import { parseSubjectCode, levelFromGradeName, subGroupOf, UNKNOWN_GROUP, type SubjectLevel } from './subjectCode';
@@ -89,7 +90,7 @@ export const computeWorkload = (args: {
   };
 
   if (source === 'schedule') {
-    scheduleEntries.forEach(e => (e.teacherIds || []).forEach(tid => touch(tid, e.subjectId, e.gradeLevelId, 1)));
+    dedupeCombinedEntries(scheduleEntries).forEach(e => (e.teacherIds || []).forEach(tid => touch(tid, e.subjectId, e.gradeLevelId, 1)));
   } else {
     assignments.forEach(a => touch(a.teacherId, a.subjectId, a.gradeLevelId, subjectById.get(a.subjectId)?.periodsPerWeek ?? 0));
   }

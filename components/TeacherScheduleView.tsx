@@ -1,3 +1,4 @@
+import { withCombinedGrade } from '../utils/combinedClasses';
 import { formatRoomDisplay, formatRoomShort } from "../utils/stringUtils";
 import SearchableSelect from './SearchableSelect';
 
@@ -65,7 +66,7 @@ export const TeacherScheduleTable: React.FC<SingleScheduleTableProps & {
       e.day === day &&
       e.period === periodIndex
     );
-    const displayInfo = entry ? getEntryDisplay(entry) : null;
+    const displayInfo = entry ? withCombinedGrade(getEntryDisplay(entry), entry, scheduleEntries, gradeLevels) : null;
     const isBeingDragged = entry && entry.id === draggedEntryId;
     const periodInfo = periodSettings[periodIndex];
     const periodLabel = periodInfo?.label || `P${periodIndex}`;

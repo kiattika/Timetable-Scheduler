@@ -117,6 +117,9 @@ export interface ScheduleEntry {
   totalInBlock?: number; // Optional total number of entries in this block
   cohort?: string; // Optional student cohort for split classes
   fixedActivityId?: string; // Set when generated from a period's fixed activity (so it can be regenerated/removed)
+  // Combined class (ห้องเรียนรวม): the same lesson (teacher/room/slot) is stored once per class; all copies share this id.
+  // Teacher/room views and workload count the group once.
+  combinedGroupId?: string;
   cachedSubjectName?: string;
   cachedSubjectCode?: string;
   // Homeroom room of the class when this entry was placed/last acknowledged ('' = none).
@@ -271,6 +274,7 @@ export interface CurrentAssignmentState {
   period?: number;  
   assignmentDuration?: number; // Added for creating blocks via modal
   cohort?: string; // Optional student cohort for split classes
+  combinedGradeLevelIds?: string[]; // Other classes taking this lesson together with gradeLevelId
 }
 
 export interface AssignmentModalContext {

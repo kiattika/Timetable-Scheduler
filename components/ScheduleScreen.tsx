@@ -17,6 +17,7 @@ import { AuditModal } from './AuditModal';
 import { WalkingCheckScreen, computeWalkReport, countWalkingRisks, makeWalkMarkGetter } from './WalkingCheckScreen';
 import { usePersistedState } from '../utils/usePersistedState';
 import { getParentGradeLevelId, getChildGradeLevelIds, isParentGrade, isChildOf, isSharable, getAvailablePhysicalRooms, isLunchPeriodForGrade, entryCoversHomeroom, maxTeacherOnlyPeriods } from './scheduleUtils';
+import { combinableGradeIds, coGradeIdsOf, buildCombinedMirrors } from '../utils/combinedClasses';
 import { useTouchDrag } from '../hooks/useTouchDrag';
 import { assistantMayArrange, ASSISTANT_CROSS_DEPT_MESSAGE } from '../lib/assistantScope';
 import { ReviewWizardModal, Discrepancy, DetailRow } from './ReviewWizardModal';
@@ -507,6 +508,7 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
         gradeLevelId: entry.gradeLevelId, 
         assignmentDuration: entry.totalInBlock || 1,
         cohort: entry.cohort, 
+        combinedGradeLevelIds: coGradeIdsOf(entry, scheduleEntries),
       };
       setEditingEntryId(entry.id);
     } else {
@@ -625,7 +627,10 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
         }
     }
 
+    const editingGroupId = currentEditingEntryId ? scheduleEntries.find(e => e.id === currentEditingEntryId)?.combinedGroupId : undefined;
     for (const entry of scheduleEntries) {
+        // Copies of the combined lesson being edited are replaced on save, so they never conflict with it.
+        if (editingGroupId && entry.combinedGroupId === editingGroupId) continue;
         // Skip conflict check if 'entry' is the one being edited, or part of the same block being edited.
         const isSelfOrSameBlock = currentEditingEntryId === entry.id || 
                                   (editingEntryId && scheduleEntries.find(e => e.id === editingEntryId)?.blockId && entry.blockId === scheduleEntries.find(e => e.id === editingEntryId)?.blockId);
@@ -1077,6 +1082,7 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
             updated.assignmentDuration = parseInt(value, 10) || 1;
         } else {
             updated = { ...prev, [name]: value };
+            if (name === 'gradeLevelId' || name === 'subjectId') updated.combinedGradeLevelIds = [];
         }
 
         // Grade Level changed in teacherSchedules mode: if the previously-selected subject
@@ -1224,6 +1230,10 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
       return;
     }
     const { subjectId, teacherIds, physicalRoomId, gradeLevelId, assignmentDuration = 1, cohort } = currentAssignment;
+    const subjectForCombine = subjects.find(s => s.id === subjectId);
+    const extraGradeIds: string[] = (subjectForCombine && subjectForCombine.type !== 'TEACHER_ONLY' && !subjectForCombine.isBroadAssignment && gradeLevelId)
+        ? (currentAssignment.combinedGradeLevelIds || []).filter(id => combinableGradeIds(gradeLevelId, gradeLevels).includes(id))
+        : [];
 
     if (!subjectId) {
       setConflictError("Subject is required.");
@@ -1320,6 +1330,33 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
     
     const newEntries: ScheduleEntry[] = [];
     const editingEntry = editingEntryId ? scheduleEntries.find(e => e.id === editingEntryId) : null;
+    const groupIdToUse = extraGradeIds.length > 0 ? (editingEntry?.combinedGroupId || crypto.randomUUID()) : undefined;
+
+    // Combined class: every extra class must also be free (and under its weekly quota) for the whole block.
+    if (extraGradeIds.length > 0 && currentSubjectDetails) {
+        const slotDay = editingEntry ? editingEntry.day : targetDay;
+        const slotStart = editingEntry
+            ? Math.min(...(editingEntry.blockId ? scheduleEntries.filter(e => e.blockId === editingEntry.blockId).map(e => e.period) : [editingEntry.period]))
+            : targetPeriod;
+        const duration = editingEntry ? (editingEntry.totalInBlock || 1) : assignmentDuration;
+        for (const extraId of extraGradeIds) {
+            const extraName = gradeLevels.find(g => g.id === extraId)?.name || extraId;
+            for (let i = 0; i < duration; i++) {
+                const conflict = checkConflicts(slotDay, slotStart + i, teacherIds || [], physicalRoomId, extraId, subjectId, editingEntryId, duration, cohort);
+                if (conflict) {
+                    setConflictError(`ห้องเรียนรวม ${extraName}: ${conflict}`);
+                    return;
+                }
+            }
+            if (currentSubjectDetails.periodsPerWeek !== undefined) {
+                const already = scheduleEntries.filter(e => e.gradeLevelId === extraId && e.subjectId === subjectId && !(groupIdToUse && e.combinedGroupId === groupIdToUse)).length;
+                if (already + duration > currentSubjectDetails.periodsPerWeek) {
+                    setConflictError(`ห้องเรียนรวม ${extraName}: วิชา '${currentSubjectDetails.name}' จะเกิน ${currentSubjectDetails.periodsPerWeek} คาบ/สัปดาห์`);
+                    return;
+                }
+            }
+        }
+    }
     const blockIdToUse = editingEntry?.blockId || (assignmentDuration > 1 ? crypto.randomUUID() : undefined);
 
     const affectedConflictCheckGradeIds = (currentSubjectDetails?.isBroadAssignment && isParentGrade(gradeLevelId, gradeLevels))
@@ -1351,6 +1388,7 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
                 teacherIds: [...(teacherIds || [])], 
                 physicalRoomId: placingSubjectType === 'TEACHER_ONLY' ? '' : (currentAssignment.physicalRoomId || physicalRoomId!),
                 cohort: placingSubjectType === 'TEACHER_ONLY' ? '' : cohort,
+                combinedGroupId: groupIdToUse,
             });
         }
 
@@ -1394,18 +1432,26 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
                 blockIndex: assignmentDuration > 1 ? i : undefined,
                 totalInBlock: assignmentDuration > 1 ? assignmentDuration : undefined,
                 cohort: placingSubjectType === 'TEACHER_ONLY' ? '' : cohort,
+                combinedGroupId: groupIdToUse,
             });
         }
+    }
+
+    if (groupIdToUse) {
+        newEntries.push(...buildCombinedMirrors([...newEntries], extraGradeIds, groupIdToUse, () => crypto.randomUUID()));
     }
 
 
     setAppData(prevData => {
       let finalEntries;
       if (editingEntryId) {
-        const oldBlockId = prevData.scheduleEntries.find(e => e.id === editingEntryId)?.blockId;
-        const entriesNotBeingEdited = oldBlockId 
+        const editedBefore = prevData.scheduleEntries.find(e => e.id === editingEntryId);
+        const oldBlockId = editedBefore?.blockId;
+        const oldGroupId = editedBefore?.combinedGroupId;
+        const entriesNotBeingEdited = (oldBlockId 
             ? prevData.scheduleEntries.filter(e => e.blockId !== oldBlockId)
-            : prevData.scheduleEntries.filter(e => e.id !== editingEntryId);
+            : prevData.scheduleEntries.filter(e => e.id !== editingEntryId))
+            .filter(e => !oldGroupId || e.combinedGroupId !== oldGroupId);
         finalEntries = [...entriesNotBeingEdited, ...newEntries];
       } else {
         finalEntries = [...prevData.scheduleEntries, ...newEntries];
@@ -1427,9 +1473,10 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
       const entryToClear = prevData.scheduleEntries.find(e => e.id === idToProcess);
       if (!entryToClear) return prevData; 
 
-      const newScheduleEntries = entryToClear.blockId 
+      const newScheduleEntries = (entryToClear.blockId 
         ? prevData.scheduleEntries.filter(e => e.blockId !== entryToClear.blockId)
-        : prevData.scheduleEntries.filter(e => e.id !== entryToClear.id);
+        : prevData.scheduleEntries.filter(e => e.id !== entryToClear.id))
+        .filter(e => !entryToClear.combinedGroupId || e.combinedGroupId !== entryToClear.combinedGroupId);
       
       const log = createActivityLog('Cleared', entryToClear, prevData);
       const newLogs = [log, ...(prevData.activityLogs || [])].slice(0, 5);
@@ -1446,6 +1493,11 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
         return;
     }
 
+    if (entryData.combinedGroupId) {
+        event.preventDefault();
+        alert("คาบนี้เป็นห้องเรียนรวม ไม่รองรับการลากย้าย ให้ลบแล้วลงใหม่ หรือกดแก้ไขเพื่อเปลี่ยนห้องที่รวม");
+        return;
+    }
     const entryGradeIsParent = isParentGrade(entryData.gradeLevelId, gradeLevels);
     if (entryGradeIsParent && !permissions.canPerformManagerActions) {
         event.preventDefault(); 
@@ -2318,6 +2370,32 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
     </div>
   ) : null;
 
+  const combinableIds = currentSubjectDetailsForModal && currentSubjectDetailsForModal.type !== 'TEACHER_ONLY' && !currentSubjectDetailsForModal.isBroadAssignment
+    ? combinableGradeIds(currentAssignment.gradeLevelId, gradeLevels) : [];
+  const combinedField = combinableIds.length > 0 ? (
+    <div>
+      <label className="block text-sm font-medium text-slate-700 mb-1">ห้องเรียนรวม <span className="text-xs font-normal text-slate-500">(ห้องอื่นที่เรียนวิชานี้พร้อมกัน ครู/ห้อง/คาบเดียวกัน)</span></label>
+      <div className="flex flex-wrap gap-2">
+        {combinableIds.map(id => {
+          const checked = (currentAssignment.combinedGradeLevelIds || []).includes(id);
+          return (
+            <label key={id} className={`flex items-center gap-1.5 px-2 py-1 border rounded-md text-sm cursor-pointer ${checked ? 'bg-blue-50 border-blue-400 text-blue-800' : 'border-slate-300 text-slate-700'}`}>
+              <input
+                type="checkbox"
+                checked={checked}
+                onChange={() => setCurrentAssignment(prev => {
+                  const cur = prev.combinedGradeLevelIds || [];
+                  return { ...prev, combinedGradeLevelIds: checked ? cur.filter(x => x !== id) : [...cur, id] };
+                })}
+              />
+              {gradeLevels.find(g => g.id === id)?.name || id}
+            </label>
+          );
+        })}
+      </div>
+    </div>
+  ) : null;
+
   const durationField = !editingEntryId ? (
     <div>
       <label htmlFor="assignmentDuration_modal" className="block text-sm font-medium text-slate-700 mb-1">Duration (periods)</label>
@@ -2683,6 +2761,7 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
                 {subjectField}
                 {gradeLevelField}
                 {cohortField}
+                {combinedField}
                 {durationField}
                 {teacherField}
                 {legacyMislabeledRoomField}
@@ -2694,6 +2773,7 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
                 {gradeLevelField}
                 {subjectField}
                 {cohortField}
+                {combinedField}
                 {durationField}
                 {teacherField}
                 {legacyMislabeledRoomField}
@@ -2705,6 +2785,7 @@ const ScheduleScreen: React.FC<ScheduleScreenProps> = ({ appData, setAppData, pe
                 {subjectField}
                 {gradeLevelField}
                 {cohortField}
+                {combinedField}
                 {durationField}
                 {teacherField}
                 {legacyMislabeledRoomField}

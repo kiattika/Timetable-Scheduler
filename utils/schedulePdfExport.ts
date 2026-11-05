@@ -1,3 +1,4 @@
+import { dedupeCombinedEntries, withCombinedGrade } from './combinedClasses';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { AppData, Identifiable, PrintOptions, Teacher, GradeLevel, PhysicalRoom, ScheduleEntry, DayOfWeek } from '../types';
@@ -131,11 +132,11 @@ export async function exportScheduleGridPdf(
         // Find matching entries
         let entries: ScheduleEntry[] = [];
         if (itemType === 'teacher') {
-          entries = appData.scheduleEntries.filter(e => e.day === day && e.period === periodIndex && e.teacherIds.includes(item.id));
+          entries = dedupeCombinedEntries(appData.scheduleEntries.filter(e => e.day === day && e.period === periodIndex && e.teacherIds.includes(item.id)));
         } else if (itemType === 'gradeLevel') {
           entries = appData.scheduleEntries.filter(e => e.day === day && e.period === periodIndex && e.gradeLevelId === item.id);
         } else if (itemType === 'physicalRoom') {
-          entries = appData.scheduleEntries.filter(e => e.day === day && e.period === periodIndex && e.physicalRoomId === item.id);
+          entries = dedupeCombinedEntries(appData.scheduleEntries.filter(e => e.day === day && e.period === periodIndex && e.physicalRoomId === item.id));
         }
 
         if (entries.length === 0) {
@@ -151,7 +152,7 @@ export async function exportScheduleGridPdf(
         } else {
           // Format exactly 4 lines per block
           const blockTexts = entries.map(entry => {
-            const display = getEntryDisplay(entry);
+            const display = withCombinedGrade(getEntryDisplay(entry), entry, appData.scheduleEntries, appData.gradeLevels);
             const subCode = display.subject?.subjectCode || display.subject?.name || '-';
             const roomShort = formatRoomShort(display.physicalRoom) || '';
 

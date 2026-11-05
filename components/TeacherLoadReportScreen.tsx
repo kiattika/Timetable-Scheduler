@@ -1,3 +1,4 @@
+import { dedupeCombinedEntries } from '../utils/combinedClasses';
 import { formatRoomDisplay } from "../utils/stringUtils";
 import React, { useMemo, useState } from 'react';
 import { AppData, Subject, GradeLevel, ScheduleEntry, PhysicalRoom, DayOfWeek } from '../types';
@@ -64,7 +65,7 @@ export const TeacherLoadReportScreen: React.FC<TeacherLoadReportScreenProps> = (
       setReportError(null);
       // 1. Group schedule entries by teacher
       const teacherSchedules: Record<string, ScheduleEntry[]> = {};
-      (scheduleEntries || []).forEach(entry => {
+      dedupeCombinedEntries(scheduleEntries || []).forEach(entry => {
         (entry.teacherIds || []).forEach(tid => {
           if (!teacherSchedules[tid]) teacherSchedules[tid] = [];
           teacherSchedules[tid].push(entry);
