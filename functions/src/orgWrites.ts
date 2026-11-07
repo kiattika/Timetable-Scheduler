@@ -84,13 +84,20 @@ export const BRANDING_COLLECTION = 'branding';
 export const BRANDING_DOC_ID = 'images';
 const isBrandingKey = (k: string): boolean => (BRANDING_KEYS as readonly string[]).includes(k);
 
-/** Split a settings map into its branding image keys and everything else. Keeps `''` / `null` (= delete) values. */
+/**
+ * organizationSettings keys of a removed feature (Google Calendar export: term dates + holidays). Dropped from the
+ * main doc on the next commit and ignored if an old client still sends them.
+ */
+export const RETIRED_SETTINGS_KEYS = ['semesterStartDate', 'semesterEndDate', 'schoolHolidays'] as const;
+const isRetiredKey = (k: string): boolean => (RETIRED_SETTINGS_KEYS as readonly string[]).includes(k);
+
+/** Split a settings map into its branding image keys and everything else (retired keys dropped). Keeps `''` / `null` (= delete) values. */
 export function splitBranding(settings: any): { rest: Record<string, any>; branding: Record<string, any> } {
   const rest: Record<string, any> = {};
   const branding: Record<string, any> = {};
   if (!settings || typeof settings !== 'object') return { rest, branding };
   for (const [k, v] of Object.entries(settings)) {
-    if (v === undefined) continue;
+    if (v === undefined || isRetiredKey(k)) continue;
     if (isBrandingKey(k)) branding[k] = v;
     else rest[k] = v;
   }
@@ -224,7 +231,8 @@ export function mergeOrgChanges(
       length: Object.keys(updates.organizationSettings).length,
     };
   }
-  if (Object.keys(legacyBranding).length > 0 && !updates.organizationSettings) {
+  const hasRetired = Object.keys(serverSettingsRaw).some(isRetiredKey);
+  if ((Object.keys(legacyBranding).length > 0 || hasRetired) && !updates.organizationSettings) {
     updates.organizationSettings = { ...serverSettings };
   }
 
@@ -695,7 +703,7 @@ export async function applyOrgReplace(
     const { rest, branding } = splitBranding(fullDoc.organizationSettings);
     restoredBranding = branding;
     const settings: Record<string, any> = { ...rest };
-    for (const k of BRANDING_KEYS) settings[k] = FieldValue.delete();
+    for (const k of [...BRANDING_KEYS, ...RETIRED_SETTINGS_KEYS]) settings[k] = FieldValue.delete();
     managed.organizationSettings = settings;
   }
   if (typeof fullDoc.organizationId === 'string') managed.organizationId = fullDoc.organizationId;

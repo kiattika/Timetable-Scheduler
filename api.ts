@@ -305,7 +305,15 @@ export const saveAppData = async (
   }
 };
 
-export const resetSemesterTimetable = async (orgId: string = ORG_ID, currentUser: any): Promise<void> => {
+/**
+ * Start a new term: clear the timetable + teacher-subject links, unlock, and set the NEW semester / academic year in
+ * the same commit — so the term label can never disagree with a timetable that belongs to another term.
+ */
+export const resetSemesterTimetable = async (
+  orgId: string = ORG_ID,
+  currentUser: any,
+  nextTerm?: { semester: string; academicYear: string },
+): Promise<void> => {
   try {
     if (currentUser?.role !== 'admin') {
       throw new Error("403_FORBIDDEN_ADMIN_ONLY");
@@ -347,7 +355,7 @@ export const resetSemesterTimetable = async (orgId: string = ORG_ID, currentUser
       userName: currentUser?.name || currentUser?.email || "Admin"
     });
 
-    // 3. Clear teacherSubjectAssignments + unlock THROUGH commitOrgChanges, so the Phase-1 mirror subcollection is
+    // 3. Clear teacherSubjectAssignments + unlock + set the new term THROUGH commitOrgChanges, so the Phase-1 mirror subcollection is
     //    cleared too. (Writing the main doc directly left every link in the mirror — with the Phase-2 read flip on,
     //    all links would have come back after a reset. It also used runTransaction, which the ENTERPRISE database
     //    does not support.) The "link still on the timetable" guard passes because step 1 emptied scheduleEntries.
@@ -362,7 +370,13 @@ export const resetSemesterTimetable = async (orgId: string = ORG_ID, currentUser
       orgId,
       changes: {
         ...(deleteIds.length > 0 ? { teacherSubjectAssignments: { deleteIds } } : {}),
-        organizationSettings: { set: { isLocked: false } },
+        organizationSettings: {
+          set: {
+            isLocked: false,
+            ...(nextTerm?.semester ? { semester: nextTerm.semester } : {}),
+            ...(nextTerm?.academicYear ? { academicYear: nextTerm.academicYear } : {}),
+          },
+        },
       },
     });
     const rejected = result?.data?.rejected;

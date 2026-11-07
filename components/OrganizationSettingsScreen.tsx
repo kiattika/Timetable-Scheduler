@@ -4,6 +4,7 @@ import { OrganizationSettings, ScreenAccessProps, DayOfWeek, User } from '../typ
 import { Icons } from '../constants';
 import { shrinkImageDataUrl, dataUrlBytes, formatKB, SHRINK_THRESHOLD_BYTES } from '../utils/imageShrink';
 import { fetchAppData, resetSemesterTimetable, ORG_ID } from '../api';
+import { suggestNextTerm } from '../lib/term';
 import { buildTimetableBackupPayload, triggerJsonDownload } from '../utils/backup';
 import { generateOfficialMemoPdf, generateSchoolOrderPdf } from '../utils/officialDocumentsPdf';
 import { generateOfficialMemoDocx, generateSchoolOrderDocx } from '../utils/officialDocumentsDocx';
@@ -25,13 +26,15 @@ const OrganizationSettingsScreen: React.FC<OrganizationSettingsScreenProps> = ({
   const [emblemPreview, setEmblemPreview] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
-  const [isConfirmClearModalOpen, setIsConfirmClearModalOpen] = useState(false);
-  const [hasDownloadedBackupForClear, setHasDownloadedBackupForClear] = useState(false);
-  const [isDownloadingBackupForClear, setIsDownloadingBackupForClear] = useState(false);
   const [isResetSemesterModalOpen, setIsResetSemesterModalOpen] = useState(false);
   const [hasDownloadedBackup, setHasDownloadedBackup] = useState(false);
   const [isDownloadingBackup, setIsDownloadingBackup] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
+  // New term chosen in the reset dialog — semester / academic year only change together with clearing the timetable.
+  const [nextSemester, setNextSemester] = useState('');
+  const [nextAcademicYear, setNextAcademicYear] = useState('');
+  // Semester / academic year fields are read-only unless unlocked for a typo fix (or not set yet).
+  const [termTypoEditUnlocked, setTermTypoEditUnlocked] = useState(false);
   // Counts shown in the confirmation dialogs (loaded when a dialog opens)
   const [resetPreview, setResetPreview] = useState<{ entries: number; links: number; teachers: number; subjects: number; rooms: number; grades: number } | null>(null);
   const [toast, setToast] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -60,9 +63,6 @@ const OrganizationSettingsScreen: React.FC<OrganizationSettingsScreenProps> = ({
         directorPosition: 'ผู้อำนวยการ',
         deputyDirectorName: '',
         deputyDirectorPosition: 'รองผู้อำนวยการ',
-        semesterStartDate: '',
-        semesterEndDate: '',
-        schoolHolidays: '',
         operatingDays: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"] as DayOfWeek[],
         allowedDomain: '',
         schoolAdminEmail: '',
@@ -221,64 +221,13 @@ const OrganizationSettingsScreen: React.FC<OrganizationSettingsScreenProps> = ({
     setSuccessMessage('บันทึกข้อมูลหน่วยงานสำเร็จแล้ว');
   };
 
-  const requestClearAll = () => {
-    if (!permissions.canPerformManagerActions) {
-        alert('เฉพาะผู้จัดการเท่านั้นที่สามารถลบข้อมูลหน่วยงานได้');
-        return;
-    }
-    setHasDownloadedBackupForClear(false);
-    setIsConfirmClearModalOpen(true);
-  };
-
-  const handleCloseClearModal = () => {
-    setIsConfirmClearModalOpen(false);
-    setHasDownloadedBackupForClear(false);
-  };
-
-  const handleDownloadBackupForClear = async () => {
-    try {
-      setIsDownloadingBackupForClear(true);
-      const orgId = ORG_ID;
-      const appData = await fetchAppData(orgId);
-      const { backupData, filename } = buildTimetableBackupPayload(appData);
-      triggerJsonDownload(backupData, filename);
-      setHasDownloadedBackupForClear(true);
-      alert("บันทึกข้อมูลสำรองเรียบร้อยแล้ว\nไฟล์ถูกบันทึกไว้ในโฟลเดอร์ดาวน์โหลดของเบราว์เซอร์ (Downloads)");
-    } catch (err) {
-      console.error("Failed to download backup", err);
-      alert("เกิดข้อผิดพลาดในการดาวน์โหลดข้อมูลสำรอง");
-    } finally {
-      setIsDownloadingBackupForClear(false);
-    }
-  };
-
-  const confirmClearAll = () => {
-    if (!hasDownloadedBackupForClear) {
-      alert("กรุณาดาวน์โหลดข้อมูลสำรองก่อนทำรายการ");
-      return;
-    }
-    setOrganizationSettings(null);
-    // The sync effect ignores null, so reset the form fields here as well
-    setCurrentSettings({
-      name: '', semester: '', academicYear: '', directorName: '', directorPosition: 'ผู้อำนวยการ',
-      deputyDirectorName: '', deputyDirectorPosition: 'รองผู้อำนวยการ', semesterStartDate: '', semesterEndDate: '',
-      schoolHolidays: '', operatingDays: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"] as DayOfWeek[],
-      allowedDomain: '', schoolAdminEmail: '', orderNumber: '', orderDate: '', department: 'กลุ่มบริหารวิชาการ',
-      workGroupName: 'กลุ่มงานวิชาการและหลักสูตร', proposerName: '', proposerPosition: 'หัวหน้างานจัดตารางสอน',
-      reviewerName: '', reviewerPosition: 'หัวหน้ากลุ่มงานวิชาการและหลักสูตร', legalBasisText: '',
-    });
-    setLogoPreview(null);
-    setEmblemPreview(null);
-    setError(null);
-    setSuccessMessage('ล้างข้อมูลหน่วยงานแล้ว (ข้อมูลครู วิชา ห้อง และตารางสอนไม่ถูกลบ) — กรอกข้อมูลหน่วยงานใหม่แล้วกด "บันทึกการเปลี่ยนแปลง"');
-    setIsConfirmClearModalOpen(false);
-    setHasDownloadedBackupForClear(false);
-  };
-
   const requestResetSemester = () => {
     if (currentUser?.role !== 'admin') return;
     setHasDownloadedBackup(false);
     setResetPreview(null);
+    const next = suggestNextTerm(organizationSettings?.semester, organizationSettings?.academicYear);
+    setNextSemester(next.semester);
+    setNextAcademicYear(next.academicYear);
     setIsResetSemesterModalOpen(true);
     fetchAppData(ORG_ID).then(d => setResetPreview({
       entries: d.scheduleEntries?.length || 0,
@@ -312,13 +261,25 @@ const OrganizationSettingsScreen: React.FC<OrganizationSettingsScreenProps> = ({
       alert("กรุณาดาวน์โหลดข้อมูลสำรองก่อนทำรายการ");
       return;
     }
+    const semester = nextSemester.trim();
+    const academicYear = nextAcademicYear.trim();
+    if (!semester) {
+      alert("กรุณาระบุภาคเรียนใหม่");
+      return;
+    }
+    if (!/^\d{4}$/.test(academicYear)) {
+      alert("ปีการศึกษาใหม่ต้องเป็นตัวเลข 4 หลัก");
+      return;
+    }
     try {
       setIsResetting(true);
       const orgId = ORG_ID;
-      await resetSemesterTimetable(orgId, currentUser);
+      await resetSemesterTimetable(orgId, currentUser, { semester, academicYear });
+      setCurrentSettings(prev => ({ ...prev, semester, academicYear, isLocked: false }));
+      setTermTypoEditUnlocked(false);
       setIsResetSemesterModalOpen(false);
       setError(null);
-      setSuccessMessage('เริ่มภาคเรียนใหม่เรียบร้อยแล้ว: ล้างตารางสอนและลิงก์ครู-วิชาแล้ว ปลดล็อกตารางแล้ว — อย่าลืมแก้ภาคเรียน/ปีการศึกษาแล้วกดบันทึก (หากหน้าจอยังแสดงข้อมูลเดิม ให้รีเฟรชหน้า)');
+      setSuccessMessage(`เริ่มภาคเรียน ${semester}/${academicYear} แล้ว: ล้างตารางสอนและลิงก์ครู-วิชาแล้ว ปลดล็อกตารางแล้ว (หากหน้าจอยังแสดงข้อมูลเดิม ให้รีเฟรชหน้า)`);
     } catch (err) {
       console.error("Failed to reset semester", err);
       alert("เกิดข้อผิดพลาดในการรีเซ็ตตารางเรียน");
@@ -326,6 +287,10 @@ const OrganizationSettingsScreen: React.FC<OrganizationSettingsScreenProps> = ({
       setIsResetting(false);
     }
   };
+
+  // Locked once a term has been saved; open for the very first setup or after "แก้ไขคำผิด".
+  const savedTermIsSet = !!(organizationSettings?.semester && organizationSettings?.academicYear);
+  const termFieldsLocked = savedTermIsSet && !termTypoEditUnlocked;
 
   const IconComponent = Icons.Landmark;
 
@@ -414,7 +379,8 @@ const OrganizationSettingsScreen: React.FC<OrganizationSettingsScreenProps> = ({
                     name="semester"
                     value={currentSettings.semester || ''}
                     onChange={handleInputChange}
-                    className="w-full p-2 border border-slate-300 rounded-md focus:ring-blue-500 focus:border-blue-500 shadow-sm"
+                    readOnly={termFieldsLocked}
+                    className={`w-full p-2 border border-slate-300 rounded-md focus:ring-blue-500 focus:border-blue-500 shadow-sm ${termFieldsLocked ? 'bg-slate-100 text-slate-600 cursor-not-allowed' : ''}`}
                     placeholder="เช่น 1, 2, Summer"
                     required
                 />
@@ -429,11 +395,34 @@ const OrganizationSettingsScreen: React.FC<OrganizationSettingsScreenProps> = ({
                     name="academicYear"
                     value={currentSettings.academicYear || ''}
                     onChange={handleInputChange}
-                    className="w-full p-2 border border-slate-300 rounded-md focus:ring-blue-500 focus:border-blue-500 shadow-sm"
+                    readOnly={termFieldsLocked}
+                    className={`w-full p-2 border border-slate-300 rounded-md focus:ring-blue-500 focus:border-blue-500 shadow-sm ${termFieldsLocked ? 'bg-slate-100 text-slate-600 cursor-not-allowed' : ''}`}
                     placeholder="เช่น 2567"
                     required
                 />
             </div>
+        </div>
+        <div className="-mt-2 text-xs text-slate-500 flex flex-wrap items-center gap-2">
+          {termFieldsLocked ? (
+            <>
+              <span>เปลี่ยนภาคเรียน/ปีการศึกษาด้วยปุ่ม <b>"เริ่มภาคเรียนใหม่"</b> ด้านล่าง (ล้างตารางสอนไปพร้อมกัน)</span>
+              {permissions.canPerformManagerActions && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (window.confirm('แก้ไขเฉพาะตัวเลขภาคเรียน/ปีการศึกษา โดย "ไม่ล้าง" ตารางสอนเดิม\nใช้เมื่อพิมพ์ผิดเท่านั้น — ถ้าจะขึ้นภาคเรียนใหม่ ให้ใช้ปุ่ม "เริ่มภาคเรียนใหม่"\n\nต้องการแก้ไขคำผิดใช่หรือไม่?')) {
+                      setTermTypoEditUnlocked(true);
+                    }
+                  }}
+                  className="underline text-blue-600 hover:text-blue-800"
+                >
+                  แก้ไขคำผิด (ไม่ล้างตาราง)
+                </button>
+              )}
+            </>
+          ) : (
+            savedTermIsSet && <span className="text-amber-700">กำลังแก้ไขคำผิด — ตารางสอนเดิมจะไม่ถูกล้าง กด "บันทึกการเปลี่ยนแปลง" เพื่อบันทึก</span>
+          )}
         </div>
 
         {/* Term Lock Option (Admin only) */}
@@ -844,55 +833,6 @@ const OrganizationSettingsScreen: React.FC<OrganizationSettingsScreenProps> = ({
         </div>
         </div>
 
-        {/* --- Academic Term Settings --- */}
-        <fieldset className="border border-slate-200 p-6 rounded-xl bg-slate-50/50">
-           <legend className="text-lg font-semibold text-slate-800 px-3 flex items-center bg-white rounded-md border border-slate-200 shadow-sm py-1">
-               <Icons.Schedule size={20} className="mr-2 text-indigo-500" /> ตั้งค่าระยะเวลาภาคเรียน
-           </legend>
-           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-4">
-               <div>
-                   <label htmlFor="semesterStartDate" className="block text-sm font-medium text-slate-700 mb-1">
-                       วันเปิดภาคเรียน
-                   </label>
-                   <input
-                       type="date"
-                       id="semesterStartDate"
-                       name="semesterStartDate"
-                       value={currentSettings.semesterStartDate || ''}
-                       onChange={handleInputChange}
-                       className="w-full p-2 border border-slate-300 rounded-md focus:ring-blue-500 focus:border-blue-500 shadow-sm"
-                   />
-               </div>
-               <div>
-                   <label htmlFor="semesterEndDate" className="block text-sm font-medium text-slate-700 mb-1">
-                       วันปิดภาคเรียน
-                   </label>
-                   <input
-                       type="date"
-                       id="semesterEndDate"
-                       name="semesterEndDate"
-                       value={currentSettings.semesterEndDate || ''}
-                       onChange={handleInputChange}
-                       className="w-full p-2 border border-slate-300 rounded-md focus:ring-blue-500 focus:border-blue-500 shadow-sm"
-                   />
-               </div>
-           </div>
-           <div className="mt-6">
-               <label htmlFor="schoolHolidays" className="block text-sm font-medium text-slate-700 mb-1">
-                   วันหยุดนักขัตฤกษ์ / วันหยุดพิเศษ (กรอก 1 วันต่อ 1 บรรทัด เช่น 2026-07-25)
-               </label>
-               <textarea
-                   id="schoolHolidays"
-                   name="schoolHolidays"
-                   value={currentSettings.schoolHolidays || ''}
-                   onChange={handleInputChange}
-                   className="w-full h-32 p-3 font-mono border border-slate-300 rounded-md focus:ring-blue-500 focus:border-blue-500 shadow-sm text-sm"
-                   placeholder="2026-07-25&#10;2026-08-12"
-               />
-               <p className="text-xs text-slate-500 mt-2">รูปแบบวันที่ YYYY-MM-DD (เช่น 2026-07-25)</p>
-           </div>
-        </fieldset>
-
         {/* --- พิมพ์เอกสารราชการ (บันทึกข้อความ / คำสั่ง) --- */}
         <div className="border border-indigo-200 bg-gradient-to-r from-indigo-50/70 to-blue-50/70 p-6 rounded-xl shadow-sm">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -968,18 +908,6 @@ const OrganizationSettingsScreen: React.FC<OrganizationSettingsScreenProps> = ({
 
           <div className="sticky bottom-0 -mx-4 md:-mx-6 -mb-4 md:-mb-6 px-4 md:px-6 py-4 bg-white/90 backdrop-blur-md border-t border-slate-200 flex flex-col sm:flex-row justify-between items-center space-y-3 sm:space-y-0 sm:space-x-3 z-10">
            <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
-             <button
-              type="button"
-              onClick={requestClearAll}
-              className={`w-full sm:w-auto px-4 py-2 text-sm font-medium transition-colors
-                          ${permissions.canPerformManagerActions
-                              ? 'text-red-600 bg-red-50 hover:bg-red-100 border border-red-300' 
-                              : 'text-slate-400 bg-slate-100 border border-slate-300 cursor-not-allowed'}`}
-              disabled={!permissions.canPerformManagerActions}
-              title={permissions.canPerformManagerActions ? "ล้างเฉพาะข้อมูลตั้งค่าหน่วยงาน (ไม่ลบครู วิชา ห้อง หรือตารางสอน)" : "ล็อกโดยระบบส่วนกลาง"}
-            >
-              ล้างข้อมูลหน่วยงาน
-            </button>
             {isAdmin && (
               <button
                 type="button"
@@ -1001,113 +929,6 @@ const OrganizationSettingsScreen: React.FC<OrganizationSettingsScreenProps> = ({
         </div>
       </form>
       
-      {/* Clear All Organization Data Modal (Two-Step with Mandatory Backup) */}
-      {isConfirmClearModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
-          <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full overflow-hidden animate-in fade-in zoom-in-95 duration-200">
-            <div className="p-6">
-              <div className="flex items-center gap-4 mb-4">
-                <div className="flex-shrink-0 w-12 h-12 bg-red-100 rounded-full flex items-center justify-center text-red-600">
-                  <Icons.Warning size={24} />
-                </div>
-                <div>
-                  <h3 className="text-xl font-bold text-slate-900">ยืนยันการล้างข้อมูลหน่วยงาน</h3>
-                  <p className="text-sm text-slate-500">ล้างเฉพาะ "การตั้งค่าหน่วยงาน" ในหน้านี้เท่านั้น</p>
-                </div>
-              </div>
-              
-              <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
-                <p className="text-sm text-red-800 font-medium">
-                  คำเตือน: การดำเนินการนี้ไม่สามารถย้อนกลับได้ กรุณาสำรองข้อมูลปัจจุบันก่อนทำรายการ
-                </p>
-              </div>
-
-              <div className="mb-6 grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-                <div className="p-3 rounded-lg border border-red-200 bg-white">
-                  <p className="font-semibold text-red-700 mb-1">สิ่งที่จะถูกล้าง</p>
-                  <ul className="list-disc list-inside space-y-0.5 text-slate-700">
-                    <li>ชื่อ ที่อยู่ อีเมล์ โทรศัพท์ โลโก้ และตราครุฑของหน่วยงาน</li>
-                    <li>ภาคเรียน ปีการศึกษา วันเปิด-ปิดภาคเรียน วันหยุด วันจัดการเรียนการสอน</li>
-                    <li>ชื่อ/ตำแหน่งผู้บริหาร และข้อมูลสำหรับเอกสารคำสั่ง/บันทึกข้อความ</li>
-                    <li>อีเมล์แอดมินโรงเรียนและโดเมนที่อนุญาต</li>
-                    <li>สถานะล็อกตารางเรียน</li>
-                  </ul>
-                </div>
-                <div className="p-3 rounded-lg border border-emerald-200 bg-white">
-                  <p className="font-semibold text-emerald-700 mb-1">สิ่งที่ไม่ถูกลบ</p>
-                  <ul className="list-disc list-inside space-y-0.5 text-slate-700">
-                    <li>ครู วิชา ห้องเรียน ระดับชั้น ห้องกายภาพ</li>
-                    <li>ตารางสอนและลิงก์ครู-วิชา</li>
-                    <li>ผู้ใช้งานและสิทธิ์ ตั้งค่าคาบเรียน</li>
-                  </ul>
-                  <p className="mt-2 text-slate-500">ถ้าต้องการล้างตารางสอน ให้ใช้ปุ่ม "เริ่มภาคเรียนใหม่"</p>
-                </div>
-              </div>
-
-              <div className="space-y-4">
-                <div className="flex items-center justify-between p-3 border border-slate-200 rounded-lg">
-                  <div>
-                    <p className="text-sm font-medium text-slate-700">ขั้นที่ 1: สำรองข้อมูล</p>
-                    <p className="text-xs text-slate-500">ดาวน์โหลดข้อมูลทั้งหมดเก็บไว้ก่อน</p>
-                    {hasDownloadedBackupForClear && (
-                      <p className="text-xs text-emerald-600 font-medium mt-1">✓ บันทึกข้อมูลสำรองเรียบร้อยแล้ว</p>
-                    )}
-                  </div>
-                  <button 
-                    type="button"
-                    onClick={handleDownloadBackupForClear}
-                    disabled={isDownloadingBackupForClear}
-                    className={`px-4 py-2 text-sm font-medium rounded transition-colors flex items-center gap-2 ${
-                      isDownloadingBackupForClear
-                        ? 'bg-slate-200 text-slate-500 cursor-not-allowed'
-                        : hasDownloadedBackupForClear
-                          ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-300'
-                          : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
-                    }`}
-                  >
-                    {isDownloadingBackupForClear ? (
-                      <>
-                        <span className="inline-block animate-spin">⏳</span>
-                        <span>กำลังบันทึกข้อมูลสำรอง...</span>
-                      </>
-                    ) : hasDownloadedBackupForClear ? (
-                      <span>ดาวน์โหลดอีกครั้ง</span>
-                    ) : (
-                      <span>ดาวน์โหลดข้อมูลสำรอง</span>
-                    )}
-                  </button>
-                </div>
-
-                <div className={`flex items-center justify-between p-3 border rounded-lg transition-colors ${hasDownloadedBackupForClear ? 'border-red-200 bg-red-50' : 'border-slate-200 bg-slate-50 opacity-50'}`}>
-                  <div>
-                    <p className={`text-sm font-medium ${hasDownloadedBackupForClear ? 'text-red-700' : 'text-slate-500'}`}>ขั้นที่ 2: ยืนยันการล้างข้อมูลหน่วยงาน</p>
-                    <p className="text-xs text-red-500/70">การกระทำนี้ย้อนกลับไม่ได้</p>
-                  </div>
-                  <button 
-                    type="button"
-                    onClick={confirmClearAll}
-                    disabled={!hasDownloadedBackupForClear}
-                    className={`px-4 py-2 text-sm font-medium rounded transition-colors ${hasDownloadedBackupForClear ? 'bg-red-600 hover:bg-red-700 text-white' : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`}
-                  >
-                    ล้างข้อมูลหน่วยงาน
-                  </button>
-                </div>
-              </div>
-            </div>
-            
-            <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex justify-end">
-              <button
-                type="button"
-                onClick={handleCloseClearModal}
-                className="px-4 py-2 text-sm font-medium text-slate-600 hover:text-slate-800 transition-colors"
-              >
-                ยกเลิก
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {toast && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 pointer-events-none print:hidden">
         <div
@@ -1162,9 +983,40 @@ const OrganizationSettingsScreen: React.FC<OrganizationSettingsScreenProps> = ({
                   </ul>
                 </div>
               </div>
-              <p className="mb-6 text-xs text-slate-500">
-                ระบบจะ<b>ไม่เปลี่ยนเลขภาคเรียน/ปีการศึกษาให้อัตโนมัติ</b> หลังล้างแล้วให้แก้ในหน้านี้และกดบันทึก จากนั้นสร้างลิงก์ครู-วิชาใหม่ (หรือนำเข้า) สำหรับภาคเรียนใหม่
-              </p>
+              <div className="mb-6 p-4 border border-indigo-200 bg-indigo-50/60 rounded-lg">
+                <p className="text-sm font-semibold text-indigo-900 mb-2">ภาคเรียนใหม่</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label htmlFor="nextSemester" className="block text-xs text-slate-600 mb-1">ภาคเรียน</label>
+                    <input
+                      id="nextSemester"
+                      type="text"
+                      value={nextSemester}
+                      onChange={(e) => setNextSemester(e.target.value)}
+                      className="w-full p-2 border border-slate-300 rounded-md text-sm"
+                      placeholder="เช่น 1, 2, Summer"
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="nextAcademicYear" className="block text-xs text-slate-600 mb-1">ปีการศึกษา</label>
+                    <input
+                      id="nextAcademicYear"
+                      type="text"
+                      inputMode="numeric"
+                      value={nextAcademicYear}
+                      onChange={(e) => setNextAcademicYear(e.target.value)}
+                      className="w-full p-2 border border-slate-300 rounded-md text-sm"
+                      placeholder="เช่น 2570"
+                    />
+                  </div>
+                </div>
+                <p className="mt-3 text-sm text-indigo-900">
+                  {organizationSettings?.semester || '?'}/{organizationSettings?.academicYear || '?'}
+                  <span className="mx-2">→</span>
+                  <b>{nextSemester.trim() || '?'}/{nextAcademicYear.trim() || '?'}</b>
+                </p>
+                <p className="mt-1 text-xs text-slate-500">บันทึกพร้อมกับการล้างตาราง จากนั้นสร้างลิงก์ครู-วิชาใหม่ (หรือนำเข้า) สำหรับภาคเรียนนี้</p>
+              </div>
 
               <div className="space-y-4">
                 <div className="flex items-center justify-between p-3 border border-slate-200 rounded-lg">
@@ -1210,7 +1062,7 @@ const OrganizationSettingsScreen: React.FC<OrganizationSettingsScreenProps> = ({
                     disabled={!hasDownloadedBackup || isResetting}
                     className={`px-4 py-2 text-sm font-medium rounded transition-colors ${hasDownloadedBackup ? 'bg-red-600 hover:bg-red-700 text-white' : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`}
                   >
-                    {isResetting ? 'กำลังดำเนินการ...' : 'ยืนยันล้างตารางสอนเพื่อเริ่มเทอมใหม่'}
+                    {isResetting ? 'กำลังดำเนินการ...' : `ยืนยันล้างตารางและเริ่มภาคเรียน ${nextSemester.trim() || '?'}/${nextAcademicYear.trim() || '?'}`}
                   </button>
                 </div>
               </div>

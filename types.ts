@@ -151,9 +151,6 @@ export interface OrganizationSettings {
   directorPosition?: string; // ตำแหน่งผู้อำนวยการ
   deputyDirectorName?: string; // ชื่อรองผู้อำนวยการ
   deputyDirectorPosition?: string; // ตำแหน่งรองผู้อำนวยการ
-  semesterStartDate?: string; // วันเปิดภาคเรียน (YYYY-MM-DD)
-  semesterEndDate?: string; // วันปิดภาคเรียน (YYYY-MM-DD)
-  schoolHolidays?: string; // วันหยุด (คั่นด้วยบรรทัดใหม่)
   operatingDays?: DayOfWeek[]; // วันที่จัดการเรียนการสอน
   isLocked?: boolean; // ล็อคตารางเรียนประจำภาคเรียน
   buildingGrid?: { cells: string[] }[]; // ผังอาคาร (แถว x คอลัมน์ ของเลขอาคาร) เก็บเป็น array ของ object เพราะ Firestore ห้าม nested array
