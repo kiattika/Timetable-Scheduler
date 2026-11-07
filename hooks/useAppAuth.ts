@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, type MutableRefObject } from 'react';
+import { mergeBrandingIntoSettings, BRANDING_COLLECTION, BRANDING_DOC_ID } from '../lib/normalizeAppData';
 import { fetchAppData, registerCurrentUser, safeUpsert, DEFAULT_DEPARTMENTS, DEFAULT_RESOURCE_TYPES, ORG_ID, normalizeLoadedSubjects, normalizeLoadedOrganizationSettings, reconcileServerWithLocal } from '../api';
 import { AppData, User, ScheduleEntry, ActivityLog, Teacher } from '../types';
 import { db, auth } from '../lib/firebase';
@@ -42,6 +43,7 @@ export const useAppAuth = (
     let unsubMainDoc: (() => void) | null = null;
     let unsubSchedule: (() => void) | null = null;
     let unsubLogs: (() => void) | null = null;
+    let unsubBranding: (() => void) | null = null;
     const unsubMirrors: Array<() => void> = [];
 
     const loadData = async () => {
@@ -82,6 +84,9 @@ export const useAppAuth = (
         let currentActivityLogs: ActivityLog[] = [];
         let mainParsedData: any = null;
         let mainDocFired = false;
+        // Logo / emblem live in apps/{ORG_ID}/branding/images (off the 1 MiB main doc). null = no doc / unusable.
+        let brandingData: Record<string, any> | null = null;
+        let brandingFired = false;
 
         // Phase 2: mirror subcollection snapshots (null = not reported / unusable -> fall back to doc array)
         const mirrorLists: Record<string, any[] | null> = {};
@@ -154,6 +159,8 @@ export const useAppAuth = (
           // faster subcollection listener would flash guest/sample data (and the
           // login gate) while main-doc is still retrying.
           if (!mainDocFired) return;
+          // Wait for the branding doc too, so the images are present before the autosave baseline is anchored.
+          if (!brandingFired) return;
           // Read-flip: wait until EVERY mirror listener has reported (or given up),
           // otherwise a half-loaded state (e.g. teachers=[]) would reach the autosave baseline.
           if (READ_FROM_SUBCOLLECTIONS && mirrorFired.size < MIRROR_LABELS.length) return;
@@ -236,7 +243,7 @@ export const useAppAuth = (
             scheduleEntries: finalScheduleEntries,
             periodSettings: (READ_FROM_SUBCOLLECTIONS ? (pickedPeriodSettings.length > 0 ? pickedPeriodSettings : null) : md.periodSettings) || DEFAULT_PERIOD_SETTINGS,
             teacherSubjectAssignments: pickList('teacherSubjectAssignments'),
-            organizationSettings: normalizeLoadedOrganizationSettings(md.organizationSettings || null),
+            organizationSettings: mergeBrandingIntoSettings(normalizeLoadedOrganizationSettings(md.organizationSettings || null), brandingData),
             users: newUsers,
             activityLogs: finalActivityLogs,
             currentUser: appUser,
@@ -330,6 +337,25 @@ export const useAppAuth = (
           },
         );
 
+        // 2b. Branding images (logo / Garuda emblem). A missing doc or a failed listener just means
+        //     "no images from here" — the legacy copy on the main doc, if any, is still used.
+        unsubBranding = makeRetryingListener(
+          'branding',
+          () => doc(db, 'apps', ORG_ID, BRANDING_COLLECTION, BRANDING_DOC_ID),
+          (docSnap: any) => {
+            brandingData = docSnap.exists() ? (docSnap.data() || null) : null;
+            brandingFired = true;
+            updateCombinedAppData();
+          },
+          () => { brandingFired = true; updateCombinedAppData(); },
+        );
+        // Never hold the whole app back for the images (e.g. rules not deployed yet -> permission-denied retries):
+        // after 3 s render without them; they show up whenever the listener reports. An absent image is never
+        // sent as a change, so this cannot delete anything.
+        setTimeout(() => {
+          if (!brandingFired) { brandingFired = true; updateCombinedAppData(); }
+        }, 3000);
+
         // 3. Real-time listener for subcollection (apps/{ORG_ID}/activityLogs).
         unsubLogs = makeRetryingListener(
           'activityLogs',
@@ -366,6 +392,7 @@ export const useAppAuth = (
       if (unsubMainDoc) unsubMainDoc();
       if (unsubSchedule) unsubSchedule();
       if (unsubLogs) unsubLogs();
+      if (unsubBranding) unsubBranding();
       unsubMirrors.forEach(u => u());
     };
   }, [isAuthChecking, firebaseUser?.email]);

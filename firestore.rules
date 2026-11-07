@@ -121,6 +121,15 @@ service cloud.firestore {
       // across all matching blocks; this one contributes nothing for a name not
       // in the list).
       // -----------------------------------------------------------------------
+      // -----------------------------------------------------------------------
+      // branding/images: the logo + Garuda emblem (base64) moved off the 1 MiB
+      // main document. Same read audience as organizationSettings; written only
+      // by commitOrgChanges (Admin SDK).
+      // -----------------------------------------------------------------------
+      match /branding/{docId} {
+        allow read: if isUtdDomain();
+      }
+
       match /{mirrorColl}/{docId} {
         allow read: if isUtdDomain() && mirrorColl in [
           'teachers', 'subjects', 'gradeLevels', 'physicalRooms',

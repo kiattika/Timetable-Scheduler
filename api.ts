@@ -1,10 +1,10 @@
 import { AppData, Subject, PeriodSetting, User, ScheduleEntry, GradeLevel, Teacher, TeacherSubjectAssignment, PhysicalRoom, OrganizationSettings, FormField, DayOfWeek, ActivityLog } from './types';
 import { DEFAULT_PERIOD_SETTINGS, PREDEFINED_SUBJECT_COLORS } from './constants';
 import { db, auth, functions } from './lib/firebase';
-import { doc, getDoc, setDoc, deleteDoc, collection, getDocs, writeBatch, query, orderBy, limit, deleteField, runTransaction } from 'firebase/firestore';
+import { doc, getDoc, setDoc, deleteDoc, collection, getDocs, writeBatch, query, orderBy, limit, deleteField, updateDoc } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { computeOrgChanges, nextCommitTarget, MAX_OPS_PER_COMMIT, diffById, diffAssistantEntities, canonicalKey, failureKey, classifySaveError, describeSaveError, reconcileServerWithLocal, ORG_ARRAY_FIELDS, cleanUndefined as cleanUndefinedShared } from './lib/orgChangesClient';
-import { normalizeLoadedSubject, normalizeLoadedSubjects, normalizeLoadedOrganizationSettings, CURRENT_ORG_SCHEMA_VERSION } from './lib/normalizeAppData';
+import { normalizeLoadedSubject, normalizeLoadedSubjects, normalizeLoadedOrganizationSettings, CURRENT_ORG_SCHEMA_VERSION, mergeBrandingIntoSettings, BRANDING_COLLECTION, BRANDING_DOC_ID } from './lib/normalizeAppData';
 import type { FailedAssistantOp } from './lib/revertFailedOps';
 
 export { computeOrgChanges, diffById, diffAssistantEntities, canonicalKey, failureKey, classifySaveError, describeSaveError, reconcileServerWithLocal, ORG_ARRAY_FIELDS, normalizeLoadedSubject, normalizeLoadedSubjects, normalizeLoadedOrganizationSettings, CURRENT_ORG_SCHEMA_VERSION };
@@ -161,6 +161,15 @@ export const fetchAppData = async (orgId: string = ORG_ID): Promise<AppData> => 
       console.warn("Main doc getDoc notice:", docErr?.message || docErr);
     }
 
+    // Branding images (logo / Garuda emblem) live in their own doc — needed so backups still contain them.
+    let brandingData: Record<string, any> | null = null;
+    try {
+      const brandingSnap = await getDoc(doc(db, 'apps', orgId, BRANDING_COLLECTION, BRANDING_DOC_ID));
+      brandingData = brandingSnap.exists() ? (brandingSnap.data() as any) : null;
+    } catch (brandingErr: any) {
+      console.warn("Branding doc notice (using main doc images, if any):", brandingErr?.message || brandingErr);
+    }
+
     // Fetch subcollection: scheduleEntries (safely without failing)
     let loadedScheduleEntries: ScheduleEntry[] = [];
     try {
@@ -209,7 +218,7 @@ export const fetchAppData = async (orgId: string = ORG_ID): Promise<AppData> => 
         scheduleEntries: finalScheduleEntries,
         periodSettings: parsedData.periodSettings || defaultInitialData.periodSettings,
         teacherSubjectAssignments: parsedData.teacherSubjectAssignments || [],
-        organizationSettings: normalizeLoadedOrganizationSettings(parsedData.organizationSettings || defaultInitialData.organizationSettings),
+        organizationSettings: mergeBrandingIntoSettings(normalizeLoadedOrganizationSettings(parsedData.organizationSettings || defaultInitialData.organizationSettings), brandingData),
         users: parsedData.users && parsedData.users.length > 0 ? parsedData.users : defaultInitialData.users,
         activityLogs: finalActivityLogs,
         authorizedAdmins: parsedData.authorizedAdmins || [],
@@ -296,7 +305,15 @@ export const saveAppData = async (
   }
 };
 
-export const resetSemesterTimetable = async (orgId: string = ORG_ID, currentUser: any): Promise<void> => {
+/**
+ * Start a new term: clear the timetable + teacher-subject links, unlock, and set the NEW semester / academic year in
+ * the same commit — so the term label can never disagree with a timetable that belongs to another term.
+ */
+export const resetSemesterTimetable = async (
+  orgId: string = ORG_ID,
+  currentUser: any,
+  nextTerm?: { semester: string; academicYear: string },
+): Promise<void> => {
   try {
     if (currentUser?.role !== 'admin') {
       throw new Error("403_FORBIDDEN_ADMIN_ONLY");
@@ -338,24 +355,40 @@ export const resetSemesterTimetable = async (orgId: string = ORG_ID, currentUser
       userName: currentUser?.name || currentUser?.email || "Admin"
     });
 
-    // 3. Update main doc: clear teacherSubjectAssignments, unlock, remove legacy fields
-    await runTransaction(db, async (transaction) => {
-      const docSnap = await transaction.get(docRef);
-      if (!docSnap.exists()) return;
-      const data = docSnap.data() as AppData;
-      
-      const updatedData = {
-        ...data,
-        scheduleEntries: deleteField(),
-        activityLogs: deleteField(),
-        teacherSubjectAssignments: [],
+    // 3. Clear teacherSubjectAssignments + unlock + set the new term THROUGH commitOrgChanges, so the Phase-1 mirror subcollection is
+    //    cleared too. (Writing the main doc directly left every link in the mirror — with the Phase-2 read flip on,
+    //    all links would have come back after a reset. It also used runTransaction, which the ENTERPRISE database
+    //    does not support.) The "link still on the timetable" guard passes because step 1 emptied scheduleEntries.
+    const docSnap = await getDoc(docRef);
+    if (!docSnap.exists()) return;
+    const data = docSnap.data() as any;
+    const deleteIds: string[] = (Array.isArray(data.teacherSubjectAssignments) ? data.teacherSubjectAssignments : [])
+      .map((a: any) => a?.id)
+      .filter((id: any): id is string => typeof id === 'string' && id.length > 0);
+    const commitFn = httpsCallable(functions, 'commitOrgChanges');
+    const result: any = await commitFn({
+      orgId,
+      changes: {
+        ...(deleteIds.length > 0 ? { teacherSubjectAssignments: { deleteIds } } : {}),
         organizationSettings: {
-          ...data.organizationSettings,
-          isLocked: false
-        }
-      };
-      transaction.set(docRef, updatedData, { merge: true });
+          set: {
+            isLocked: false,
+            ...(nextTerm?.semester ? { semester: nextTerm.semester } : {}),
+            ...(nextTerm?.academicYear ? { academicYear: nextTerm.academicYear } : {}),
+          },
+        },
+      },
     });
+    const rejected = result?.data?.rejected;
+    if (Array.isArray(rejected) && rejected.length > 0) {
+      console.warn(`resetSemesterTimetable: server kept ${rejected.length} link(s) still on the timetable`, rejected);
+    }
+
+    // 4. Legacy activityLogs array on the main doc (pre-subcollection data): drop it if it is still there.
+    //    (A legacy scheduleEntries array is removed by commitOrgChanges itself.)
+    if ('activityLogs' in data) {
+      await updateDoc(docRef, { activityLogs: deleteField() });
+    }
   } catch (error: any) {
     if (error.message === "403_FORBIDDEN_ADMIN_ONLY") {
       alert("403 Forbidden: เฉพาะ Admin เท่านั้นที่มีสิทธิ์ล้างตารางเรียนเพื่อเริ่มภาคเรียนใหม่");

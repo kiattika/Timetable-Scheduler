@@ -73,6 +73,70 @@ export const SUBCOLLECTION_ONLY_FIELDS = ['scheduleEntries'] as const;
 export const isSubcollectionOnlyField = (f: string): boolean =>
   (SUBCOLLECTION_ONLY_FIELDS as readonly string[]).includes(f);
 
+/**
+ * Image keys of `organizationSettings` (base64 data URLs, often 100–200 KB together) that live in their own
+ * document `apps/{orgId}/branding/images` instead of on the 1 MiB main document. The client still sees them as
+ * `organizationSettings.logoUrl` / `.emblemUrl` (it merges the branding doc in on load); only storage moved.
+ * In a change-set, `''` (or `null`) for one of these keys means "remove the image"; an absent key changes nothing.
+ */
+export const BRANDING_KEYS = ['logoUrl', 'emblemUrl'] as const;
+export const BRANDING_COLLECTION = 'branding';
+export const BRANDING_DOC_ID = 'images';
+const isBrandingKey = (k: string): boolean => (BRANDING_KEYS as readonly string[]).includes(k);
+
+/**
+ * organizationSettings keys of a removed feature (Google Calendar export: term dates + holidays). Dropped from the
+ * main doc on the next commit and ignored if an old client still sends them.
+ */
+export const RETIRED_SETTINGS_KEYS = ['semesterStartDate', 'semesterEndDate', 'schoolHolidays'] as const;
+const isRetiredKey = (k: string): boolean => (RETIRED_SETTINGS_KEYS as readonly string[]).includes(k);
+
+/** Split a settings map into its branding image keys and everything else (retired keys dropped). Keeps `''` / `null` (= delete) values. */
+export function splitBranding(settings: any): { rest: Record<string, any>; branding: Record<string, any> } {
+  const rest: Record<string, any> = {};
+  const branding: Record<string, any> = {};
+  if (!settings || typeof settings !== 'object') return { rest, branding };
+  for (const [k, v] of Object.entries(settings)) {
+    if (v === undefined || isRetiredKey(k)) continue;
+    if (isBrandingKey(k)) branding[k] = v;
+    else rest[k] = v;
+  }
+  return { rest, branding };
+}
+
+/** Branding work for one commit: `set` = explicit client changes (null = delete), `legacy` = keys still on the main doc. */
+export type BrandingPlan = { set: Record<string, any>; legacy: Record<string, any> };
+
+/**
+ * Write the branding doc for a commit. Explicit changes win; a legacy main-doc image is copied over only when the
+ * branding doc does not already hold that key (so a newer image is never overwritten by a stale one). Idempotent,
+ * and runs BEFORE the main doc drops its legacy copy, so no image can be lost between the two writes.
+ */
+export async function applyBrandingPlan(appDocRef: DocumentReference, plan: BrandingPlan): Promise<number> {
+  const setKeys = Object.keys(plan.set);
+  const legacyKeys = Object.keys(plan.legacy).filter((k) => !(k in plan.set));
+  if (setKeys.length === 0 && legacyKeys.length === 0) return 0;
+  const ref = appDocRef.collection(BRANDING_COLLECTION).doc(BRANDING_DOC_ID);
+  const snap = await ref.get();
+  const current: Record<string, any> = snap.exists ? snap.data() || {} : {};
+  const write: Record<string, any> = {};
+  for (const k of setKeys) {
+    const v = plan.set[k];
+    if (v === null || v === '') {
+      if (k in current) write[k] = FieldValue.delete();
+    } else if (current[k] !== v) {
+      write[k] = v;
+    }
+  }
+  for (const k of legacyKeys) {
+    const v = plan.legacy[k];
+    if (!(k in current) && v !== null && v !== '') write[k] = v;
+  }
+  if (Object.keys(write).length === 0) return 0;
+  await ref.set(write, { merge: true });
+  return Object.keys(write).length;
+}
+
 /** Order-insensitive canonical serialization (object keys sorted, array order kept). */
 export const canon = (x: any): string => {
   if (x === undefined || x === null) return 'null';
@@ -140,18 +204,23 @@ export function mergeOrgChanges(
   changes: OrgChanges,
   callerRole: CallerRole,
   extra: { scheduleEntries?: IdItem[] } = {},
-): { updates: Record<string, any>; summary: MergeSummary; rejected: RejectedChange[] } {
+): { updates: Record<string, any>; summary: MergeSummary; rejected: RejectedChange[]; branding: BrandingPlan } {
   const updates: Record<string, any> = {};
   const summary: MergeSummary = {};
   const rejected: RejectedChange[] = [];
 
   // ---- organizationSettings: shallow key-level merge ----
+  // Branding images never go to the main doc: they are split off into `branding` (written to their own doc by
+  // applyBrandingPlan), and any copy still on the main doc is listed as `legacy` and dropped from it here.
+  const serverSettingsRaw =
+    serverDoc.organizationSettings && typeof serverDoc.organizationSettings === 'object'
+      ? serverDoc.organizationSettings
+      : {};
+  const { rest: serverSettings, branding: legacyBranding } = splitBranding(serverSettingsRaw);
+  let brandingSet: Record<string, any> = {};
   if (changes.organizationSettings?.set && typeof changes.organizationSettings.set === 'object') {
-    const set = changes.organizationSettings.set;
-    const serverSettings =
-      serverDoc.organizationSettings && typeof serverDoc.organizationSettings === 'object'
-        ? serverDoc.organizationSettings
-        : {};
+    const { rest: set, branding } = splitBranding(changes.organizationSettings.set);
+    brandingSet = branding;
     if ('isLocked' in set && !!set.isLocked !== !!serverSettings.isLocked && callerRole !== 'admin') {
       throw new OrgChangeError('permission-denied', 'เฉพาะแอดมินเท่านั้นที่ล็อก/ปลดล็อกตารางเรียนได้ (admin only).');
     }
@@ -161,6 +230,10 @@ export function mergeOrgChanges(
       deletes: 0,
       length: Object.keys(updates.organizationSettings).length,
     };
+  }
+  const hasRetired = Object.keys(serverSettingsRaw).some(isRetiredKey);
+  if ((Object.keys(legacyBranding).length > 0 || hasRetired) && !updates.organizationSettings) {
+    updates.organizationSettings = { ...serverSettings };
   }
 
   // ---- array-of-object fields: merge by id ----
@@ -238,13 +311,14 @@ export function mergeOrgChanges(
     summary[field] = { upserts, deletes: deleteIds.size, length: merged.length };
   }
 
-  // Drop an organizationSettings write that only reorders keys.
-  if (updates.organizationSettings && canon(updates.organizationSettings) === canon(serverDoc.organizationSettings)) {
+  // Drop an organizationSettings write that only reorders keys. Compared against the RAW server map, so stripping a
+  // legacy branding image off the main doc still counts as a change.
+  if (updates.organizationSettings && canon(updates.organizationSettings) === canon(serverSettingsRaw)) {
     delete updates.organizationSettings;
     delete summary.organizationSettings;
   }
 
-  return { updates, summary, rejected };
+  return { updates, summary, rejected, branding: { set: brandingSet, legacy: legacyBranding } };
 }
 
 /** Append-only activity-log entries to write to the subcollection (never a blob). */
@@ -371,7 +445,10 @@ export async function rebuildEntityMirror(
     if (!keep.has(d.id)) { ops.push(d.delete()); deletes++; }
   }
   let upserts = 0;
-  for (const e of asArray(entities)) { ops.push(coll.doc(e.id).set(e, { merge: true })); upserts++; }
+  // Full overwrite, NOT merge: a rebuild must make each mirror doc equal the source entity. With merge, a field the
+  // source no longer has (e.g. restoring an older backup) stayed on the mirror doc — after the Phase-2 read flip
+  // that stale field came back, and for scheduleEntries (subcollection is the only copy) it was simply wrong data.
+  for (const e of asArray(entities)) { ops.push(coll.doc(e.id).set(e)); upserts++; }
   await runChunked(ops);
   return { upserts, deletes };
 }
@@ -469,8 +546,20 @@ export async function healLegacyScheduleEntries(
   return true;
 }
 
+/** Above this many subjects one read of the whole collection is cheaper and faster than one query per subject. */
+const GUARD_PER_SUBJECT_QUERY_MAX = 20;
+
 /** Entries relevant to the "assignment still on the timetable" guard, read from the subcollection by subjectId. */
 async function scheduleEntriesForSubjects(appDocRef: DocumentReference, subjectIds: string[]): Promise<IdItem[]> {
+  if (subjectIds.length > GUARD_PER_SUBJECT_QUERY_MAX) {
+    // e.g. a semester reset deleting every teacher-subject link: hundreds of sequential queries could outrun
+    // the commit deadline, while the (just-emptied) collection costs a single read.
+    const wanted = new Set(subjectIds);
+    const snap = await appDocRef.collection('scheduleEntries').get();
+    return snap.docs
+      .map((d: any) => ({ ...(d.data() as any), id: d.id }))
+      .filter((e: any) => wanted.has(e.subjectId));
+  }
   const out = new Map<string, IdItem>();
   for (const sid of subjectIds) {
     const snap = await appDocRef.collection('scheduleEntries').where('subjectId', '==', sid).get();
@@ -540,8 +629,12 @@ export async function applyOrgChanges(
       scheduleForGuard = Array.from(merged.values());
     }
 
-    const { updates, summary, rejected } = mergeOrgChanges(server, changes, callerRole, { scheduleEntries: scheduleForGuard });
+    const { updates, summary, rejected, branding } = mergeOrgChanges(server, changes, callerRole, { scheduleEntries: scheduleForGuard });
     if (rejected.length) log(`rejected ${rejected.length} change(s): ${JSON.stringify(rejected)}`);
+
+    // Branding images go to their own doc first (before the main doc drops any legacy copy).
+    const brandingWrites = await applyBrandingPlan(appDocRef, branding);
+    if (brandingWrites > 0) log(`branding doc: ${brandingWrites} key(s) written`);
 
     // Legacy `scheduleEntries` array on the main doc: copy any stragglers to the subcollection, then drop the field.
     const hadLegacyEntries = await healLegacyScheduleEntries(appDocRef, server, db, log);
@@ -603,8 +696,15 @@ export async function applyOrgReplace(
     if (Array.isArray(fullDoc[f])) managed[f] = fullDoc[f];
   }
   const restoredEntries: IdItem[] | null = Array.isArray(fullDoc.scheduleEntries) ? asArray(fullDoc.scheduleEntries) : null;
+  // Branding images from the backup go to their own doc; the main doc's copies are deleted (set-merge would
+  // otherwise keep a nested key the backup leaves out).
+  let restoredBranding: Record<string, any> | null = null;
   if (fullDoc.organizationSettings && typeof fullDoc.organizationSettings === 'object') {
-    managed.organizationSettings = fullDoc.organizationSettings;
+    const { rest, branding } = splitBranding(fullDoc.organizationSettings);
+    restoredBranding = branding;
+    const settings: Record<string, any> = { ...rest };
+    for (const k of [...BRANDING_KEYS, ...RETIRED_SETTINGS_KEYS]) settings[k] = FieldValue.delete();
+    managed.organizationSettings = settings;
   }
   if (typeof fullDoc.organizationId === 'string') managed.organizationId = fullDoc.organizationId;
 
@@ -624,6 +724,12 @@ export async function applyOrgReplace(
     const snap = await appDocRef.get();
     if (!snap.exists) throw new OrgChangeError('not-found', `${appDocRef.path} does not exist.`);
     try {
+      if (restoredBranding) {
+        // Same as the old nested set-merge: an image in the backup is restored, one the backup lacks is kept —
+        // including a legacy copy still on the main doc, which is moved over before the main doc drops it.
+        const { branding: legacy } = splitBranding((snap.data() || {}).organizationSettings);
+        await applyBrandingPlan(appDocRef, { set: restoredBranding, legacy });
+      }
       // A restore replaces the whole timetable, so also drop any legacy array left on the main document.
       await appDocRef.set({ ...managed, ...(restoredEntries ? { scheduleEntries: FieldValue.delete() } : {}) }, { merge: true });
       // Phase 1: rebuild the mirror for each field the restore actually wrote to
