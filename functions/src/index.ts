@@ -15,6 +15,8 @@ import {
   mapOrgErrorCode,
   mirrorUserDoc,
   verifyOrgConsistency,
+  isSubcollectionOnlyField,
+  healLegacySubcollectionField,
   OrgChangeError,
   canon,
   type CallerRole,
@@ -946,8 +948,18 @@ export const assistantUpdateEntity = functions.https.onCall(async (
     }
   };
 
-  // scheduleEntries live ONLY in their subcollection (never as an array on the 1 MiB main document).
-  const subcollectionOnly = type === 'scheduleEntries';
+  // scheduleEntries and teacherSubjectAssignments live ONLY in their subcollection (never as an array on the 1 MiB
+  // main document).
+  const subcollectionOnly = isSubcollectionOnlyField(type);
+
+  // A subject without its own department is judged by the departments of its linked teachers. The links are no
+  // longer on the main doc, so add this subject's links (from the subcollection) to the doc used for the check.
+  const withSubjectLinks = async (appDoc: Record<string, any>): Promise<Record<string, any>> => {
+    if (type !== 'subjects') return appDoc;
+    const linkSnap = await db.collection(`apps/${orgId}/teacherSubjectAssignments`).where('subjectId', '==', entityId).get();
+    const legacy = Array.isArray(appDoc.teacherSubjectAssignments) ? appDoc.teacherSubjectAssignments : [];
+    return { ...appDoc, teacherSubjectAssignments: [...legacy, ...linkSnap.docs.map((d) => ({ ...(d.data() as any), id: d.id }))] };
+  };
 
   const coreSubcollectionOnly = async (): Promise<{ entity: any }> => {
     const snap = await appDocRef.get();
@@ -955,6 +967,12 @@ export const assistantUpdateEntity = functions.https.onCall(async (
       throw new functions.https.HttpsError('not-found', `apps/${orgId} does not exist.`);
     }
     const appDoc = snap.data() || {};
+    if (type in appDoc) {
+      // Legacy array still on the main doc (no admin save since the move): fold it into the subcollection and drop it
+      // first, so a later fold-in can never bring back an item this call deletes.
+      await healLegacySubcollectionField(appDocRef, appDoc, type, db, (m) => console.log(`[assistantUpdateEntity:${traceId}] ${m}`));
+      await appDocRef.update({ [type]: FieldValue.delete() });
+    }
     const existingSnap = await subDocRef.get();
     const existing = existingSnap.exists ? { ...(existingSnap.data() as any), id: entityId } : undefined;
     if (op !== 'create' && !existing) {
@@ -1000,7 +1018,7 @@ export const assistantUpdateEntity = functions.https.onCall(async (
     // A client retry of a create that already landed becomes an idempotent update.
     const effectiveOp: 'create' | 'update' | 'delete' =
       op === 'create' && existing ? 'update' : op;
-    authorize(appDoc, existing, effectiveOp);
+    authorize(await withSubjectLinks(appDoc), existing, effectiveOp);
 
     if (effectiveOp === 'delete') {
       await appDocRef.update({ [type]: FieldValue.arrayRemove(existing) });
@@ -1019,13 +1037,13 @@ export const assistantUpdateEntity = functions.https.onCall(async (
     // effectiveOp === 'update' — optimistic concurrency via the shared helper.
     return await optimisticDocUpdate<{ entity: any }>(
       appDocRef,
-      (s) => {
+      async (s) => {
         const doc = s.data() || {};
         const cur = listOf(doc).find((e: any) => e && e.id === entityId);
         if (!cur) {
           throw new functions.https.HttpsError('not-found', `${type}/${entityId} was removed during update.`);
         }
-        authorize(doc, cur, 'update');
+        authorize(await withSubjectLinks(doc), cur, 'update');
         const merged = { ...cur, ...payload };
         assertSubjectCodeUnique(doc, merged, entityId);
         const nextList = listOf(doc).map((e: any) => (e && e.id === entityId ? merged : e));

@@ -6,7 +6,7 @@ import { db, auth } from '../lib/firebase';
 import { doc, collection, onSnapshot, query, orderBy, limit, type Query, type DocumentReference } from 'firebase/firestore';
 import { DEFAULT_PERIOD_SETTINGS } from '../constants';
 import { logActivity, logLoginAttempt } from '../lib/logger';
-import { READ_FLIP_ENTITY_FIELDS, PERIOD_SETTINGS_DOC_ID, resolveEntityList, resolvePeriodSettings, resolveReadFlip, readLocalReadFlip, setActiveReadFlip } from '../lib/subcollectionReads';
+import { READ_FLIP_ENTITY_FIELDS, SUBCOLLECTION_ONLY_ENTITY_FIELDS, isSubcollectionOnlyEntityField, PERIOD_SETTINGS_DOC_ID, resolveEntityList, resolvePeriodSettings, resolveReadFlip, readLocalReadFlip, setActiveReadFlip } from '../lib/subcollectionReads';
 
 // Phase 2 read-flip switch. OFF by default: the app reads the entity arrays from the
 // monolithic apps/{orgId} doc exactly as before. It can be turned on (see resolveReadFlip):
@@ -164,10 +164,12 @@ export const useAppAuth = (
           // Read-flip: wait until EVERY mirror listener has reported (or given up),
           // otherwise a half-loaded state (e.g. teachers=[]) would reach the autosave baseline.
           if (READ_FROM_SUBCOLLECTIONS && mirrorFired.size < MIRROR_LABELS.length) return;
+          // Phase 3: subcollection-only fields are always read from their subcollection — wait for them too.
+          if (SUBCOLLECTION_ONLY_ENTITY_FIELDS.some((f) => !mirrorFired.has(f))) return;
           const md = mainParsedData || {};
 
           const pickList = (field: typeof READ_FLIP_ENTITY_FIELDS[number]): any[] => {
-            if (!READ_FROM_SUBCOLLECTIONS) return md[field] || [];
+            if (!READ_FROM_SUBCOLLECTIONS && !isSubcollectionOnlyEntityField(field)) return md[field] || [];
             const { items, report } = resolveEntityList(mirrorLists[field] ?? null, md[field]);
             if ((report.onlyInMirror.length || report.onlyInDoc.length) && !reportedDivergence.has(field)) {
               reportedDivergence.add(field);
@@ -279,6 +281,7 @@ export const useAppAuth = (
         const attachMirrors = () => {
           const markFired = (label: string) => { mirrorFired.add(label); updateCombinedAppData(); };
           for (const field of READ_FLIP_ENTITY_FIELDS) {
+            if (isSubcollectionOnlyEntityField(field)) continue; // already attached below, whatever the switch says
             unsubMirrors.push(makeRetryingListener(
               `mirror:${field}`,
               () => collection(db, 'apps', ORG_ID, field),
@@ -299,6 +302,21 @@ export const useAppAuth = (
             () => { mirrorPeriodDoc = null; markFired('periodSettings'); },
           ));
         };
+
+        // 0. Phase 3: subcollection-only entity fields (teacherSubjectAssignments) — always from their subcollection.
+        //    A failed listener falls back to a legacy array on the main doc (only there before the first save).
+        for (const field of SUBCOLLECTION_ONLY_ENTITY_FIELDS) {
+          unsubMirrors.push(makeRetryingListener(
+            `subcollection:${field}`,
+            () => collection(db, 'apps', ORG_ID, field),
+            (colSnap: any) => {
+              mirrorLists[field] = colSnap.docs.map((d: any) => ({ ...d.data(), id: d.id }));
+              mirrorFired.add(field);
+              updateCombinedAppData();
+            },
+            () => { mirrorLists[field] = null; mirrorFired.add(field); updateCombinedAppData(); },
+          ));
+        }
 
         // 1. Real-time listener for main doc (apps/{ORG_ID}) — retries permission-denied.
         unsubMainDoc = makeRetryingListener(

@@ -18,6 +18,15 @@ export const READ_FLIP_ENTITY_FIELDS = [
 ] as const;
 export type ReadFlipEntityField = typeof READ_FLIP_ENTITY_FIELDS[number];
 
+/**
+ * Phase 3: entity fields whose subcollection is the ONLY copy (no array on apps/{orgId} after the first save).
+ * Always read from the subcollection, whatever the read-flip switch says. Keep in sync with
+ * SUBCOLLECTION_ONLY_FIELDS in functions/src/orgWrites.ts minus `scheduleEntries` (read separately).
+ */
+export const SUBCOLLECTION_ONLY_ENTITY_FIELDS: readonly ReadFlipEntityField[] = ['teacherSubjectAssignments'];
+export const isSubcollectionOnlyEntityField = (f: string): boolean =>
+  (SUBCOLLECTION_ONLY_ENTITY_FIELDS as readonly string[]).includes(f);
+
 /** Well-known id of the single doc mirroring the ordered periodSettings array
  *  (PERIOD_SETTINGS_MIRROR_DOC_ID in functions/src/orgWrites.ts). */
 export const PERIOD_SETTINGS_DOC_ID = 'current';

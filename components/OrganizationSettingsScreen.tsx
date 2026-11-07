@@ -5,7 +5,7 @@ import { Icons } from '../constants';
 import { shrinkImageDataUrl, dataUrlBytes, formatKB, SHRINK_THRESHOLD_BYTES } from '../utils/imageShrink';
 import { fetchAppData, resetSemesterTimetable, ORG_ID } from '../api';
 import { suggestNextTerm } from '../lib/term';
-import { buildTimetableBackupPayload, triggerJsonDownload } from '../utils/backup';
+import { buildTimetableBackupPayload, triggerJsonDownload, findIncompleteBackupWarning } from '../utils/backup';
 import { generateOfficialMemoPdf, generateSchoolOrderPdf } from '../utils/officialDocumentsPdf';
 import { generateOfficialMemoDocx, generateSchoolOrderDocx } from '../utils/officialDocumentsDocx';
 
@@ -244,6 +244,11 @@ const OrganizationSettingsScreen: React.FC<OrganizationSettingsScreenProps> = ({
       setIsDownloadingBackup(true);
       const orgId = ORG_ID;
       const appData = await fetchAppData(orgId);
+      const warning = findIncompleteBackupWarning(appData);
+      if (warning) {
+        alert(`${warning}\n\nยังไม่ได้บันทึกไฟล์สำรอง — รีเฟรชหน้าแล้วลองใหม่`);
+        return;
+      }
       const { backupData, filename } = buildTimetableBackupPayload(appData);
       triggerJsonDownload(backupData, filename);
       setHasDownloadedBackup(true);

@@ -1,6 +1,6 @@
 import { ChangeEvent, useState } from 'react';
 import { AppData } from '../types';
-import { buildTimetableBackupPayload, triggerJsonDownload } from '../utils/backup';
+import { buildTimetableBackupPayload, triggerJsonDownload, findIncompleteBackupWarning } from '../utils/backup';
 
 export const useBackupRestore = (
   appData: AppData | null, 
@@ -24,6 +24,8 @@ export const useBackupRestore = (
       setIsBackingUp(true);
       // Give UI a moment to show in-progress state
       await new Promise(resolve => setTimeout(resolve, 50));
+      const warning = findIncompleteBackupWarning(appData);
+      if (warning && !window.confirm(`${warning}\n\nรีเฟรชหน้าแล้วลองใหม่จะดีกว่า — ต้องการบันทึกไฟล์นี้ต่อหรือไม่?`)) return;
       const { backupData, filename } = buildTimetableBackupPayload(appData);
       triggerJsonDownload(backupData, filename);
       alert("บันทึกข้อมูลสำรองเรียบร้อยแล้ว\nไฟล์ถูกบันทึกไว้ในโฟลเดอร์ดาวน์โหลดของเบราว์เซอร์ (Downloads)");

@@ -6,6 +6,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   mergeOrgChanges,
+  filterAssignmentDeletesInUse,
   sanitizeOrgChanges,
   OrgChangeError,
   type OrgChanges,
@@ -126,25 +127,24 @@ describe('mergeOrgChanges — guards', () => {
     expect(updates.organizationSettings).toEqual({ name: 'School', semester: '2', academicYear: '2568' });
   });
 
-  it('SKIPS deleting a teacherSubjectAssignment still on the timetable, reports it, keeps the assignment', () => {
-    const server = {
-      teacherSubjectAssignments: [{ id: 'a1', teacherId: 't1', subjectId: 's1', gradeLevelId: 'g1' }],
-      scheduleEntries: [{ id: 'e1', teacherIds: ['t1'], subjectId: 's1', gradeLevelId: 'g1' }],
-    };
-    const changes: OrgChanges = { teacherSubjectAssignments: { upsert: [], deleteIds: ['a1'] } };
-    const { updates, rejected } = mergeOrgChanges(server, changes, 'admin');
-    expect(updates.teacherSubjectAssignments).toBeUndefined(); // a1 not removed
-    expect(rejected).toEqual([{ field: 'teacherSubjectAssignments', id: 'a1', reason: '409_CONFLICT_ASSIGNMENT_IN_USE' }]);
+  // Phase 3 step 2: links are subcollection-only — the in-use guard moved to filterAssignmentDeletesInUse
+  // (called by applyOrgChanges); the array merge never touches teacherSubjectAssignments any more.
+  it('never writes teacherSubjectAssignments to the main doc', () => {
+    const server = { teacherSubjectAssignments: [{ id: 'a1', teacherId: 't1', subjectId: 's1', gradeLevelId: 'g1' }] };
+    const changes: OrgChanges = { teacherSubjectAssignments: { upsert: [{ id: 'a2', teacherId: 't2', subjectId: 's2', gradeLevelId: 'g2' }], deleteIds: ['a1'] } };
+    const { updates } = mergeOrgChanges(server, changes, 'admin');
+    expect(updates.teacherSubjectAssignments).toBeUndefined();
   });
 
-  it('allows deleting a teacherSubjectAssignment that is NOT on the timetable', () => {
-    const server = {
-      teacherSubjectAssignments: [{ id: 'a1', teacherId: 't1', subjectId: 's1', gradeLevelId: 'g1' }],
-      scheduleEntries: [{ id: 'e1', teacherIds: ['t9'], subjectId: 's9', gradeLevelId: 'g9' }],
-    };
-    const changes: OrgChanges = { teacherSubjectAssignments: { upsert: [], deleteIds: ['a1'] } };
-    const { updates } = mergeOrgChanges(server, changes, 'admin');
-    expect(updates.teacherSubjectAssignments).toEqual([]);
+  it('SKIPS deleting a link still on the timetable, reports it; allows one that is not', () => {
+    const asm = new Map([
+      ['a1', { id: 'a1', teacherId: 't1', subjectId: 's1', gradeLevelId: 'g1' }],
+      ['a2', { id: 'a2', teacherId: 't2', subjectId: 's1', gradeLevelId: 'g1' }],
+    ]);
+    const schedule = [{ id: 'e1', teacherIds: ['t1'], subjectId: 's1', gradeLevelId: 'g1' }];
+    const { keep, rejected } = filterAssignmentDeletesInUse(['a1', 'a2', 'gone'], asm, schedule);
+    expect(keep).toEqual(['a2', 'gone']);
+    expect(rejected).toEqual([{ field: 'teacherSubjectAssignments', id: 'a1', reason: '409_CONFLICT_ASSIGNMENT_IN_USE' }]);
   });
 });
 
@@ -183,13 +183,4 @@ describe('mergeOrgChanges — scheduleEntries are subcollection-only', () => {
     expect(summary.scheduleEntries).toBeUndefined();
   });
 
-  it('uses the supplied entries (not the doc array) for the assignment-in-use guard', () => {
-    const { rejected } = mergeOrgChanges(
-      { teacherSubjectAssignments: [{ id: 'a1', teacherId: 't1', subjectId: 's1', gradeLevelId: 'g1' }] },
-      { teacherSubjectAssignments: { upsert: [], deleteIds: ['a1'] } },
-      'admin',
-      { scheduleEntries: [{ id: 'e1', teacherIds: ['t1'], subjectId: 's1', gradeLevelId: 'g1' }] },
-    );
-    expect(rejected.map((r) => r.id)).toEqual(['a1']);
-  });
 });
