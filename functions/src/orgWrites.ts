@@ -437,7 +437,10 @@ export async function rebuildEntityMirror(
     if (!keep.has(d.id)) { ops.push(d.delete()); deletes++; }
   }
   let upserts = 0;
-  for (const e of asArray(entities)) { ops.push(coll.doc(e.id).set(e, { merge: true })); upserts++; }
+  // Full overwrite, NOT merge: a rebuild must make each mirror doc equal the source entity. With merge, a field the
+  // source no longer has (e.g. restoring an older backup) stayed on the mirror doc — after the Phase-2 read flip
+  // that stale field came back, and for scheduleEntries (subcollection is the only copy) it was simply wrong data.
+  for (const e of asArray(entities)) { ops.push(coll.doc(e.id).set(e)); upserts++; }
   await runChunked(ops);
   return { upserts, deletes };
 }
