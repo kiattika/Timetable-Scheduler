@@ -292,7 +292,10 @@ export const saveAppData = async (
   try {
     if (opts.replace) {
       const { currentUser, ...rest } = data;
-      await commitFn({ orgId, replace: cleanUndefined({ ...rest, organizationId: orgId }) });
+      // A restore rebuilds thousands of docs server-side: wait up to 5 min (the callable default is 70 s, after
+      // which the browser would report a failure while the server is still writing).
+      const restoreFn = httpsCallable(functions, 'commitOrgChanges', { timeout: 300000 });
+      await restoreFn({ orgId, replace: cleanUndefined({ ...rest, organizationId: orgId }) });
       return;
     }
 

@@ -799,6 +799,10 @@ export const registerCurrentUser = functions.https.onCall(async (
 // 60s platform timeout with no user feedback.
 const ASSISTANT_UPDATE_DEADLINE_MS = 15000;
 const ORG_COMMIT_DEADLINE_MS = 25000; // higher: may legitimately retry a few conflicts
+// Restore-from-backup rewrites the main doc and rebuilds every mirror (~4,000+ docs): give it most of the function's
+// timeout (COMMIT_ORG_TIMEOUT_S) instead of the normal save deadline, so it cannot be cut off half-way.
+const ORG_REPLACE_DEADLINE_MS = 280000;
+const COMMIT_ORG_TIMEOUT_S = 300;
 
 // Per-instance circuit breaker, shared by the org write functions. The production
 // DB is ENTERPRISE edition with a hard daily read cap; once it is spent, every
@@ -1098,7 +1102,9 @@ export const assistantUpdateEntity = functions.https.onCall(async (
  * data: { orgId?, changes?: OrgChanges, newActivityLogs?: ActivityLog[],
  *         replace?: fullAppData }  // `replace` = admin restore-from-backup
  */
-export const commitOrgChanges = functions.https.onCall(async (
+export const commitOrgChanges = functions
+  .runWith({ timeoutSeconds: COMMIT_ORG_TIMEOUT_S, memory: '512MB' })
+  .https.onCall(async (
   data: { orgId?: string; changes?: any; newActivityLogs?: any; replace?: any },
   context: functions.https.CallableContext
 ) => {
@@ -1140,7 +1146,7 @@ export const commitOrgChanges = functions.https.onCall(async (
   const deadline = new Promise<never>((_, reject) => {
     timer = setTimeout(
       () => reject(new functions.https.HttpsError('deadline-exceeded', 'Save timed out — please try again.')),
-      ORG_COMMIT_DEADLINE_MS
+      data?.replace ? ORG_REPLACE_DEADLINE_MS : ORG_COMMIT_DEADLINE_MS
     );
   });
 
