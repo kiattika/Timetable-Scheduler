@@ -371,6 +371,16 @@ export type MirroredEntityField = typeof MIRRORED_ENTITY_FIELDS[number];
 export const PERIOD_SETTINGS_MIRROR_DOC_ID = 'current';
 
 /** Chunked `Promise.all` to stay well under any per-op burst limits. */
+/**
+ * Run write thunks at most `size` at a time. (runChunked below receives promises that have ALREADY started, so it
+ * only paces the awaiting — a rebuild of thousands of docs would fire every write at once.)
+ */
+async function runThrottled(tasks: Array<() => Promise<any>>, size = 100): Promise<void> {
+  for (let i = 0; i < tasks.length; i += size) {
+    await Promise.all(tasks.slice(i, i + size).map((t) => t()));
+  }
+}
+
 async function runChunked(ops: Promise<any>[], size = 100): Promise<void> {
   for (let i = 0; i < ops.length; i += size) {
     await Promise.all(ops.slice(i, i + size));
@@ -439,17 +449,17 @@ export async function rebuildEntityMirror(
   const coll = appDocRef.collection(field);
   const keep = new Set(asArray(entities).map((e) => e.id));
   const existing = await coll.listDocuments();
-  const ops: Promise<any>[] = [];
+  const ops: Array<() => Promise<any>> = [];
   let deletes = 0;
   for (const d of existing) {
-    if (!keep.has(d.id)) { ops.push(d.delete()); deletes++; }
+    if (!keep.has(d.id)) { ops.push(() => d.delete()); deletes++; }
   }
   let upserts = 0;
   // Full overwrite, NOT merge: a rebuild must make each mirror doc equal the source entity. With merge, a field the
   // source no longer has (e.g. restoring an older backup) stayed on the mirror doc — after the Phase-2 read flip
   // that stale field came back, and for scheduleEntries (subcollection is the only copy) it was simply wrong data.
-  for (const e of asArray(entities)) { ops.push(coll.doc(e.id).set(e)); upserts++; }
-  await runChunked(ops);
+  for (const e of asArray(entities)) { ops.push(() => coll.doc(e.id).set(e)); upserts++; }
+  await runThrottled(ops);
   return { upserts, deletes };
 }
 

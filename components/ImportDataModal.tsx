@@ -855,7 +855,17 @@ export const ImportDataModal: React.FC<ImportDataModalProps> = ({
     reader.readAsArrayBuffer(file);
   };
 
+  const isSystemEmpty =
+    (appData?.teachers?.length || 0) === 0 &&
+    (appData?.subjects?.length || 0) === 0 &&
+    (appData?.gradeLevels?.length || 0) === 0 &&
+    (appData?.scheduleEntries?.length || 0) === 0;
+
   const loadDemoSampleSystemData = () => {
+    if (!isSystemEmpty) {
+      alert('ระบบมีข้อมูลจริงอยู่แล้ว จึงไม่อนุญาตให้โหลดข้อมูลตัวอย่าง (จะลบข้อมูลทั้งหมด)');
+      return;
+    }
     if (window.confirm("คุณต้องการล้างข้อมูลทั้งหมด และโหลดข้อมูลตัวอย่างลงในแต่ละตารางใช่หรือไม่?\n(ห้องเรียน, รายวิชา, อาจารย์ผู้สอน และตารางเรียนจะถูกตั้งค่าด้วยข้อมูลตัวอย่างระบบ)")) {
       const sampleData = getSampleAppData();
 
@@ -1030,23 +1040,27 @@ export const ImportDataModal: React.FC<ImportDataModalProps> = ({
           </div>
         </fieldset>
 
+        {/* Demo data REPLACES everything (autosave then deletes the real data on the server), so it is only offered
+            on an empty system — e.g. a fresh test project — never once real data exists. */}
+        {isSystemEmpty && (
         <fieldset className="border border-indigo-200 bg-indigo-50/60 p-4 rounded-xl min-w-0 w-full shrink mt-4">
-          <legend className="text-sm font-semibold text-indigo-700 px-2 flex items-center gap-1.5">
-            <Icons.Sparkles size={16} className="shrink-0" /> <span>โหลดข้อมูลตัวอย่างทดลองระบบ (Quick Load Demo Data)</span>
-          </legend>
-          <div className="mt-1 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-            <p className="text-xs text-indigo-900 leading-relaxed max-w-xl">
-              ระบบจะทำการเติมข้อมูลตัวอย่างแบบครบถ้วนลงในตารางทั้งหมดทันที (อาคารสถานที่, รายวิชา, รายชื่อครูอาจารย์, โครงสร้างชั้นเรียน และตารางสอน)
-            </p>
-            <button
-              type="button"
-              onClick={loadDemoSampleSystemData}
-              className="w-full md:w-auto px-4 py-2 text-xs font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg shadow-sm transition-colors flex items-center justify-center shrink-0"
-            >
-              <Icons.Sparkles size={15} className="mr-1.5"/> โหลดข้อมูลตัวอย่างระบบ
-            </button>
-          </div>
-        </fieldset>
+            <legend className="text-sm font-semibold text-indigo-700 px-2 flex items-center gap-1.5">
+              <Icons.Sparkles size={16} className="shrink-0" /> <span>โหลดข้อมูลตัวอย่างทดลองระบบ (Quick Load Demo Data)</span>
+            </legend>
+            <div className="mt-1 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+              <p className="text-xs text-indigo-900 leading-relaxed max-w-xl">
+                ระบบจะทำการเติมข้อมูลตัวอย่างแบบครบถ้วนลงในตารางทั้งหมดทันที (อาคารสถานที่, รายวิชา, รายชื่อครูอาจารย์, โครงสร้างชั้นเรียน และตารางสอน)
+              </p>
+              <button
+                type="button"
+                onClick={loadDemoSampleSystemData}
+                className="w-full md:w-auto px-4 py-2 text-xs font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg shadow-sm transition-colors flex items-center justify-center shrink-0"
+              >
+                <Icons.Sparkles size={15} className="mr-1.5"/> โหลดข้อมูลตัวอย่างระบบ
+              </button>
+            </div>
+          </fieldset>
+        )}
 
         {importResult && (
           <div className={`mt-4 p-4 rounded-xl text-xs ${importResult.errorCount > 0 ? 'bg-red-50 text-red-700 border border-red-200' : (importResult.importedCount > 0 ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-amber-50 text-amber-800 border border-amber-200')}`}>
