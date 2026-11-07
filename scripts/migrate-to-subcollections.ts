@@ -31,6 +31,7 @@ import { getFirestore, type DocumentReference } from 'firebase-admin/firestore';
 import {
   MIRRORED_ENTITY_FIELDS,
   rebuildEntityMirror,
+  isSubcollectionOnlyField,
   mirrorPeriodSettingsDoc,
   mirrorUserDoc,
   verifyOrgConsistency,
@@ -103,7 +104,10 @@ async function run() {
 
   if (DRY_RUN) {
     console.log('Would rebuild these mirror subcollections:');
-    for (const field of MIRRORED_ENTITY_FIELDS) await planField(appDocRef, field, doc[field]);
+    for (const field of MIRRORED_ENTITY_FIELDS) {
+      if (isSubcollectionOnlyField(field) && !(field in doc)) { console.log(`  ${field.padEnd(26)} skipped (subcollection is the source of truth)`); continue; }
+      await planField(appDocRef, field, doc[field]);
+    }
     // periodSettings — single doc
     {
       const ps = await appDocRef.collection('periodSettings').doc(PERIOD_SETTINGS_MIRROR_DOC_ID).get();
@@ -117,6 +121,12 @@ async function run() {
 
   // LIVE
   for (const field of MIRRORED_ENTITY_FIELDS) {
+    // A subcollection-only field (scheduleEntries, teacherSubjectAssignments) with no array on the main doc has its
+    // subcollection as the ONLY copy: "rebuilding" it from the missing array would delete every document.
+    if (isSubcollectionOnlyField(field) && !(field in doc)) {
+      console.log(`  ${field.padEnd(26)} skipped (subcollection is the source of truth)`);
+      continue;
+    }
     const res = await rebuildEntityMirror(appDocRef, field, asArray(doc[field]));
     console.log(`  ${field.padEnd(26)} upserts=${res.upserts}  deletes=${res.deletes}`);
   }

@@ -2,6 +2,7 @@ import { collection, doc, getDoc, getDocs } from 'firebase/firestore';
 import { db } from './firebase';
 import {
   READ_FLIP_ENTITY_FIELDS,
+  isSubcollectionOnlyEntityField,
   PERIOD_SETTINGS_DOC_ID,
   compareField,
   comparePeriodSettings,
@@ -30,7 +31,10 @@ export async function verifyMirrorsInBrowser(orgId: string): Promise<MirrorVerif
   for (const field of [...READ_FLIP_ENTITY_FIELDS, 'users'] as const) {
     const snap = await getDocs(collection(db, 'apps', orgId, field));
     reads += Math.max(1, snap.size);
-    fields.push(compareField(field, main[field], snap.docs.map((d) => ({ ...(d.data() as any), id: d.id }))));
+    const items = snap.docs.map((d) => ({ ...(d.data() as any), id: d.id }));
+    // Phase 3: once the array is gone from the main doc the subcollection is the only copy — nothing to compare.
+    const docSide = isSubcollectionOnlyEntityField(field) && !(field in main) ? items : main[field];
+    fields.push(compareField(field, docSide, items));
   }
   const ps = await getDoc(doc(db, 'apps', orgId, 'periodSettings', PERIOD_SETTINGS_DOC_ID));
   reads += 1;

@@ -138,3 +138,19 @@ export const triggerJsonDownload = (data: any, filename: string): void => {
   document.body.removeChild(link);
   URL.revokeObjectURL(url);
 };
+
+/**
+ * Sanity check before saving a backup file: a timetable with entries but no teachers / subjects / links means part
+ * of the data was not loaded (e.g. a subcollection read failed) — a backup like that would look fine but be useless.
+ * Returns a warning (Thai) or null.
+ */
+export const findIncompleteBackupWarning = (appData: AppData): string | null => {
+  const entries = appData.scheduleEntries?.length || 0;
+  if (entries === 0) return null;
+  const missing: string[] = [];
+  if ((appData.teachers?.length || 0) === 0) missing.push('ครู');
+  if ((appData.subjects?.length || 0) === 0) missing.push('วิชา');
+  if ((appData.teacherSubjectAssignments?.length || 0) === 0) missing.push('ลิงก์ครู-วิชา');
+  if (missing.length === 0) return null;
+  return `ข้อมูลที่โหลดได้ไม่ครบ: ตารางสอนมี ${entries} คาบ แต่ไม่มี${missing.join(' / ')} — ไฟล์สำรองนี้อาจใช้กู้คืนไม่ได้`;
+};

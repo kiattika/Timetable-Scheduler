@@ -3,6 +3,7 @@ import { DEFAULT_PERIOD_SETTINGS, PREDEFINED_SUBJECT_COLORS } from './constants'
 import { db, auth, functions } from './lib/firebase';
 import { doc, getDoc, setDoc, deleteDoc, collection, getDocs, writeBatch, query, orderBy, limit, deleteField, updateDoc } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
+import { resolveEntityList } from './lib/subcollectionReads';
 import { computeOrgChanges, nextCommitTarget, MAX_OPS_PER_COMMIT, diffById, diffAssistantEntities, canonicalKey, failureKey, classifySaveError, describeSaveError, reconcileServerWithLocal, ORG_ARRAY_FIELDS, cleanUndefined as cleanUndefinedShared } from './lib/orgChangesClient';
 import { normalizeLoadedSubject, normalizeLoadedSubjects, normalizeLoadedOrganizationSettings, CURRENT_ORG_SCHEMA_VERSION, mergeBrandingIntoSettings, BRANDING_COLLECTION, BRANDING_DOC_ID } from './lib/normalizeAppData';
 import type { FailedAssistantOp } from './lib/revertFailedOps';
@@ -170,6 +171,16 @@ export const fetchAppData = async (orgId: string = ORG_ID): Promise<AppData> => 
       console.warn("Branding doc notice (using main doc images, if any):", brandingErr?.message || brandingErr);
     }
 
+    // Phase 3: teacher-subject links live in their own subcollection (the only copy once the main-doc array is gone).
+    // null = could not read -> fall back to a legacy array on the main doc.
+    let loadedAssignments: any[] | null = null;
+    try {
+      const asmSnap = await getDocs(collection(db, 'apps', orgId, 'teacherSubjectAssignments'));
+      loadedAssignments = asmSnap.docs.map(d => ({ ...(d.data() as any), id: d.id }));
+    } catch (asmErr: any) {
+      console.warn("Subcollection teacherSubjectAssignments notice (using main doc array, if any):", asmErr?.message || asmErr);
+    }
+
     // Fetch subcollection: scheduleEntries (safely without failing)
     let loadedScheduleEntries: ScheduleEntry[] = [];
     try {
@@ -217,7 +228,7 @@ export const fetchAppData = async (orgId: string = ORG_ID): Promise<AppData> => 
         physicalRooms: parsedData.physicalRooms || [],
         scheduleEntries: finalScheduleEntries,
         periodSettings: parsedData.periodSettings || defaultInitialData.periodSettings,
-        teacherSubjectAssignments: parsedData.teacherSubjectAssignments || [],
+        teacherSubjectAssignments: resolveEntityList(loadedAssignments as any, parsedData.teacherSubjectAssignments).items as any,
         organizationSettings: mergeBrandingIntoSettings(normalizeLoadedOrganizationSettings(parsedData.organizationSettings || defaultInitialData.organizationSettings), brandingData),
         users: parsedData.users && parsedData.users.length > 0 ? parsedData.users : defaultInitialData.users,
         activityLogs: finalActivityLogs,
@@ -365,9 +376,12 @@ export const resetSemesterTimetable = async (
     const docSnap = await getDoc(docRef);
     if (!docSnap.exists()) return;
     const data = docSnap.data() as any;
-    const deleteIds: string[] = (Array.isArray(data.teacherSubjectAssignments) ? data.teacherSubjectAssignments : [])
-      .map((a: any) => a?.id)
-      .filter((id: any): id is string => typeof id === 'string' && id.length > 0);
+    // Links live in their subcollection (Phase 3); a legacy array may still be on the main doc before the first save.
+    const linkSnap = await getDocs(collection(db, 'apps', orgId, 'teacherSubjectAssignments'));
+    const deleteIds: string[] = Array.from(new Set([
+      ...linkSnap.docs.map(d => d.id),
+      ...(Array.isArray(data.teacherSubjectAssignments) ? data.teacherSubjectAssignments : []).map((a: any) => a?.id),
+    ])).filter((id: any): id is string => typeof id === 'string' && id.length > 0);
     const commitFn = httpsCallable(functions, 'commitOrgChanges');
     const result: any = await commitFn({
       orgId,

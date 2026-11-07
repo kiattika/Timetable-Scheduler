@@ -340,7 +340,8 @@ export const SystemHealthScreen: React.FC<SystemHealthScreenProps> = ({
   // Main Firestore document (apps/{org}) — the one that has the hard 1 MiB limit. Timetable entries and activity logs
   // live in their own subcollections, so they do not count here. Approximation: JSON bytes of the fields stored on it.
   const MAIN_DOC_LIMIT_BYTES = 1024 * 1024;
-  const MAIN_DOC_FIELDS = ['teachers', 'subjects', 'gradeLevels', 'physicalRooms', 'departments', 'resourceTypes', 'teacherSubjectAssignments', 'periodSettings', 'organizationSettings', 'users', 'authorizedAdmins'];
+  // teacherSubjectAssignments are subcollection-only since Phase 3 step 2 (not on the main document).
+  const MAIN_DOC_FIELDS = ['teachers', 'subjects', 'gradeLevels', 'physicalRooms', 'departments', 'resourceTypes', 'periodSettings', 'organizationSettings', 'users', 'authorizedAdmins'];
   const mainDocFieldBytes = MAIN_DOC_FIELDS
     .map(f => {
       let v = (appData as any)?.[f];
