@@ -120,7 +120,7 @@ const OrganizationSettingsScreen: React.FC<OrganizationSettingsScreenProps> = ({
   
   const removeLogo = () => {
     setLogoPreview(null);
-    setCurrentSettings(prev => ({ ...prev, logoUrl: undefined }));
+    setCurrentSettings(prev => ({ ...prev, logoUrl: '' })); // '' = remove (an absent key is never sent)
     setSuccessMessage(null);
     setError(null);
     const fileInput = document.getElementById('logoUrl') as HTMLInputElement;
@@ -160,7 +160,7 @@ const OrganizationSettingsScreen: React.FC<OrganizationSettingsScreenProps> = ({
 
   const removeEmblem = () => {
     setEmblemPreview(null);
-    setCurrentSettings(prev => ({ ...prev, emblemUrl: undefined }));
+    setCurrentSettings(prev => ({ ...prev, emblemUrl: '' })); // '' = remove (an absent key is never sent)
     setSuccessMessage(null);
     setError(null);
     const fileInput = document.getElementById('emblemUrl') as HTMLInputElement;
@@ -470,7 +470,7 @@ const OrganizationSettingsScreen: React.FC<OrganizationSettingsScreenProps> = ({
         {(dataUrlBytes(currentSettings.logoUrl) + dataUrlBytes(currentSettings.emblemUrl)) > SHRINK_THRESHOLD_BYTES && (
           <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800 flex flex-wrap items-center gap-3">
             <span>
-              รูปโลโก้ {formatKB(dataUrlBytes(currentSettings.logoUrl))} + รูปครุฑ {formatKB(dataUrlBytes(currentSettings.emblemUrl))} ถูกเก็บรวมในฐานข้อมูลหลัก (จำกัดทั้งระบบ 1 MB) รูปใหญ่ทำให้บันทึกข้อมูลอื่นไม่ได้
+              รูปโลโก้ {formatKB(dataUrlBytes(currentSettings.logoUrl))} + รูปครุฑ {formatKB(dataUrlBytes(currentSettings.emblemUrl))} ค่อนข้างใหญ่ (เก็บแยกจากข้อมูลหลักแล้ว แต่ทุกคนต้องโหลดรูปนี้ทุกครั้งที่เปิดแอป) ลดขนาดเพื่อให้โหลดเร็วขึ้น
             </span>
             <button type="button" onClick={shrinkExistingImages} className="px-3 py-1.5 rounded-md bg-amber-600 text-white hover:bg-amber-700">
               ลดขนาดรูป

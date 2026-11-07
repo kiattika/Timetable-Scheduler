@@ -6,6 +6,7 @@ import { httpsCallable } from 'firebase/functions';
 import { db, functions, firestoreDatabaseId } from '../lib/firebase';
 import { readLocalReadFlip, writeLocalReadFlip, getActiveReadFlip, resolveReadFlip } from '../lib/subcollectionReads';
 import { verifyMirrorsInBrowser, type MirrorVerifyReport } from '../lib/mirrorVerifyClient';
+import { BRANDING_KEYS } from '../lib/normalizeAppData';
 import { pruneActivityLogs, saveAppData, ORG_ID } from '../api';
 import {
   FirestoreDailyMetric,
@@ -341,7 +342,15 @@ export const SystemHealthScreen: React.FC<SystemHealthScreenProps> = ({
   const MAIN_DOC_LIMIT_BYTES = 1024 * 1024;
   const MAIN_DOC_FIELDS = ['teachers', 'subjects', 'gradeLevels', 'physicalRooms', 'departments', 'resourceTypes', 'teacherSubjectAssignments', 'periodSettings', 'organizationSettings', 'users', 'authorizedAdmins'];
   const mainDocFieldBytes = MAIN_DOC_FIELDS
-    .map(f => ({ field: f, bytes: (appData as any)?.[f] === undefined ? 0 : new Blob([JSON.stringify((appData as any)[f])]).size }))
+    .map(f => {
+      let v = (appData as any)?.[f];
+      // Logo / emblem are stored in apps/{org}/branding/images, not on the main document (merged in only on load).
+      if (f === 'organizationSettings' && v && typeof v === 'object') {
+        v = { ...v };
+        for (const k of BRANDING_KEYS) delete v[k];
+      }
+      return { field: f, bytes: v === undefined ? 0 : new Blob([JSON.stringify(v)]).size };
+    })
     .sort((a, b) => b.bytes - a.bytes);
   const mainDocBytes = mainDocFieldBytes.reduce((sum, x) => sum + x.bytes, 0);
   const mainDocPercent = Math.round((mainDocBytes / MAIN_DOC_LIMIT_BYTES) * 100);

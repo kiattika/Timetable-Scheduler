@@ -117,8 +117,11 @@ export const computeOrgChanges = (
   const cs = (current.organizationSettings || {}) as Record<string, any>;
   const set: Record<string, any> = {};
   for (const k of Object.keys(cs)) {
+    if (cs[k] === undefined) continue;
     if (!sameEntity(bs[k], cs[k])) set[k] = cs[k];
   }
+  // Note: a key that is merely absent is never sent (never delete without proof of intent). The settings screen
+  // removes a logo / emblem by setting it to '' explicitly, which the server treats as "delete the image".
   if (Object.keys(set).length) {
     changes.organizationSettings = { set };
     hasChanges = true;

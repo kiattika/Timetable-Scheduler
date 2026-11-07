@@ -64,3 +64,24 @@ export const normalizeLoadedOrganizationSettings = (s: any): any => {
   const valid = typeof v === 'number' && Number.isInteger(v) && v > 0;
   return valid ? s : { ...s, schemaVersion: CURRENT_ORG_SCHEMA_VERSION };
 };
+
+/**
+ * Logo + Garuda emblem (base64) are stored in `apps/{orgId}/branding/images`, not on the 1 MiB main document.
+ * The app still reads them as `organizationSettings.logoUrl` / `.emblemUrl`; this merges them back in.
+ * A value in the branding doc wins; otherwise a legacy copy still on the main document is kept (until the
+ * server moves it on the next save).
+ */
+export const BRANDING_KEYS = ['logoUrl', 'emblemUrl'] as const;
+export const BRANDING_COLLECTION = 'branding';
+export const BRANDING_DOC_ID = 'images';
+
+export const mergeBrandingIntoSettings = (settings: any, branding: Record<string, any> | null | undefined): any => {
+  if (!settings || typeof settings !== 'object') return settings;
+  if (!branding || typeof branding !== 'object') return settings;
+  const out = { ...settings };
+  for (const k of BRANDING_KEYS) {
+    const v = branding[k];
+    if (typeof v === 'string' && v) out[k] = v;
+  }
+  return out;
+};
